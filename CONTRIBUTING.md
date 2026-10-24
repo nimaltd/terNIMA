@@ -26,7 +26,7 @@ You need:
   - Linux (Debian, Ubuntu):
 
     ```bash
-    sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev build-essential file
+    sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev libudev-dev build-essential file
     ```
 
 Then, in the project folder:
@@ -46,6 +46,13 @@ npm run tauri build
 ```
 
 They end up in `target/release/bundle/`.
+
+Two things that are easy to trip over:
+
+- `target/release/ternimal` only changes when you run `npm run tauri build`
+  again. After pulling new code, build again before running it.
+- `target/debug/ternimal` loads its UI from the dev server, so it only works
+  while `npm run tauri dev` runs. Started on its own, its window stays empty.
 
 ## Layout
 

@@ -4,9 +4,14 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import About from "./lib/About.svelte";
   import MenuBar from "./lib/MenuBar.svelte";
+  import SessionDialog from "./lib/SessionDialog.svelte";
+  import StatusBar from "./lib/StatusBar.svelte";
+  import TabBar from "./lib/TabBar.svelte";
   import Terminal from "./lib/Terminal.svelte";
+  import Toolbar from "./lib/Toolbar.svelte";
   import { buildMenus, isEnabled, itemForKey, menuForAltKey } from "./lib/menus";
   import { loadSettings, settings } from "./lib/settings.svelte";
+  import { activeTab, loadWorkspace, tabs, view, type Tab } from "./lib/tabs.svelte";
   import { activeTerminal } from "./lib/terminal-actions";
   import { appScheme } from "./lib/theme.svelte";
 
@@ -15,17 +20,27 @@
   let info = $state<AppInfo>();
   let ready = $state(false);
   let aboutOpen = $state(false);
+  /** The session dialog: closed, for a new session, or for a tab's settings. */
+  let dialog: { tab: Tab | null } | null = $state(null);
   let menuBar: MenuBar;
 
   const menus = buildMenus({
     about: () => (aboutOpen = true),
     exit: () => void getCurrentWindow().close(),
+    newSession: () => (dialog = { tab: null }),
+    portSettings: () => {
+      const tab = activeTab();
+      if (tab) {
+        dialog = { tab };
+      }
+    },
   });
 
   onMount(() => {
     invoke<AppInfo>("app_info").then((result) => (info = result));
-    // The terminal waits for the settings, so it opens at the saved text size.
-    loadSettings()
+    // The terminals wait for the settings, so they open at the saved text size,
+    // and for the workspace, so the tabs from last time come back.
+    Promise.all([loadSettings(), loadWorkspace()])
       .catch((error) => console.error(error))
       .finally(() => (ready = true));
   });
@@ -40,7 +55,7 @@
   });
 
   function onkeydown(event: KeyboardEvent) {
-    if (aboutOpen) {
+    if (aboutOpen || dialog) {
       return;
     }
     const item = itemForKey(menus, event);
@@ -66,36 +81,45 @@
   function focusTerminal() {
     activeTerminal()?.focus();
   }
+
+  function closeDialog() {
+    dialog = null;
+    focusTerminal();
+  }
 </script>
 
 <svelte:window {onkeydown} />
 
 <div class="app">
   <MenuBar bind:this={menuBar} {menus} onclose={focusTerminal} />
+  <TabBar onnew={() => (dialog = { tab: null })} />
 
-  <header class="tabs">
-    <div class="tab active">
-      <span class="state" title="Not connected"></span>
-      Welcome
-    </div>
-  </header>
+  {#if activeTab()}
+    <Toolbar tab={activeTab()!} onsettings={() => (dialog = { tab: activeTab() ?? null })} />
+  {/if}
 
   <main class="pane">
     {#if ready}
-      <Terminal {isAppKey} />
+      {#if tabs.length === 0}
+        <div class="layer">
+          <Terminal active={true} {isAppKey} />
+        </div>
+      {/if}
+      <!-- Every tab keeps its terminal, so its scrollback stays while another tab is in front. -->
+      {#each tabs as tab, i (tab.id)}
+        <div class="layer" class:hidden={i !== view.active}>
+          <Terminal {tab} active={i === view.active} {isAppKey} />
+        </div>
+      {/each}
     {/if}
   </main>
 
-  <footer class="status">
-    <span>Not connected</span>
-    <span class="spacer"></span>
-    {#if info}
-      <span>ternimal v{info.version}</span>
-      <span class="divider"></span>
-      <span>{info.os} {info.arch}</span>
-    {/if}
-  </footer>
+  <StatusBar tab={activeTab()} {info} />
 </div>
+
+{#if dialog}
+  <SessionDialog tab={dialog.tab} onclose={closeDialog} />
+{/if}
 
 {#if aboutOpen && info}
   <About
@@ -109,68 +133,25 @@
 
 <style>
   .app {
-    display: grid;
-    grid-template-rows: auto auto 1fr auto;
+    display: flex;
+    flex-direction: column;
     height: 100%;
   }
 
-  .tabs {
-    display: flex;
-    align-items: stretch;
-    height: 36px;
-    background: var(--panel);
-    border-bottom: 1px solid var(--border);
-  }
-
-  .tab {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 0 16px;
-    color: var(--muted);
-    border-right: 1px solid var(--border);
-  }
-
-  .tab.active {
-    color: var(--text);
-    background: var(--bg);
-    box-shadow: inset 0 2px 0 var(--accent);
-    /* The active tab covers the bar's bottom border, so it joins the pane. */
-    margin-bottom: -1px;
-  }
-
-  .state {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    border: 1.5px solid var(--muted);
-  }
-
   .pane {
+    position: relative;
+    flex: 1;
     min-height: 0;
-    padding: 8px 4px 4px 12px;
     background: var(--bg);
   }
 
-  .status {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    height: 24px;
-    padding: 0 12px;
-    font-size: 12px;
-    color: var(--muted);
-    background: var(--panel);
-    border-top: 1px solid var(--border);
+  .layer {
+    position: absolute;
+    inset: 0;
+    padding: 8px 4px 4px 12px;
   }
 
-  .spacer {
-    flex: 1;
-  }
-
-  .divider {
-    width: 1px;
-    height: 12px;
-    background: var(--border);
+  .layer.hidden {
+    display: none;
   }
 </style>

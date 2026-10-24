@@ -11,4 +11,5 @@ homepage.workspace = true
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+serialport = { version = "4.10", features = ["usbportinfo-interface", "usbportinfo-location"] }
 toml = "1.1.8"

@@ -91,8 +91,9 @@ Other options we looked at:
 
 - Any baud rate, including custom ones and 1M, 2M, 3M and higher
 - Data bits 5, 6, 7 or 8
-- Parity none, odd or even, and mark or space where the OS supports it
-- Stop bits 1 or 2, and 1.5 on Windows
+- Parity none, odd or even. Mark and space parity, and 1.5 stop bits, later: the
+  `serialport` library does not offer them yet
+- Stop bits 1 or 2
 - Flow control none, RTS/CTS or XON/XOFF
 - DTR and RTS buttons, send break, and live CTS, DSR, DCD and RI lights
 - The port list shows each USB port's name, maker, VID:PID and serial number, and
@@ -487,7 +488,7 @@ called `ternimal` (another project), so packages there need a different name.
 - [x] Rust workspace with `ternimal-core` and the Tauri app
 - [x] A window with xterm.js showing a colored welcome text
 - [x] Bundled fonts, dark and light themes
-- [ ] CI that builds and tests on Windows, Linux and macOS (written; not run on GitHub yet)
+- [x] CI that builds and tests on Windows, Linux and macOS
 - [ ] Release workflow that makes installers from a tag (written; not run on GitHub yet)
 
 Done when the installers from CI open the same window on all three OSes.
@@ -499,14 +500,21 @@ Done when the installers from CI open the same window on all three OSes.
 - [x] Text size (Ctrl+=, Ctrl+-, Ctrl+0) and theme (system, dark, light) in the View menu
 - [x] `settings.toml`, saved on every change; a broken file is kept as `settings.bad.toml`
 - [x] About box
-- [ ] Port list with USB name, VID:PID and serial number, updated on plug and unplug
-- [ ] Every serial option; DTR and RTS buttons; break; modem line lights
-- [ ] Terminal view with typing, line endings, local echo and encoding
-- [ ] Logging to file
-- [ ] `workspace.toml` with tabs, sessions and the window, saved on every change
-- [ ] Finding the same port again, "Waiting for...", reconnecting with a marker
-- [ ] Tabs
-- [ ] Status bar: state, time connected, bytes in and out
+- [x] Port list with USB name, VID:PID and serial number, updated on plug and unplug
+- [x] Serial options: baud, data bits, parity, stop bits, flow control; DTR and RTS
+  buttons; break; modem line lights. Settings change on an open port without closing the tab
+- [x] Terminal view with typing, Enter as CR, LF or CR LF, local echo, new line on LF
+- [x] `workspace.toml` with the tabs and sessions, saved on every change; tabs that were
+  connected connect again at start
+- [x] Finding the same port again, "Waiting for...", reconnecting with a marker line
+- [x] Clear messages when a port cannot be opened, naming the tab when ternimal itself has it
+- [x] Tabs, with Ctrl+Tab and Ctrl+Shift+Tab, and a state dot on each
+- [x] Status bar: state, time connected, bytes in and out
+- [ ] Logging to file, and File > Save output as
+- [ ] Window size and position kept in `workspace.toml`
+- [ ] Text encodings other than UTF-8
+- [ ] Unplug and replug tried by hand on Windows, Linux and macOS (the reconnect logic is
+  covered by tests with pretend ports)
 
 Done when it replaces PuTTY or Tera Term for everyday UART work.
 

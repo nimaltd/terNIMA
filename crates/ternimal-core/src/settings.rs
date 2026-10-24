@@ -1,10 +1,11 @@
 //! The user's preferences, kept in `settings.toml` in the OS's config folder.
 
-use std::fs;
 use std::io;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+
+use crate::tomlfile;
 
 /// Smallest terminal text size, in pixels.
 pub const FONT_SIZE_MIN: u8 = 8;
@@ -45,36 +46,14 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// Reads the settings from `path`.
-    ///
-    /// A missing file gives the defaults. So does a broken one, so a bad edit
-    /// never stops the app from starting; the broken file is first copied to
-    /// `<name>.bad.toml` beside it, so the edit is not lost when the app saves.
+    /// Reads the settings from `path`; see [`tomlfile::load`] for missing and broken files.
     pub fn load(path: &Path) -> Self {
-        let Ok(text) = fs::read_to_string(path) else {
-            return Self::default();
-        };
-        match toml::from_str::<Settings>(&text) {
-            Ok(settings) => settings.checked(),
-            Err(_) => {
-                let _ = fs::copy(path, path.with_extension("bad.toml"));
-                Self::default()
-            }
-        }
+        tomlfile::load::<Settings>(path).checked()
     }
 
-    /// Writes the settings to `path`, making its folder if needed.
-    ///
-    /// The text goes to a temporary file first, which then replaces the old
-    /// one, so a crash or power cut never leaves a half written file behind.
+    /// Writes the settings to `path`, safely; see [`tomlfile::save`].
     pub fn save(&self, path: &Path) -> io::Result<()> {
-        if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir)?;
-        }
-        let body = toml::to_string_pretty(self).map_err(io::Error::other)?;
-        let temp = path.with_extension("toml.tmp");
-        fs::write(&temp, format!("{HEADER}{body}"))?;
-        fs::rename(&temp, path)
+        tomlfile::save(self, path, HEADER)
     }
 
     /// The same settings with every value moved into its allowed range.
@@ -86,32 +65,10 @@ impl Settings {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::fs;
 
     use super::*;
-
-    /// An empty folder for one test, removed again when the test ends.
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(name: &str) -> Self {
-            let dir =
-                std::env::temp_dir().join(format!("ternimal-test-{name}-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(&dir).unwrap();
-            Self(dir)
-        }
-
-        fn file(&self, name: &str) -> PathBuf {
-            self.0.join(name)
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
+    use crate::tomlfile::tests::TempDir;
 
     #[test]
     fn missing_file_gives_defaults() {

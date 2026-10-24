@@ -35,3 +35,26 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   half written. A broken file is kept as `settings.bad.toml` and the
   defaults are used.
 - An About box with the version and licence.
+- Serial sessions, each in its own tab. The New serial session dialog (the +
+  button, File menu or Ctrl+Shift+N) lists every port with its product,
+  maker, USB VID:PID and serial number, updates as devices are plugged in
+  and out, and says which ports another tab has open.
+- Serial settings: any baud rate, 5 to 8 data bits, no, odd or even parity,
+  1 or 2 stop bits, and no, RTS/CTS or XON/XOFF flow control. Port settings
+  change on an open port, which is opened again at once.
+- A toolbar per tab: Connect and Disconnect, the port and its settings, DTR
+  and RTS, Break, CTS, DSR, DCD and RI lights, what Enter sends (CR, LF or
+  CR LF) and local echo.
+- A port is found again by its USB serial number, so it still connects when
+  Windows gives it another COM number. Adapters without a serial number are
+  found by their USB socket, their old name, or as the only one of their
+  kind. A missing device is waited for, and an unplugged one is connected
+  again when it comes back, with a marker line in the terminal for each
+  connect, disconnect and reconnect.
+- Plain messages when a port cannot be opened: in use by another program,
+  open in another tab of ternimal, or, on Linux, missing dialout rights.
+- `workspace.toml` keeps the open tabs, each with its port and settings.
+  Tabs that were connected when ternimal closed connect again when it starts.
+- A status bar with the state of the tab in front, how long it has been
+  connected, and the bytes received and sent.
+- Ctrl+Tab and Ctrl+Shift+Tab move between tabs; Ctrl+Shift+W closes one.

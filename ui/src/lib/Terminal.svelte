@@ -9,13 +9,25 @@
   import { WebLinksAddon } from "@xterm/addon-web-links";
   import { WebglAddon } from "@xterm/addon-webgl";
   import { settings } from "./settings.svelte";
-  import { setActiveTerminal } from "./terminal-actions";
+  import type { Tab } from "./tabs.svelte";
+  import { setActiveTerminal, type TerminalActions } from "./terminal-actions";
   import { appScheme, terminalThemes } from "./theme.svelte";
 
-  /** Says which keys belong to the app, so they are not sent to the device. */
-  let { isAppKey }: { isAppKey: (event: KeyboardEvent) => boolean } = $props();
+  let {
+    tab = null,
+    active,
+    isAppKey,
+  }: {
+    /** The session this terminal shows, or null for the welcome tab. */
+    tab?: Tab | null;
+    /** Whether this terminal is the one on screen. */
+    active: boolean;
+    /** Says which keys belong to the app, so they are not sent to the device. */
+    isAppKey: (event: KeyboardEvent) => boolean;
+  } = $props();
 
   let container: HTMLDivElement;
+  let opened = $state(false);
 
   const term = new Terminal({
     fontFamily: '"JetBrains Mono", ui-monospace, monospace',
@@ -35,44 +47,59 @@
   term.loadAddon(new WebLinksAddon((_event, uri) => void openUrl(uri)));
   term.attachCustomKeyEventHandler((event) => !isAppKey(event));
 
-  // Nothing to send to yet, so echo what is typed to show the terminal works.
   term.onData((data) => {
-    term.write(data.replace(/\r/g, "\r\n").replace(/\x7f/g, "\b \b"));
+    if (tab) {
+      tab.type(data);
+    } else {
+      // The welcome tab has nothing to send to, so it echoes to show the terminal works.
+      term.write(data.replace(/\r/g, "\r\n").replace(/\x7f/g, "\b \b"));
+    }
   });
+
+  const actions: TerminalActions = {
+    hasSelection: () => term.hasSelection(),
+    copy: async () => {
+      const text = term.getSelection();
+      if (text) {
+        await writeText(text);
+      }
+    },
+    paste: async () => {
+      try {
+        term.paste(await readText());
+      } catch {
+        // The clipboard is empty or holds no text.
+      }
+    },
+    selectAll: () => term.selectAll(),
+    clear: () => term.clear(),
+    focus: () => term.focus(),
+  };
 
   $effect(() => {
     term.options.theme = terminalThemes[appScheme()];
   });
   $effect(() => {
     term.options.fontSize = settings.font_size;
-    if (term.element) {
+    if (opened) {
       fit.fit();
+    }
+  });
+  $effect(() => {
+    term.options.convertEol = tab?.terminal.lf_is_newline ?? false;
+  });
+  // The terminal on screen is the one the menus act on, and has the keyboard.
+  $effect(() => {
+    if (active && opened) {
+      setActiveTerminal(actions);
+      fit.fit();
+      term.focus();
     }
   });
 
   onMount(() => {
     const resize = new ResizeObserver(() => fit.fit());
     let closed = false;
-
-    setActiveTerminal({
-      hasSelection: () => term.hasSelection(),
-      copy: async () => {
-        const text = term.getSelection();
-        if (text) {
-          await writeText(text);
-        }
-      },
-      paste: async () => {
-        try {
-          term.paste(await readText());
-        } catch {
-          // The clipboard is empty or holds no text.
-        }
-      },
-      selectAll: () => term.selectAll(),
-      clear: () => term.clear(),
-      focus: () => term.focus(),
-    });
 
     async function start() {
       // xterm.js measures the font when it opens, so the font has to be loaded first.
@@ -92,16 +119,24 @@
       loadWebgl();
       fit.fit();
       resize.observe(container);
-      term.focus();
-      // The logo's colors are picked for the theme in use when the tab opens.
-      term.write(await invoke<string>("welcome_banner", { background: appScheme() }));
+      opened = true;
+
+      if (tab) {
+        tab.attach(term);
+      } else {
+        // The logo's colors are picked for the theme in use when the tab opens.
+        term.write(await invoke<string>("welcome_banner", { background: appScheme() }));
+      }
     }
 
     void start();
 
     return () => {
       closed = true;
-      setActiveTerminal(null);
+      tab?.attach(null);
+      if (active) {
+        setActiveTerminal(null);
+      }
       resize.disconnect();
       term.dispose();
     };

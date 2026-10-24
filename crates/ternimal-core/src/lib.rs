@@ -4,7 +4,10 @@
 //! they can be tested on their own.
 
 mod banner;
+pub mod serial;
 pub mod settings;
+mod tomlfile;
+pub mod workspace;
 
 pub use banner::{Background, welcome_banner};
 

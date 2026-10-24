@@ -11,6 +11,7 @@ import {
   type ThemeChoice,
 } from "./settings.svelte";
 import { isMac, keys, matches } from "./shortcuts";
+import { activeTab, closeTab, showTab, tabs, view } from "./tabs.svelte";
 import { activeTerminal } from "./terminal-actions";
 
 export type Item = {
@@ -30,6 +31,10 @@ export type Menu = { title: string; items: (Item | null)[] };
 export type AppActions = {
   about(): void;
   exit(): void;
+  /** Opens the dialog for a new session. */
+  newSession(): void;
+  /** Opens the dialog for the tab in front's port settings. */
+  portSettings(): void;
 };
 
 const GITHUB = "https://github.com/nimaltd/ternimal";
@@ -46,12 +51,31 @@ export function buildMenus(app: AppActions): Menu[] {
   const textSize = (size: number) =>
     updateSettings({ font_size: Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, size)) });
 
+  const hasTab = () => activeTab() !== undefined;
+  const running = () => activeTab()?.running ?? false;
+  const connected = () => activeTab()?.connected ?? false;
+  const hasTabs = () => tabs.length > 1;
+
   return [
     {
       title: "File",
       items: [
-        { label: "New serial session...", phase: 1 },
+        {
+          label: "New serial session...",
+          shortcut: keys("Ctrl+Shift+N", "Cmd+N"),
+          run: app.newSession,
+        },
         { label: "New RTT session...", phase: 2 },
+        null,
+        {
+          label: "Close tab",
+          shortcut: keys("Ctrl+Shift+W", "Cmd+W"),
+          enabled: hasTab,
+          run: () => {
+            const tab = activeTab();
+            if (tab) closeTab(tab);
+          },
+        },
         null,
         { label: "Save output as...", phase: 1 },
         null,
@@ -100,6 +124,19 @@ export function buildMenus(app: AppActions): Menu[] {
         { label: "Plot", phase: 4 },
         null,
         {
+          label: "Next tab",
+          shortcut: "Ctrl+Tab",
+          enabled: hasTabs,
+          run: () => showTab(view.active + 1),
+        },
+        {
+          label: "Previous tab",
+          shortcut: "Ctrl+Shift+Tab",
+          enabled: hasTabs,
+          run: () => showTab(view.active - 1),
+        },
+        null,
+        {
           label: "Bigger text",
           shortcut: keys("Ctrl+=", "Cmd+="),
           run: () => textSize(settings.font_size + 1),
@@ -123,14 +160,38 @@ export function buildMenus(app: AppActions): Menu[] {
     {
       title: "Connection",
       items: [
-        { label: "Connect", phase: 1 },
-        { label: "Disconnect", phase: 1 },
+        {
+          label: "Connect",
+          enabled: () => hasTab() && !running(),
+          run: () => activeTab()?.start(),
+        },
+        {
+          label: "Disconnect",
+          enabled: running,
+          run: () => activeTab()?.stop(),
+        },
         null,
-        { label: "Port settings...", phase: 1 },
+        { label: "Port settings...", enabled: hasTab, run: app.portSettings },
         null,
-        { label: "DTR", phase: 1 },
-        { label: "RTS", phase: 1 },
-        { label: "Send break", phase: 1 },
+        {
+          label: "DTR",
+          checked: () => activeTab()?.serial.dtr ?? false,
+          enabled: hasTab,
+          run: () => {
+            const tab = activeTab();
+            tab?.setDtr(!tab.serial.dtr);
+          },
+        },
+        {
+          label: "RTS",
+          checked: () => activeTab()?.serial.rts ?? false,
+          enabled: () => hasTab() && activeTab()?.serial.flow !== "rtscts",
+          run: () => {
+            const tab = activeTab();
+            tab?.setRts(!tab.serial.rts);
+          },
+        },
+        { label: "Send break", enabled: connected, run: () => activeTab()?.sendBreak() },
       ],
     },
     {

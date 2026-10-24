@@ -130,11 +130,11 @@ pub fn welcome_banner(background: Background) -> String {
     out.push_str("\r\n");
     let _ = write!(
         out,
-        "  {DIM}Nothing to connect to yet: serial ports come in Phase 1.{RESET}\r\n"
+        "  {DIM}Open a serial port with the + button above, or File > New serial session.{RESET}\r\n"
     );
     let _ = write!(
         out,
-        "  {DIM}What you type is echoed here, so you can try the terminal.{RESET}\r\n\r\n"
+        "  {DIM}What you type in this tab is only echoed back.{RESET}\r\n\r\n"
     );
 
     out
