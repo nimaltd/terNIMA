@@ -4,6 +4,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import About from "./lib/About.svelte";
   import MenuBar from "./lib/MenuBar.svelte";
+  import ProbeDialog from "./lib/ProbeDialog.svelte";
   import SessionDialog from "./lib/SessionDialog.svelte";
   import StatusBar from "./lib/StatusBar.svelte";
   import TabBar from "./lib/TabBar.svelte";
@@ -13,6 +14,7 @@
   import { loadSettings, settings } from "./lib/settings.svelte";
   import { activeTab, loadWorkspace, tabs, view, type Tab } from "./lib/tabs.svelte";
   import { activeTerminal } from "./lib/terminal-actions";
+  import type { SessionKind } from "./lib/serial";
   import { appScheme } from "./lib/theme.svelte";
 
   type AppInfo = { version: string; os: string; arch: string };
@@ -20,21 +22,26 @@
   let info = $state<AppInfo>();
   let ready = $state(false);
   let aboutOpen = $state(false);
-  /** The session dialog: closed, for a new session, or for a tab's settings. */
-  let dialog: { tab: Tab | null } | null = $state(null);
+  /** The open session dialog, if any: for a new session, or for a tab's settings. */
+  let dialog: { kind: SessionKind; tab: Tab | null } | null = $state(null);
   let menuBar: MenuBar;
 
   const menus = buildMenus({
     about: () => (aboutOpen = true),
     exit: () => void getCurrentWindow().close(),
-    newSession: () => (dialog = { tab: null }),
-    portSettings: () => {
-      const tab = activeTab();
-      if (tab) {
-        dialog = { tab };
-      }
-    },
+    newSession: () => (dialog = { kind: "serial", tab: null }),
+    newRttSession: () => (dialog = { kind: "rtt", tab: null }),
+    newSwoSession: () => (dialog = { kind: "swo", tab: null }),
+    sessionSettings,
   });
+
+  /** Opens the settings of the tab in front, in the dialog of its kind. */
+  function sessionSettings() {
+    const tab = activeTab();
+    if (tab) {
+      dialog = { kind: tab.kind, tab };
+    }
+  }
 
   onMount(() => {
     invoke<AppInfo>("app_info").then((result) => (info = result));
@@ -92,10 +99,10 @@
 
 <div class="app">
   <MenuBar bind:this={menuBar} {menus} onclose={focusTerminal} />
-  <TabBar onnew={() => (dialog = { tab: null })} />
+  <TabBar onnew={(kind) => (dialog = { kind, tab: null })} />
 
   {#if activeTab()}
-    <Toolbar tab={activeTab()!} onsettings={() => (dialog = { tab: activeTab() ?? null })} />
+    <Toolbar tab={activeTab()!} onsettings={sessionSettings} />
   {/if}
 
   <main class="pane">
@@ -117,7 +124,9 @@
   <StatusBar tab={activeTab()} {info} />
 </div>
 
-{#if dialog}
+{#if dialog?.kind === "rtt" || dialog?.kind === "swo"}
+  <ProbeDialog kind={dialog.kind} tab={dialog.tab} onclose={closeDialog} />
+{:else if dialog}
   <SessionDialog tab={dialog.tab} onclose={closeDialog} />
 {/if}
 

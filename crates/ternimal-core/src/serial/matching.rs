@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::ports::{PortInfo, UsbId};
 
 /// What a session remembers about its port, to find it again later.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PortId {
     /// The name it had last time, such as COM6.
     pub name: String,

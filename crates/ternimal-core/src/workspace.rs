@@ -6,7 +6,9 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::rtt::RttConfig;
 use crate::serial::{PortId, SerialConfig};
+use crate::swo::SwoConfig;
 use crate::tomlfile;
 
 const HEADER: &str =
@@ -43,18 +45,40 @@ impl Default for TerminalOptions {
     }
 }
 
-/// One tab: a session and how it is set up.
+/// What a tab is connected to.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionKind {
+    #[default]
+    Serial,
+    Rtt,
+    Swo,
+}
+
+/// One tab: a session and how it is set up. Only the settings of its kind
+/// are written.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionSetup {
     pub name: String,
+    #[serde(default)]
+    pub kind: SessionKind,
     /// Whether it was connected when the app closed. If so, it connects again at start.
     #[serde(default)]
     pub connected: bool,
+    #[serde(default, skip_serializing_if = "is_default")]
     pub port: PortId,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub serial: SerialConfig,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub rtt: RttConfig,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub swo: SwoConfig,
     #[serde(default)]
     pub terminal: TerminalOptions,
+}
+
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
 }
 
 /// Everything in `workspace.toml`.
@@ -95,6 +119,7 @@ mod tests {
     fn nucleo() -> SessionSetup {
         SessionSetup {
             name: "Nucleo".into(),
+            kind: SessionKind::Serial,
             connected: true,
             port: PortId {
                 name: "COM6".into(),
@@ -106,9 +131,55 @@ mod tests {
                     location: None,
                 }),
             },
-            serial: SerialConfig::default(),
+            serial: SerialConfig {
+                baud: 921_600,
+                ..SerialConfig::default()
+            },
+            rtt: RttConfig::default(),
+            swo: SwoConfig::default(),
             terminal: TerminalOptions::default(),
         }
+    }
+
+    fn rtt_tab() -> SessionSetup {
+        SessionSetup {
+            name: "H503 RTT".into(),
+            kind: SessionKind::Rtt,
+            connected: true,
+            port: PortId::default(),
+            serial: SerialConfig::default(),
+            rtt: RttConfig {
+                chip: "STM32H503RB".into(),
+                address: Some(0x2000_0400),
+                ..RttConfig::default()
+            },
+            swo: SwoConfig::default(),
+            terminal: TerminalOptions::default(),
+        }
+    }
+
+    #[test]
+    fn each_kind_writes_only_its_own_settings() {
+        let dir = TempDir::new("workspace-kinds");
+        let path = dir.file("workspace.toml");
+        let workspace = Workspace {
+            active: 0,
+            sessions: vec![nucleo(), rtt_tab()],
+        };
+        workspace.save(&path).unwrap();
+        assert_eq!(Workspace::load(&path), workspace);
+
+        let text = fs::read_to_string(&path).unwrap();
+        let (serial, rtt) = text.split_at(text.find("H503 RTT").unwrap());
+        assert!(
+            serial.contains("baud = 921600") && !serial.contains("chip ="),
+            "{text}"
+        );
+        assert!(
+            rtt.contains("kind = \"rtt\"") && rtt.contains("chip = \"STM32H503RB\""),
+            "{text}"
+        );
+        assert!(!rtt.contains("baud"), "{text}");
     }
 
     #[test]

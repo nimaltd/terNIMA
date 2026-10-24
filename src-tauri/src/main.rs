@@ -5,7 +5,7 @@
 // No console window next to the app in release builds on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod serial;
+mod sessions;
 
 use std::path::PathBuf;
 use std::sync::{Mutex, PoisonError};
@@ -95,6 +95,7 @@ fn set_workspace(workspace: Workspace, file: State<Saved<Workspace>>) -> Result<
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let dir = app.path().app_config_dir()?;
@@ -108,7 +109,7 @@ fn main() {
                 current: Mutex::new(Workspace::load(&workspace)),
                 path: workspace,
             });
-            app.manage(serial::Sessions::default());
+            app.manage(sessions::Sessions::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -118,14 +119,21 @@ fn main() {
             set_settings,
             get_workspace,
             set_workspace,
-            serial::list_ports,
-            serial::open_session,
-            serial::close_session,
-            serial::close_all_sessions,
-            serial::write_session,
-            serial::set_session_lines,
-            serial::break_session,
-            serial::reconfigure_session,
+            sessions::list_ports,
+            sessions::list_probes,
+            sessions::search_chips,
+            sessions::open_session,
+            sessions::open_rtt_session,
+            sessions::open_swo_session,
+            sessions::close_session,
+            sessions::close_all_sessions,
+            sessions::write_session,
+            sessions::set_session_lines,
+            sessions::break_session,
+            sessions::reconfigure_session,
+            sessions::reconfigure_rtt_session,
+            sessions::reconfigure_swo_session,
+            sessions::reset_target,
         ])
         .run(tauri::generate_context!())
         .expect("ternimal could not start");

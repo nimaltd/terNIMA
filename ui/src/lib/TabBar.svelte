@@ -2,49 +2,158 @@
   import { look, stateText } from "./state";
   import { closeTab, showTab, tabs, view } from "./tabs.svelte";
 
-  let { onnew }: { onnew: () => void } = $props();
+  import type { SessionKind } from "./serial";
+
+  /** Opens the dialog for a new session of a kind. */
+  let { onnew }: { onnew: (kind: SessionKind) => void } = $props();
+
+  let bar: HTMLDivElement;
+  let add: HTMLButtonElement;
+  /** Where the choice under the + button shows, while it is open. */
+  let choice: { left: number } | null = $state(null);
+
+  function toggle() {
+    if (choice) {
+      choice = null;
+    } else {
+      choice = { left: add.getBoundingClientRect().left - bar.getBoundingClientRect().left };
+    }
+  }
+
+  function pick(kind: SessionKind) {
+    choice = null;
+    onnew(kind);
+  }
+
+  function onWindowMouseDown(event: MouseEvent) {
+    if (choice && !bar.contains(event.target as Node)) {
+      choice = null;
+    }
+  }
 </script>
 
-<header class="tabs" role="tablist">
-  {#if tabs.length === 0}
-    <div class="tab active" role="tab" aria-selected="true">
-      <span class="dot stopped"></span>
-      Welcome
-    </div>
-  {/if}
+<svelte:window
+  onmousedown={onWindowMouseDown}
+  onkeydown={(event) => {
+    if (choice && event.key === "Escape") {
+      choice = null;
+    }
+  }}
+/>
 
-  {#each tabs as tab, i (tab.id)}
-    <div
-      class="tab"
-      class:active={i === view.active}
-      role="tab"
-      tabindex="-1"
-      aria-selected={i === view.active}
-      title={`${tab.name}: ${stateText(tab)}`}
-      onmousedown={() => showTab(i)}
-    >
-      <span class="dot {look(tab)}"></span>
-      <span class="name">{tab.name}</span>
-      <button
-        class="close"
-        aria-label={`Close ${tab.name}`}
-        title="Close tab"
-        onmousedown={(event) => {
-          event.stopPropagation();
-          closeTab(tab);
-        }}
+<div class="bar" bind:this={bar}>
+  <header class="tabs" role="tablist">
+    {#if tabs.length === 0}
+      <div class="tab active" role="tab" aria-selected="true">
+        <span class="dot stopped"></span>
+        Welcome
+      </div>
+    {/if}
+
+    {#each tabs as tab, i (tab.id)}
+      <div
+        class="tab"
+        class:active={i === view.active}
+        role="tab"
+        tabindex="-1"
+        aria-selected={i === view.active}
+        title={`${tab.name}: ${stateText(tab)}`}
+        onmousedown={() => showTab(i)}
       >
-        ×
+        <span class="dot {look(tab)}"></span>
+        <span class="name">{tab.name}</span>
+        <button
+          class="close"
+          aria-label={`Close ${tab.name}`}
+          title="Close tab"
+          onmousedown={(event) => {
+            event.stopPropagation();
+            closeTab(tab);
+          }}
+        >
+          ×
+        </button>
+      </div>
+    {/each}
+
+    <button
+      class="add"
+      aria-label="New session"
+      aria-haspopup="menu"
+      aria-expanded={choice !== null}
+      title="New session"
+      bind:this={add}
+      onclick={toggle}
+    >
+      +
+    </button>
+  </header>
+
+  {#if choice}
+    <div class="choice" role="menu" style:left={`${choice.left}px`}>
+      <button role="menuitem" onclick={() => pick("serial")}>
+        <strong>Serial port</strong>
+        <span>A UART, USB serial adapter or a board's virtual COM port</span>
+      </button>
+      <button role="menuitem" onclick={() => pick("rtt")}>
+        <strong>RTT through a debug probe</strong>
+        <span>CMSIS-DAP, J-Link or ST-Link, while the chip runs</span>
+      </button>
+      <button role="menuitem" onclick={() => pick("swo")}>
+        <strong>SWO through a debug probe</strong>
+        <span>ITM output on the chip's trace pin, such as printf</span>
       </button>
     </div>
-  {/each}
-
-  <button class="add" aria-label="New serial session" title="New serial session" onclick={onnew}>
-    +
-  </button>
-</header>
+  {/if}
+</div>
 
 <style>
+  .bar {
+    position: relative;
+  }
+
+  .choice {
+    position: absolute;
+    top: calc(100% + 2px);
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    width: 290px;
+    padding: 4px;
+    background: var(--menu-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+  }
+
+  .choice button {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: 7px 10px;
+    font: inherit;
+    color: var(--text);
+    text-align: left;
+    background: none;
+    border: 0;
+    border-radius: 6px;
+    cursor: default;
+  }
+
+  .choice button:hover {
+    background: var(--accent-soft);
+  }
+
+  .choice strong {
+    font-weight: 600;
+  }
+
+  .choice span {
+    font-size: 12px;
+    color: var(--muted);
+  }
+
   .tabs {
     display: flex;
     align-items: stretch;

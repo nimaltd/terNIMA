@@ -1,7 +1,17 @@
-// The open tabs, each with its serial session, and saving them to workspace.toml.
+// The open tabs, each with its session (serial or RTT), and saving them to workspace.toml.
 
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { Terminal } from "@xterm/xterm";
+import {
+  DEFAULT_RTT,
+  DEFAULT_SWO,
+  channelText,
+  hexAddress,
+  hzText,
+  type ChannelInfo,
+  type RttConfig,
+  type SwoConfig,
+} from "./probe";
 import {
   DEFAULT_SERIAL,
   DEFAULT_TERMINAL,
@@ -13,8 +23,8 @@ import {
   type PortId,
   type SerialConfig,
   type SessionEvent,
+  type SessionKind,
   type SessionSetup,
-  type SessionState,
   type TerminalOptions,
 } from "./serial";
 
@@ -23,22 +33,33 @@ const ENTER = { cr: "\r", lf: "\n", crlf: "\r\n" };
 
 let nextId = 1;
 
-/** One tab: a serial session and its terminal. */
+/** Where a session is: waiting (and why, if something is wrong), or connected. */
+export type Status = { state: "waiting"; problem: string | null } | { state: "connected" };
+
+/** One tab: a session and its terminal. */
 export class Tab {
   readonly id = nextId++;
+  readonly kind: SessionKind;
   name = $state("");
   port: PortId = $state({ name: "" });
   serial: SerialConfig = $state({ ...DEFAULT_SERIAL });
+  rtt: RttConfig = $state({ ...DEFAULT_RTT });
+  swo: SwoConfig = $state({ ...DEFAULT_SWO });
   terminal: TerminalOptions = $state({ ...DEFAULT_TERMINAL });
-  /** True while the session runs: the port is open, or ternimal is waiting for it. */
+  /** True while the session runs: connected, or ternimal is waiting for the device. */
   running = $state(false);
   /** What the session last said, while it runs. */
-  status: SessionState | null = $state(null);
+  status: Status | null = $state(null);
+  /** What the tab is connected to, for people: COM6, or STM32H503RB. */
+  target = $state("");
   lines: ModemLines | null = $state(null);
+  /** The RTT control block's address and channels, once found. */
+  rttAddress: number | null = $state(null);
+  channels: { up: ChannelInfo[]; down: ChannelInfo[] } | null = $state(null);
   /** Bytes received and sent since the tab opened. */
   rx = $state(0);
   tx = $state(0);
-  /** When the port opened, while it is open. */
+  /** When the connection started, while connected. */
   connectedAt: number | null = $state(null);
 
   private term: Terminal | null = null;
@@ -46,11 +67,18 @@ export class Tab {
   private early: (Uint8Array | string)[] = [];
   /** When the device went away, while waiting for it to come back. */
   private lostAt: number | null = null;
+  /** Set between a target reset and finding the control block again. */
+  private resetting = false;
+  /** Set once the "SWO only receives" hint has been shown. */
+  private hinted = false;
 
   constructor(setup: SessionSetup) {
+    this.kind = setup.kind ?? "serial";
     this.name = setup.name;
-    this.port = setup.port;
+    this.port = setup.port ?? { name: "" };
     this.serial = { ...DEFAULT_SERIAL, ...setup.serial };
+    this.rtt = { ...DEFAULT_RTT, ...setup.rtt };
+    this.swo = { ...DEFAULT_SWO, ...setup.swo };
     this.terminal = { ...DEFAULT_TERMINAL, ...setup.terminal };
   }
 
@@ -58,15 +86,24 @@ export class Tab {
     return this.status?.state === "connected";
   }
 
+  /** Why the session cannot connect, if that is the case now. */
+  get problem(): string | null {
+    return this.status?.state === "waiting" && this.status.problem
+      ? this.explain(this.status.problem)
+      : null;
+  }
+
   /** How the tab is saved in workspace.toml. */
   setup(): SessionSetup {
-    return $state.snapshot({
-      name: this.name,
-      connected: this.running,
-      port: this.port,
-      serial: this.serial,
-      terminal: this.terminal,
-    });
+    const common = { name: this.name, kind: this.kind, connected: this.running, terminal: this.terminal };
+    switch (this.kind) {
+      case "rtt":
+        return $state.snapshot({ ...common, rtt: this.rtt });
+      case "swo":
+        return $state.snapshot({ ...common, swo: this.swo });
+      default:
+        return $state.snapshot({ ...common, port: this.port, serial: this.serial });
+    }
   }
 
   /** Called by the tab's terminal once it is on screen. */
@@ -80,7 +117,7 @@ export class Tab {
     }
   }
 
-  /** Opens the port, or starts waiting for it. */
+  /** Connects, or starts waiting for the device. */
   start(): void {
     if (this.running) {
       return;
@@ -88,23 +125,30 @@ export class Tab {
     this.running = true;
     this.status = null;
     this.lostAt = null;
+    this.resetting = false;
 
     const data = new Channel<ArrayBuffer | number[]>();
     data.onmessage = (message) => this.receive(new Uint8Array(message));
     const events = new Channel<SessionEvent>();
     events.onmessage = (event) => this.onEvent(event);
 
-    invoke("open_session", {
-      id: this.id,
-      port: $state.snapshot(this.port),
-      config: $state.snapshot(this.serial),
-      data,
-      events,
-    }).catch((error) => this.note(`could not start: ${error}`));
+    const started =
+      this.kind === "rtt"
+        ? invoke("open_rtt_session", { id: this.id, config: $state.snapshot(this.rtt), data, events })
+        : this.kind === "swo"
+          ? invoke("open_swo_session", { id: this.id, config: $state.snapshot(this.swo), data, events })
+          : invoke("open_session", {
+              id: this.id,
+              port: $state.snapshot(this.port),
+              config: $state.snapshot(this.serial),
+              data,
+              events,
+            });
+    started.catch((error) => this.note(`could not start: ${error}`));
     changed();
   }
 
-  /** Closes the port. */
+  /** Disconnects. */
   stop(): void {
     if (!this.running) {
       return;
@@ -120,7 +164,7 @@ export class Tab {
     changed();
   }
 
-  /** Changes how the port is opened; an open port is opened again at once. */
+  /** Changes how a serial port is opened; an open port is opened again at once. */
   reconfigure(serial: SerialConfig): void {
     this.serial = serial;
     if (this.running) {
@@ -132,7 +176,30 @@ export class Tab {
     changed();
   }
 
-  /** Moves the tab to another port. */
+  /** Changes an RTT session's settings; a running session attaches again at once. */
+  reconfigureRtt(rtt: RttConfig): void {
+    const channelBefore = this.rtt.up_channel;
+    this.rtt = rtt;
+    if (this.running) {
+      void invoke("reconfigure_rtt_session", { id: this.id, config: $state.snapshot(rtt) });
+      if (this.connected && rtt.up_channel !== channelBefore) {
+        const channel = this.channels?.up.find((up) => up.number === rtt.up_channel);
+        this.note(`now showing channel ${channel ? channelText(channel) : rtt.up_channel}`);
+      }
+    }
+    changed();
+  }
+
+  /** Changes an SWO session's settings; a running session attaches again at once. */
+  reconfigureSwo(swo: SwoConfig): void {
+    this.swo = swo;
+    if (this.running) {
+      void invoke("reconfigure_swo_session", { id: this.id, config: $state.snapshot(swo) });
+    }
+    changed();
+  }
+
+  /** Moves the tab to another serial port. */
   changePort(port: PortId): void {
     const wasRunning = this.running;
     this.stop();
@@ -146,6 +213,13 @@ export class Tab {
   /** Sends what was typed in the terminal. */
   type(data: string): void {
     if (!this.connected) {
+      return;
+    }
+    if (this.kind === "swo") {
+      if (!this.hinted) {
+        this.hinted = true;
+        this.note("SWO only comes from the chip: what you type goes nowhere. Use RTT to type to it.");
+      }
       return;
     }
     const bytes = encoder.encode(data.replace(/\r/g, ENTER[this.terminal.enter]));
@@ -172,6 +246,17 @@ export class Tab {
     void invoke("break_session", { id: this.id });
   }
 
+  /** Resets the chip of an RTT or SWO session. */
+  resetTarget(): void {
+    if (!this.connected) {
+      return;
+    }
+    // RTT looks for its control block again after a reset; SWO just goes on.
+    this.resetting = this.kind === "rtt";
+    this.note(`target reset at ${clock(Date.now())}`);
+    void invoke("reset_target", { id: this.id });
+  }
+
   private receive(bytes: Uint8Array): void {
     this.rx += bytes.length;
     this.write(bytes);
@@ -181,50 +266,85 @@ export class Tab {
     if (!this.running) {
       return;
     }
-    if (event.kind === "lines") {
-      this.lines = { cts: event.cts, dsr: event.dsr, dcd: event.dcd, ri: event.ri };
-      return;
+    switch (event.kind) {
+      case "lines":
+        this.lines = { cts: event.cts, dsr: event.dsr, dcd: event.dcd, ri: event.ri };
+        return;
+      case "channels":
+        this.channels = { up: event.up, down: event.down };
+        return;
+      case "state":
+        if (event.state === "connected") {
+          this.port = event.port;
+          this.onConnected(event.port.name, `${event.port.name}, ${summary(this.serial)}`);
+          changed();
+        } else {
+          this.onWaiting(event.problem);
+        }
+        return;
+      case "rtt_state":
+        if (event.state === "connected") {
+          this.rttAddress = event.address;
+          this.onConnected(event.chip, `${event.chip}, RTT at ${hexAddress(event.address)}`);
+        } else {
+          this.onWaiting(event.problem);
+        }
+        return;
+      case "swo_state":
+        if (event.state === "connected") {
+          this.onConnected(event.chip, `${event.chip}, SWO at ${hzText(event.baud)}`);
+        } else {
+          this.onWaiting(event.problem);
+        }
+        return;
+      case "overflow":
+        this.note(`SWO overflow: the chip dropped trace data ${event.count} times. A higher baud rate helps.`);
+        return;
     }
+  }
 
+  private onConnected(target: string, description: string): void {
     const now = Date.now();
-    if (event.state === "connected") {
-      if (this.lostAt !== null) {
-        this.note(`reconnected at ${clock(now)}, after ${duration(now - this.lostAt)}`);
-      } else {
-        this.note(`connected to ${event.port.name} at ${clock(now)}, ${summary(this.serial)}`);
-      }
-      this.lostAt = null;
-      this.connectedAt = now;
-      this.port = event.port;
-      this.status = { state: "connected", port: event.port };
-      changed();
-      return;
+    if (this.resetting) {
+      this.note(this.kind === "rtt" ? "found RTT again after the reset" : "SWO on again after the reset");
+    } else if (this.lostAt !== null) {
+      this.note(`reconnected at ${clock(now)}, after ${duration(now - this.lostAt)}`);
+    } else {
+      this.note(`connected to ${description} at ${clock(now)}`);
     }
+    this.resetting = false;
+    this.lostAt = null;
+    this.connectedAt = now;
+    this.target = target;
+    this.status = { state: "connected" };
+  }
 
+  private onWaiting(problem: string | null): void {
+    const now = Date.now();
     const before = this.status?.state === "waiting" ? this.status.problem : null;
     if (this.connected) {
       this.lostAt = now;
       this.lines = null;
       this.connectedAt = null;
-      this.note(`disconnected at ${clock(now)}`);
-    } else if (event.problem && event.problem !== before) {
-      this.note(this.explain(event.problem));
-    } else if (this.status === null && !event.problem) {
-      this.note(`waiting for ${this.port.name}`);
+      if (!this.resetting) {
+        this.note(`disconnected at ${clock(now)}`);
+      }
+    } else if (problem && problem !== before) {
+      this.note(this.explain(problem));
+    } else if (this.status === null && !problem) {
+      this.note(this.kind === "serial" ? `waiting for ${this.port.name}` : "waiting for the probe");
     }
-    this.status = { state: "waiting", problem: event.problem };
-  }
-
-  /** Why the port could not be opened, if that is the case now. */
-  get problem(): string | null {
-    return this.status?.state === "waiting" && this.status.problem
-      ? this.explain(this.status.problem)
-      : null;
+    this.status = { state: "waiting", problem };
   }
 
   /** When the program that has the port is ternimal itself, says which tab has it. */
   private explain(problem: string): string {
-    const owner = tabs.find((tab) => tab !== this && tab.connected && tab.port.name === this.port.name);
+    if (this.kind !== "serial") {
+      return problem;
+    }
+    const owner = tabs.find(
+      (tab) => tab !== this && tab.kind === "serial" && tab.connected && tab.port.name === this.port.name,
+    );
     return owner ? `${this.port.name} is open in the tab "${owner.name}".` : problem;
   }
 

@@ -31,10 +31,14 @@ export type Menu = { title: string; items: (Item | null)[] };
 export type AppActions = {
   about(): void;
   exit(): void;
-  /** Opens the dialog for a new session. */
+  /** Opens the dialog for a new serial session. */
   newSession(): void;
-  /** Opens the dialog for the tab in front's port settings. */
-  portSettings(): void;
+  /** Opens the dialog for a new RTT session. */
+  newRttSession(): void;
+  /** Opens the dialog for a new SWO session. */
+  newSwoSession(): void;
+  /** Opens the settings dialog of the tab in front. */
+  sessionSettings(): void;
 };
 
 const GITHUB = "https://github.com/nimaltd/ternimal";
@@ -55,6 +59,8 @@ export function buildMenus(app: AppActions): Menu[] {
   const running = () => activeTab()?.running ?? false;
   const connected = () => activeTab()?.connected ?? false;
   const hasTabs = () => tabs.length > 1;
+  const isSerial = () => activeTab()?.kind === "serial";
+  const onProbe = () => activeTab()?.kind === "rtt" || activeTab()?.kind === "swo";
 
   return [
     {
@@ -65,7 +71,12 @@ export function buildMenus(app: AppActions): Menu[] {
           shortcut: keys("Ctrl+Shift+N", "Cmd+N"),
           run: app.newSession,
         },
-        { label: "New RTT session...", phase: 2 },
+        {
+          label: "New RTT session...",
+          shortcut: keys("Ctrl+Shift+R", "Cmd+Shift+R"),
+          run: app.newRttSession,
+        },
+        { label: "New SWO session...", run: app.newSwoSession },
         null,
         {
           label: "Close tab",
@@ -171,12 +182,16 @@ export function buildMenus(app: AppActions): Menu[] {
           run: () => activeTab()?.stop(),
         },
         null,
-        { label: "Port settings...", enabled: hasTab, run: app.portSettings },
+        {
+          label: "Session settings...",
+          enabled: hasTab,
+          run: app.sessionSettings,
+        },
         null,
         {
           label: "DTR",
           checked: () => activeTab()?.serial.dtr ?? false,
-          enabled: hasTab,
+          enabled: isSerial,
           run: () => {
             const tab = activeTab();
             tab?.setDtr(!tab.serial.dtr);
@@ -185,13 +200,23 @@ export function buildMenus(app: AppActions): Menu[] {
         {
           label: "RTS",
           checked: () => activeTab()?.serial.rts ?? false,
-          enabled: () => hasTab() && activeTab()?.serial.flow !== "rtscts",
+          enabled: () => isSerial() && activeTab()?.serial.flow !== "rtscts",
           run: () => {
             const tab = activeTab();
             tab?.setRts(!tab.serial.rts);
           },
         },
-        { label: "Send break", enabled: connected, run: () => activeTab()?.sendBreak() },
+        {
+          label: "Send break",
+          enabled: () => isSerial() && connected(),
+          run: () => activeTab()?.sendBreak(),
+        },
+        null,
+        {
+          label: "Reset target",
+          enabled: () => onProbe() && connected(),
+          run: () => activeTab()?.resetTarget(),
+        },
       ],
     },
     {

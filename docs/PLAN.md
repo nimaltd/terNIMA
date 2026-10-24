@@ -520,11 +520,25 @@ Done when it replaces PuTTY or Tera Term for everyday UART work.
 
 ### Phase 2: RTT and network
 
-- [ ] Probe list (CMSIS-DAP, J-Link, ST-Link) with serial numbers
-- [ ] Chip picker, ELF file or RAM scan, channel choice, attach without reset
+- [x] Probe list (CMSIS-DAP, J-Link, ST-Link) with serial numbers, updated on plug and unplug
+- [x] Chip search over probe-rs's chip list; the name is checked before connecting
+- [x] ELF file or RAM search for the control block, or a fixed address; up and down
+  channel choice; SWD speed; attach without reset, or under reset
+- [x] Reconnecting after a probe unplug, and finding the control block again after a
+  target reset or new firmware; a Reset target button
+- [x] RTT tabs saved in `workspace.toml` next to serial ones, each with only its own settings
+- [x] Tried on an STM32H503RB through an ST-Link V3: attach, RAM search, clear message
+  when the firmware has no RTT
+- [x] RTT data on real hardware: a test firmware on the H503 with a shell on channel 0
+  and log lines on channel 1; typing, channel switching and Reset target all tried
+- [x] SWO, brought forward from Phase 5: ITM decoding, a stimulus port or all ports,
+  core clock and baud checked, reconnect, Reset target. Tried on the H503 at 2 MHz.
+  probe-rs turns the STM32H5 trace pin on at the wrong address, so ternimal also sets
+  it at 0x44024004 (worth reporting to probe-rs)
+- [ ] Finding the chip by itself. probe-rs cannot tell STM32 chips apart; reading their
+  DBGMCU ID register can (the H503 answered DEV_ID 0x474)
 - [ ] RTT over TCP (J-Link on 19021, OpenOCD)
 - [ ] Plain TCP and Telnet sessions
-- [ ] Reconnecting after a target reset or a probe unplug
 - [ ] Split panes
 
 Done when the Zephyr shell works over RTT on a DAPLink and on a J-Link.
@@ -551,11 +565,13 @@ Done when you can find one module's errors in a busy Zephyr log in seconds.
 ### Phase 5: probe tools
 
 - [ ] Flash ELF, HEX or BIN, reset, reconnect; flash again when the file changes
+  (a first try is `cargo run -p ternimal-core --example flash -- <chip> <file.elf>`)
 - [ ] Crash and address decoding from the ELF
 - [ ] Live variable watch and plot
 - [ ] HardFault decoder
 - [ ] SVD register viewer
-- [ ] SWO / ITM and semihosting
+- [x] SWO / ITM (done in Phase 2)
+- [ ] Semihosting
 
 ### Phase 6: device and protocol tools
 

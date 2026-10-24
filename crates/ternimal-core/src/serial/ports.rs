@@ -8,10 +8,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UsbId {
     /// Vendor ID, written as four hex digits such as "0483".
-    #[serde(with = "hex_u16")]
+    #[serde(with = "crate::hex::u16")]
     pub vid: u16,
     /// Product ID, written as four hex digits such as "3754".
-    #[serde(with = "hex_u16")]
+    #[serde(with = "crate::hex::u16")]
     pub pid: u16,
     /// The device's serial number. Many cheap adapters, such as most CH340s, have none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -101,21 +101,6 @@ fn natural_order(a: &str, b: &str) -> Ordering {
         (text, name[text.len()..].parse().unwrap_or(0))
     }
     split(a).cmp(&split(b)).then_with(|| a.cmp(b))
-}
-
-/// Writes a u16 as four hex digits, the way USB IDs are usually shown.
-mod hex_u16 {
-    use serde::{Deserialize, Deserializer, Serializer, de::Error};
-
-    pub fn serialize<S: Serializer>(value: &u16, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&format!("{value:04x}"))
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u16, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        let digits = text.trim_start_matches("0x");
-        u16::from_str_radix(digits, 16).map_err(D::Error::custom)
-    }
 }
 
 #[cfg(test)]

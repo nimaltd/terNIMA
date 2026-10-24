@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { channelText, hzText } from "./probe";
   import { summary, type LineEnding, type ModemLines } from "./serial";
   import { changed, type Tab } from "./tabs.svelte";
   import { activeTerminal } from "./terminal-actions";
@@ -26,83 +27,161 @@
     <button class="btn primary" onclick={() => act(() => tab.start())}>Connect</button>
   {/if}
 
-  <button class="btn port" title="Port settings" onclick={onsettings}>
-    <span class="mono">{tab.port.name}</span>
-    <span class="muted mono">{summary(tab.serial)}</span>
-    <span class="muted">▾</span>
-  </button>
+  {#if tab.kind === "serial"}
+    <button class="btn target" title="Port settings" onclick={onsettings}>
+      <span class="mono">{tab.port.name}</span>
+      <span class="muted mono">{summary(tab.serial)}</span>
+      <span class="muted">▾</span>
+    </button>
 
-  <span class="separator"></span>
+    <span class="separator"></span>
 
-  <label class="check" title="Data terminal ready: an output line some boards use for reset">
-    <input
-      type="checkbox"
-      checked={tab.serial.dtr}
-      onchange={(event) => act(() => tab.setDtr(event.currentTarget.checked))}
-    />
-    DTR
-  </label>
-  <label
-    class="check"
-    title={tab.serial.flow === "rtscts"
-      ? "RTS is used by RTS/CTS flow control"
-      : "Request to send: an output line some boards use for boot mode"}
-  >
-    <input
-      type="checkbox"
-      checked={tab.serial.rts}
-      disabled={tab.serial.flow === "rtscts"}
-      onchange={(event) => act(() => tab.setRts(event.currentTarget.checked))}
-    />
-    RTS
-  </label>
-  <button
-    class="btn small"
-    disabled={!tab.connected}
-    title="Hold the TX line low for 250 ms"
-    onclick={() => act(() => tab.sendBreak())}
-  >
-    Break
-  </button>
+    <label class="check" title="Data terminal ready: an output line some boards use for reset">
+      <input
+        type="checkbox"
+        checked={tab.serial.dtr}
+        onchange={(event) => act(() => tab.setDtr(event.currentTarget.checked))}
+      />
+      DTR
+    </label>
+    <label
+      class="check"
+      title={tab.serial.flow === "rtscts"
+        ? "RTS is used by RTS/CTS flow control"
+        : "Request to send: an output line some boards use for boot mode"}
+    >
+      <input
+        type="checkbox"
+        checked={tab.serial.rts}
+        disabled={tab.serial.flow === "rtscts"}
+        onchange={(event) => act(() => tab.setRts(event.currentTarget.checked))}
+      />
+      RTS
+    </label>
+    <button
+      class="btn small"
+      disabled={!tab.connected}
+      title="Hold the TX line low for 250 ms"
+      onclick={() => act(() => tab.sendBreak())}
+    >
+      Break
+    </button>
 
-  <span class="separator"></span>
+    <span class="separator"></span>
 
-  <div class="leds" title="Input lines from the device">
-    {#each LINES as line (line.key)}
-      <span class="led" class:on={tab.lines?.[line.key] ?? false} title={line.title}>{line.label}</span>
-    {/each}
-  </div>
+    <div class="leds" title="Input lines from the device">
+      {#each LINES as line (line.key)}
+        <span class="led" class:on={tab.lines?.[line.key] ?? false} title={line.title}>{line.label}</span>
+      {/each}
+    </div>
+  {:else if tab.kind === "rtt"}
+    <button class="btn target" title="RTT settings" onclick={onsettings}>
+      <span class="mono">{tab.rtt.chip || "No chip"}</span>
+      <span class="muted">RTT</span>
+      <span class="muted">▾</span>
+    </button>
+
+    <span class="separator"></span>
+
+    <label class="option" title="The up channel shown in the terminal">
+      Channel
+      <select
+        class="field"
+        value={tab.rtt.up_channel}
+        onchange={(event) =>
+          act(() => tab.reconfigureRtt({ ...tab.rtt, up_channel: Number(event.currentTarget.value) }))}
+      >
+        {#if tab.channels && tab.channels.up.length > 0}
+          {#each tab.channels.up as channel (channel.number)}
+            <option value={channel.number}>{channelText(channel)}</option>
+          {/each}
+        {:else}
+          <option value={tab.rtt.up_channel}>{tab.rtt.up_channel}</option>
+        {/if}
+      </select>
+    </label>
+    <button
+      class="btn small"
+      disabled={!tab.connected}
+      title="Reset the chip through the probe, then find RTT again"
+      onclick={() => act(() => tab.resetTarget())}
+    >
+      Reset target
+    </button>
+  {:else}
+    <button class="btn target" title="SWO settings" onclick={onsettings}>
+      <span class="mono">{tab.swo.chip || "No chip"}</span>
+      <span class="muted">SWO {hzText(tab.swo.baud)}</span>
+      <span class="muted">▾</span>
+    </button>
+
+    <span class="separator"></span>
+
+    <label class="option" title="The ITM stimulus port shown">
+      Port
+      <select
+        class="field"
+        value={tab.swo.all_ports ? "all" : String(tab.swo.port)}
+        onchange={(event) =>
+          act(() => {
+            const value = event.currentTarget.value;
+            tab.reconfigureSwo(
+              value === "all"
+                ? { ...tab.swo, all_ports: true }
+                : { ...tab.swo, all_ports: false, port: Number(value) },
+            );
+          })}
+      >
+        <option value="all">All</option>
+        {#each Array.from({ length: 32 }, (_, port) => port) as port (port)}
+          <option value={String(port)}>{port}</option>
+        {/each}
+      </select>
+    </label>
+    <button
+      class="btn small"
+      disabled={!tab.connected}
+      title="Reset the chip through the probe, then turn SWO on again"
+      onclick={() => act(() => tab.resetTarget())}
+    >
+      Reset target
+    </button>
+  {/if}
 
   <span class="spacer"></span>
 
-  <label class="option" title="What the Enter key sends">
-    Enter
-    <select
-      class="field"
-      value={tab.terminal.enter}
-      onchange={(event) =>
-        act(() => {
-          tab.terminal.enter = event.currentTarget.value as LineEnding;
-          changed();
-        })}
-    >
-      <option value="cr">CR</option>
-      <option value="lf">LF</option>
-      <option value="crlf">CR LF</option>
-    </select>
-  </label>
-  <label class="check" title="Show what you type, for devices that do not echo it">
-    <input
-      type="checkbox"
-      checked={tab.terminal.local_echo}
-      onchange={(event) =>
-        act(() => {
-          tab.terminal.local_echo = event.currentTarget.checked;
-          changed();
-        })}
-    />
-    Echo
-  </label>
+  {#if tab.kind === "swo"}
+    <span class="muted" title="SWO only comes from the chip">Output only</span>
+  {:else}
+    <label class="option" title="What the Enter key sends">
+      Enter
+      <select
+        class="field"
+        value={tab.terminal.enter}
+        onchange={(event) =>
+          act(() => {
+            tab.terminal.enter = event.currentTarget.value as LineEnding;
+            changed();
+          })}
+      >
+        <option value="cr">CR</option>
+        <option value="lf">LF</option>
+        <option value="crlf">CR LF</option>
+      </select>
+    </label>
+    <label class="check" title="Show what you type, for devices that do not echo it">
+      <input
+        type="checkbox"
+        checked={tab.terminal.local_echo}
+        onchange={(event) =>
+          act(() => {
+            tab.terminal.local_echo = event.currentTarget.checked;
+            changed();
+          })}
+      />
+      Echo
+    </label>
+  {/if}
 </div>
 
 <style>
@@ -118,7 +197,7 @@
     border-bottom: 1px solid var(--border);
   }
 
-  .port {
+  .target {
     gap: 10px;
   }
 

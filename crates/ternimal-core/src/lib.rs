@@ -4,8 +4,12 @@
 //! they can be tested on their own.
 
 mod banner;
+mod hex;
+pub mod probe;
+pub mod rtt;
 pub mod serial;
 pub mod settings;
+pub mod swo;
 mod tomlfile;
 pub mod workspace;
 

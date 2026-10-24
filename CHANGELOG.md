@@ -58,3 +58,30 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - A status bar with the state of the tab in front, how long it has been
   connected, and the bytes received and sent.
 - Ctrl+Tab and Ctrl+Shift+Tab move between tabs; Ctrl+Shift+W closes one.
+- RTT sessions through a debug probe, using probe-rs: CMSIS-DAP, J-Link,
+  ST-Link and the other probes it supports, with no vendor software. The +
+  button and File > New RTT session (Ctrl+Shift+R) open a dialog with a live
+  probe list, a chip search over probe-rs's thousands of chips, and the
+  firmware's ELF file to find the control block from its `_SEGGER_RTT`
+  symbol. Without one, RAM is searched; a fixed address works too.
+- RTT options: up and down channel, SWD speed, and connect under reset for
+  firmware that sleeps or turns the debug pins off.
+- An RTT session attaches without halting or resetting the chip. It waits
+  for firmware that sets up RTT late, finds the control block again after a
+  reset or new firmware, and attaches again when the probe comes back.
+- The RTT toolbar: the chip, the channel shown, and a Reset target button.
+- RTT tabs are kept in `workspace.toml` with the serial ones, and connect
+  again at start.
+- SWO sessions through a debug probe: what the firmware writes to the ITM
+  stimulus ports, read from the trace pin. The + button and File > New SWO
+  session open the same probe dialog, with the core clock, the SWO baud rate
+  (checked to divide the clock exactly), and one stimulus port or all. The
+  toolbar has a port picker and Reset target; overflows of the chip's trace
+  FIFO are noted in the terminal.
+- On STM32H5 chips ternimal turns the trace pin on itself, at DBGMCU_CR
+  0x44024004, as probe-rs looks for it where the U5 and L5 have it.
+- A shared probe module for RTT and SWO: the probe list, the chip search and
+  attaching.
+- Example programs in `crates/ternimal-core/examples`: `probes` lists probes
+  and reads an STM32's ID register, `rtt` and `swo` run a session from the
+  command line, and `flash` writes an ELF file to a chip.

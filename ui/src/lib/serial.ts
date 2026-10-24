@@ -2,6 +2,7 @@
 // the commands that reach them.
 
 import { invoke } from "@tauri-apps/api/core";
+import type { ChannelInfo, RttConfig, RttState, SwoConfig, SwoState } from "./probe";
 
 export type UsbId = {
   /** Four hex digits, such as "0483". */
@@ -43,11 +44,17 @@ export type TerminalOptions = {
   lf_is_newline: boolean;
 };
 
+export type SessionKind = "serial" | "rtt" | "swo";
+
+/** One tab as workspace.toml keeps it. Only the settings of its kind are there. */
 export type SessionSetup = {
   name: string;
+  kind: SessionKind;
   connected: boolean;
-  port: PortId;
-  serial: SerialConfig;
+  port?: PortId;
+  serial?: SerialConfig;
+  rtt?: RttConfig;
+  swo?: SwoConfig;
   terminal: TerminalOptions;
 };
 
@@ -59,9 +66,14 @@ export type SessionState =
 
 export type ModemLines = { cts: boolean; dsr: boolean; dcd: boolean; ri: boolean };
 
+/** What a session tells the UI, apart from the data it receives. */
 export type SessionEvent =
   | ({ kind: "state" } & SessionState)
-  | ({ kind: "lines" } & ModemLines);
+  | ({ kind: "lines" } & ModemLines)
+  | ({ kind: "rtt_state" } & RttState)
+  | { kind: "channels"; up: ChannelInfo[]; down: ChannelInfo[] }
+  | ({ kind: "swo_state" } & SwoState)
+  | { kind: "overflow"; count: number };
 
 export const DEFAULT_SERIAL: SerialConfig = {
   baud: 115200,
