@@ -516,7 +516,8 @@ Done when the installers from CI open the same window on all three OSes.
 - [x] Status bar: state, time connected, bytes in and out
 - [x] Logging to file: per tab on or off, text or raw, timestamps, markers; a Settings
   window with the logging options; File > Save output as and Open log folder
-- [ ] Window size and position kept in `workspace.toml`
+- [x] Window size and position kept in `workspace.toml`, maximized too; a window whose
+  screen was unplugged opens in the middle of the main screen
 - [ ] Text encodings other than UTF-8
 - [ ] Unplug and replug tried by hand on Windows, Linux and macOS (the reconnect logic is
   covered by tests with pretend ports)

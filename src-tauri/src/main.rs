@@ -6,12 +6,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod sessions;
+mod window;
 
 use std::path::PathBuf;
 use std::sync::{Mutex, PoisonError};
 
 use serde::Serialize;
-use tauri::{Manager, State};
+use tauri::{Manager, State, WindowEvent};
 use ternimal_core::settings::Settings;
 use ternimal_core::workspace::Workspace;
 
@@ -84,11 +85,17 @@ fn get_workspace(file: State<Saved<Workspace>>) -> Workspace {
 /// Saves the open tabs. Not async, so saves happen in the order they were asked for.
 #[tauri::command]
 fn set_workspace(workspace: Workspace, file: State<Saved<Workspace>>) -> Result<(), String> {
-    let workspace = workspace.checked();
+    let mut current = file.current.lock().unwrap_or_else(PoisonError::into_inner);
+    // The window's place and size come from the window, not from the UI.
+    let workspace = Workspace {
+        window: current.window,
+        ..workspace
+    }
+    .checked();
     workspace
         .save(&file.path)
         .map_err(|error| file.save_problem(error))?;
-    file.set(workspace);
+    *current = workspace;
     Ok(())
 }
 
@@ -105,12 +112,24 @@ fn main() {
                 current: Mutex::new(Settings::load(&settings)),
                 path: settings,
             });
+            let workspace_now = Workspace::load(&workspace);
+            let window_before = workspace_now.window;
             app.manage(Saved {
-                current: Mutex::new(Workspace::load(&workspace)),
+                current: Mutex::new(workspace_now),
                 path: workspace,
             });
             app.manage(sessions::Sessions::default());
+            app.manage(window::Unsaved::default());
+            if let Some(main) = app.get_webview_window("main") {
+                window::restore(&main, window_before);
+            }
+            window::keep_saving(app.handle().clone());
             Ok(())
+        })
+        .on_window_event(|window, event| match event {
+            WindowEvent::Moved(_) | WindowEvent::Resized(_) => window::changed(window),
+            WindowEvent::CloseRequested { .. } => window::keep(window),
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             app_info,

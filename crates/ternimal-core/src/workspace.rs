@@ -84,12 +84,58 @@ fn is_default<T: Default + PartialEq>(value: &T) -> bool {
     *value == T::default()
 }
 
+/// The smallest window size kept; anything smaller is taken as a mistake.
+const WINDOW_MIN: (u32, u32) = (200, 150);
+
+/// Where the window was and how big, in screen pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowState {
+    /// The window's top left corner, its frame included.
+    pub x: i32,
+    pub y: i32,
+    /// The size of the window's inside, its frame not included.
+    pub width: u32,
+    pub height: u32,
+    /// Whether it filled the screen. The place and size above are then the
+    /// ones it goes back to.
+    #[serde(default)]
+    pub maximized: bool,
+}
+
+/// A rectangle on the screens, in pixels: a screen's usable area.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Area {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl WindowState {
+    /// Whether enough of the window's title bar is on one of the screens to
+    /// grab it with the mouse. A screen may have been unplugged since, or set
+    /// to another resolution.
+    pub fn reachable(&self, screens: &[Area]) -> bool {
+        // The top 30 pixels of the window: at least 100 by 20 of them on one screen.
+        screens.iter().any(|screen| {
+            let left = self.x.max(screen.x);
+            let right = (self.x + self.width as i32).min(screen.x + screen.width as i32);
+            let top = self.y.max(screen.y);
+            let bottom = (self.y + 30).min(screen.y + screen.height as i32);
+            right - left >= 100 && bottom - top >= 20
+        })
+    }
+}
+
 /// Everything in `workspace.toml`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Workspace {
     /// The tab in front, counted from 0.
     pub active: usize,
+    /// The window's place and size when it last moved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window: Option<WindowState>,
     pub sessions: Vec<SessionSetup>,
 }
 
@@ -104,9 +150,13 @@ impl Workspace {
         tomlfile::save(self, path, HEADER)
     }
 
-    /// The same workspace with the tab in front pointing at a tab that exists.
+    /// The same workspace with the tab in front pointing at a tab that exists,
+    /// and without a window size too small to be real.
     pub fn checked(mut self) -> Self {
         self.active = self.active.min(self.sessions.len().saturating_sub(1));
+        self.window = self
+            .window
+            .filter(|window| window.width >= WINDOW_MIN.0 && window.height >= WINDOW_MIN.1);
         self
     }
 }
@@ -169,6 +219,7 @@ mod tests {
         let path = dir.file("workspace.toml");
         let workspace = Workspace {
             active: 0,
+            window: None,
             sessions: vec![nucleo(), rtt_tab()],
         };
         workspace.save(&path).unwrap();
@@ -193,6 +244,7 @@ mod tests {
         let path = dir.file("workspace.toml");
         let workspace = Workspace {
             active: 1,
+            window: None,
             sessions: vec![
                 nucleo(),
                 SessionSetup {
@@ -240,17 +292,88 @@ mod tests {
     fn tab_in_front_always_exists() {
         let workspace = Workspace {
             active: 7,
+            window: None,
             sessions: vec![nucleo()],
         };
         assert_eq!(workspace.checked().active, 0);
         assert_eq!(
             Workspace {
                 active: 3,
+                window: None,
                 sessions: vec![]
             }
             .checked()
             .active,
             0
         );
+    }
+
+    fn window(x: i32, y: i32, width: u32, height: u32) -> WindowState {
+        WindowState {
+            x,
+            y,
+            width,
+            height,
+            maximized: false,
+        }
+    }
+
+    const LAPTOP: Area = Area {
+        x: 0,
+        y: 0,
+        width: 1920,
+        height: 1040,
+    };
+    const RIGHT_SCREEN: Area = Area {
+        x: 1920,
+        y: 0,
+        width: 2560,
+        height: 1400,
+    };
+
+    #[test]
+    fn window_place_and_size_are_kept() {
+        let dir = TempDir::new("workspace-window");
+        let path = dir.file("workspace.toml");
+        let workspace = Workspace {
+            active: 0,
+            window: Some(WindowState {
+                maximized: true,
+                ..window(120, 80, 1200, 760)
+            }),
+            sessions: vec![nucleo()],
+        };
+        workspace.save(&path).unwrap();
+        assert_eq!(Workspace::load(&path), workspace);
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains("[window]") && text.contains("maximized = true"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_window_too_small_to_be_real_is_dropped() {
+        let workspace = Workspace {
+            window: Some(window(0, 0, 50, 20)),
+            ..Workspace::default()
+        };
+        assert_eq!(workspace.checked().window, None);
+    }
+
+    #[test]
+    fn a_window_on_a_screen_is_reachable() {
+        assert!(window(100, 100, 1200, 760).reachable(&[LAPTOP]));
+        assert!(window(2200, 50, 1200, 760).reachable(&[LAPTOP, RIGHT_SCREEN]));
+        // Mostly off the left edge, but enough of the title bar is still there.
+        assert!(window(-1000, 10, 1200, 760).reachable(&[LAPTOP]));
+    }
+
+    #[test]
+    fn a_window_on_an_unplugged_screen_is_not_reachable() {
+        assert!(!window(2200, 50, 1200, 760).reachable(&[LAPTOP]));
+        // Its title bar is above the top of the screen.
+        assert!(!window(100, -500, 1200, 760).reachable(&[LAPTOP]));
+        assert!(!window(100, 100, 1200, 760).reachable(&[]));
     }
 }

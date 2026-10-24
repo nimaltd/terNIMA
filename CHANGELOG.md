@@ -94,6 +94,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Documents unless set), the format, and the date and time on each line.
 - File > Save output as (Ctrl+Shift+S) saves what the terminal shows,
   scrollback and all, as text. File > Open log folder shows the logs.
+- The window opens where it was and at the size it had, maximized if it
+  was, and goes back to its earlier size when un-maximized. If the screen it
+  was on has been unplugged, it opens in the middle of the main screen. It
+  starts hidden until it is in place, so it never jumps.
 - Example programs in `crates/ternimal-core/examples`: `probes` lists probes
   and reads an STM32's ID register, `rtt` and `swo` run a session from the
   command line, and `flash` writes an ELF file to a chip.
