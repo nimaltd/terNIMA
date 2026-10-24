@@ -82,6 +82,18 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   0x44024004, as probe-rs looks for it where the U5 and L5 have it.
 - A shared probe module for RTT and SWO: the probe list, the chip search and
   attaching.
+- Log files. Each tab turns its log on or off with the Log button in the
+  toolbar, File > Log this tab to a file, or Ctrl+Shift+L. A text log has
+  the colors and other escape codes removed and the date and time at the
+  start of every line; a raw log keeps every byte. Connects, disconnects
+  and reconnects get a marker line. Every log starts a new file named after
+  the tab and the time, and the status bar shows it; a click shows it in
+  its folder. A failed write turns the log off and says why.
+- A Settings window (File > Settings, Ctrl+,) with the theme, the text size
+  and the logging options: log new tabs, the folder ("ternimal logs" in
+  Documents unless set), the format, and the date and time on each line.
+- File > Save output as (Ctrl+Shift+S) saves what the terminal shows,
+  scrollback and all, as text. File > Open log folder shows the logs.
 - Example programs in `crates/ternimal-core/examples`: `probes` lists probes
   and reads an STM32's ID register, `rtt` and `swo` run a session from the
   command line, and `flash` writes an ELF file to a chip.

@@ -5,6 +5,7 @@
 
 mod banner;
 mod hex;
+pub mod logfile;
 pub mod probe;
 pub mod rtt;
 pub mod serial;

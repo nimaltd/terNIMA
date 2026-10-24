@@ -4307,6 +4307,7 @@ dependencies = [
 name = "ternimal-core"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "probe-rs",
  "serde",
  "serialport",

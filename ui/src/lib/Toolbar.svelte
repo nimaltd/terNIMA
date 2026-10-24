@@ -150,6 +150,16 @@
 
   <span class="spacer"></span>
 
+  <button
+    class="btn small log"
+    class:on={tab.log}
+    title={tab.logPath ?? (tab.log ? "The log starts when the tab connects" : "Write what this tab receives to a log file")}
+    onclick={() => act(() => tab.setLog(!tab.log))}
+  >
+    <span class="dot"></span>
+    Log
+  </button>
+
   {#if tab.kind === "swo"}
     <span class="muted" title="SWO only comes from the chip">Output only</span>
   {:else}
@@ -236,6 +246,23 @@
   .option select {
     height: 24px;
     padding: 0 4px;
+  }
+
+  .log .dot {
+    width: 8px;
+    height: 8px;
+    border: 1.5px solid var(--muted);
+    border-radius: 50%;
+  }
+
+  .log.on {
+    color: var(--text);
+    border-color: var(--bad);
+  }
+
+  .log.on .dot {
+    background: var(--bad);
+    border-color: var(--bad);
   }
 
   .leds {

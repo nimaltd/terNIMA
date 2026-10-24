@@ -5,6 +5,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::logfile::LogFormat;
 use crate::tomlfile;
 
 /// Smallest terminal text size, in pixels.
@@ -28,12 +29,37 @@ pub enum Theme {
     Light,
 }
 
+/// How log files are written. Each tab turns its own log on or off.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LogSettings {
+    /// New tabs start with their log on.
+    pub new_tabs: bool,
+    /// Where log files go. Empty means a "ternimal logs" folder in Documents.
+    pub folder: String,
+    pub format: LogFormat,
+    /// Puts the date and time at the start of every line of a text log.
+    pub timestamps: bool,
+}
+
+impl Default for LogSettings {
+    fn default() -> Self {
+        Self {
+            new_tabs: false,
+            folder: String::new(),
+            format: LogFormat::Text,
+            timestamps: true,
+        }
+    }
+}
+
 /// Everything in `settings.toml`. A value missing from the file takes its default.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub theme: Theme,
     pub font_size: u8,
+    pub log: LogSettings,
 }
 
 impl Default for Settings {
@@ -41,6 +67,7 @@ impl Default for Settings {
         Self {
             theme: Theme::System,
             font_size: FONT_SIZE_DEFAULT,
+            log: LogSettings::default(),
         }
     }
 }
@@ -86,6 +113,12 @@ mod tests {
         let settings = Settings {
             theme: Theme::Light,
             font_size: 18,
+            log: LogSettings {
+                new_tabs: true,
+                folder: "D:/logs".into(),
+                format: LogFormat::Raw,
+                timestamps: false,
+            },
         };
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path), settings);

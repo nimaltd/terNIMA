@@ -39,6 +39,12 @@ export type AppActions = {
   newSwoSession(): void;
   /** Opens the settings dialog of the tab in front. */
   sessionSettings(): void;
+  /** Opens the app's settings. */
+  settings(): void;
+  /** Saves what the terminal in front shows to a file the user picks. */
+  saveOutput(): void;
+  /** Shows the log file, or the log folder, in the OS's file manager. */
+  openLogFolder(): void;
 };
 
 const GITHUB = "https://github.com/nimaltd/ternimal";
@@ -88,7 +94,25 @@ export function buildMenus(app: AppActions): Menu[] {
           },
         },
         null,
-        { label: "Save output as...", phase: 1 },
+        {
+          label: "Log this tab to a file",
+          shortcut: keys("Ctrl+Shift+L", "Cmd+Shift+L"),
+          enabled: hasTab,
+          checked: () => activeTab()?.log ?? false,
+          run: () => {
+            const tab = activeTab();
+            tab?.setLog(!tab.log);
+          },
+        },
+        { label: "Open log folder", run: app.openLogFolder },
+        {
+          label: "Save output as...",
+          shortcut: keys("Ctrl+Shift+S", "Cmd+Shift+S"),
+          enabled: hasTerminal,
+          run: app.saveOutput,
+        },
+        null,
+        { label: "Settings...", shortcut: keys("Ctrl+,", "Cmd+,"), run: app.settings },
         null,
         isMac
           ? { label: "Quit ternimal", shortcut: "Cmd+Q", run: app.exit }

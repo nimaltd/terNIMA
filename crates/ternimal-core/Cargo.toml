@@ -10,6 +10,7 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 probe-rs = "0.32.0"
 serde = { version = "1", features = ["derive"] }
 serialport = { version = "4.10", features = ["usbportinfo-interface", "usbportinfo-location"] }

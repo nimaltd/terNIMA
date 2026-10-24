@@ -134,6 +134,9 @@ fn main() {
             sessions::reconfigure_rtt_session,
             sessions::reconfigure_swo_session,
             sessions::reset_target,
+            sessions::set_log,
+            sessions::default_log_folder,
+            sessions::save_text,
         ])
         .run(tauri::generate_context!())
         .expect("ternimal could not start");

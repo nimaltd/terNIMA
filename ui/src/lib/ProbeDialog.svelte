@@ -19,6 +19,7 @@
     type SwoConfig,
   } from "./probe";
   import { DEFAULT_TERMINAL, type TerminalOptions } from "./serial";
+  import { settings } from "./settings.svelte";
   import { addTab, changed, tabs, type Tab } from "./tabs.svelte";
 
   let {
@@ -201,7 +202,14 @@
       }
       changed();
     } else {
-      addTab({ name: sessionName, kind: KIND, connected: false, terminal: { ...terminal }, ...config }).start();
+      addTab({
+        name: sessionName,
+        kind: KIND,
+        connected: false,
+        log: settings.log.new_tabs,
+        terminal: { ...terminal },
+        ...config,
+      }).start();
     }
     onclose();
   }

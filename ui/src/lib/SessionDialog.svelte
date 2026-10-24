@@ -14,6 +14,7 @@
     type SerialConfig,
     type TerminalOptions,
   } from "./serial";
+  import { settings } from "./settings.svelte";
   import { addTab, changed, tabs, type Tab } from "./tabs.svelte";
 
   let {
@@ -116,6 +117,7 @@
         name: sessionName,
         kind: "serial",
         connected: false,
+        log: settings.log.new_tabs,
         port: portId,
         serial: { ...serial },
         terminal: { ...terminal },

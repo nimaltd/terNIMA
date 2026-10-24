@@ -1,7 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import { bytes, elapsed, look, stateText } from "./state";
   import type { Tab } from "./tabs.svelte";
+
+  /** The file name at the end of a path, with \ or / between folders. */
+  function fileName(path: string): string {
+    return path.split(/[\\/]/).pop() ?? path;
+  }
 
   type AppInfo = { version: string; os: string; arch: string };
 
@@ -24,6 +30,16 @@
     <span class="divider"></span>
     <span title="Bytes received">RX {bytes(tab.rx)}</span>
     <span title="Bytes sent">TX {bytes(tab.tx)}</span>
+    {#if tab.logPath}
+      <span class="divider"></span>
+      <button
+        class="log"
+        title={`${tab.logPath}\nClick to show it in its folder`}
+        onclick={() => revealItemInDir(tab.logPath!)}
+      >
+        Logging to {fileName(tab.logPath)}
+      </button>
+    {/if}
   {:else}
     <span>Not connected</span>
   {/if}
@@ -65,6 +81,23 @@
 
   .state.problem {
     color: var(--bad);
+  }
+
+  .log {
+    max-width: 320px;
+    overflow: hidden;
+    padding: 0;
+    font: inherit;
+    color: var(--bad);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    background: none;
+    border: 0;
+    cursor: default;
+  }
+
+  .log:hover {
+    text-decoration: underline;
   }
 
   .spacer {

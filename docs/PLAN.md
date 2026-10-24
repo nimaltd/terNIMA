@@ -203,9 +203,13 @@ See [Plotter and dashboard](#plotter-and-dashboard) below.
 ## Logging to file
 
 - Raw bytes, or plain text with colors removed, with or without timestamps
-- Auto log: every session writes its own file, named after the session and the date
-- New file by size or by day
-- A marker in the file when the device disconnects and comes back
+- Each tab turns its log on or off (the Log button, File > Log this tab, Ctrl+Shift+L);
+  new tabs can start with it on (Settings > Logging)
+- Every log is a new file named after the tab and the time, in a folder of your choice
+  ("ternimal logs" in Documents unless set)
+- A marker in the file when the device connects, disconnects and comes back
+- File > Save output as saves what the terminal shows, scrollback and all
+- Later: a new file by size or by day
 
 ---
 
@@ -510,7 +514,8 @@ Done when the installers from CI open the same window on all three OSes.
 - [x] Clear messages when a port cannot be opened, naming the tab when ternimal itself has it
 - [x] Tabs, with Ctrl+Tab and Ctrl+Shift+Tab, and a state dot on each
 - [x] Status bar: state, time connected, bytes in and out
-- [ ] Logging to file, and File > Save output as
+- [x] Logging to file: per tab on or off, text or raw, timestamps, markers; a Settings
+  window with the logging options; File > Save output as and Open log folder
 - [ ] Window size and position kept in `workspace.toml`
 - [ ] Text encodings other than UTF-8
 - [ ] Unplug and replug tried by hand on Windows, Linux and macOS (the reconnect logic is

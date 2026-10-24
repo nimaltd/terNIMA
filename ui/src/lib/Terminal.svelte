@@ -73,6 +73,24 @@
     },
     selectAll: () => term.selectAll(),
     clear: () => term.clear(),
+    text: () => {
+      const buffer = term.buffer.active;
+      const lines: string[] = [];
+      for (let row = 0; row < buffer.length; row++) {
+        const line = buffer.getLine(row);
+        const text = line?.translateToString(true) ?? "";
+        // A line the terminal wrapped goes on the line before it.
+        if (line?.isWrapped && lines.length > 0) {
+          lines[lines.length - 1] += text;
+        } else {
+          lines.push(text);
+        }
+      }
+      while (lines.length > 0 && lines[lines.length - 1] === "") {
+        lines.pop();
+      }
+      return `${lines.join("\n")}\n`;
+    },
     focus: () => term.focus(),
   };
 

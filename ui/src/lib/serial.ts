@@ -51,6 +51,8 @@ export type SessionSetup = {
   name: string;
   kind: SessionKind;
   connected: boolean;
+  /** Whether what it receives is written to a log file. */
+  log?: boolean;
   port?: PortId;
   serial?: SerialConfig;
   rtt?: RttConfig;
@@ -73,7 +75,8 @@ export type SessionEvent =
   | ({ kind: "rtt_state" } & RttState)
   | { kind: "channels"; up: ChannelInfo[]; down: ChannelInfo[] }
   | ({ kind: "swo_state" } & SwoState)
-  | { kind: "overflow"; count: number };
+  | { kind: "overflow"; count: number }
+  | { kind: "log_stopped"; problem: string };
 
 export const DEFAULT_SERIAL: SerialConfig = {
   baud: 115200,

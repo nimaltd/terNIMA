@@ -2,16 +2,19 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { save } from "@tauri-apps/plugin-dialog";
+  import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import About from "./lib/About.svelte";
   import MenuBar from "./lib/MenuBar.svelte";
   import ProbeDialog from "./lib/ProbeDialog.svelte";
   import SessionDialog from "./lib/SessionDialog.svelte";
+  import SettingsDialog from "./lib/SettingsDialog.svelte";
   import StatusBar from "./lib/StatusBar.svelte";
   import TabBar from "./lib/TabBar.svelte";
   import Terminal from "./lib/Terminal.svelte";
   import Toolbar from "./lib/Toolbar.svelte";
   import { buildMenus, isEnabled, itemForKey, menuForAltKey } from "./lib/menus";
-  import { loadSettings, settings } from "./lib/settings.svelte";
+  import { defaultLogFolder, loadSettings, settings } from "./lib/settings.svelte";
   import { activeTab, loadWorkspace, tabs, view, type Tab } from "./lib/tabs.svelte";
   import { activeTerminal } from "./lib/terminal-actions";
   import type { SessionKind } from "./lib/serial";
@@ -22,6 +25,7 @@
   let info = $state<AppInfo>();
   let ready = $state(false);
   let aboutOpen = $state(false);
+  let settingsOpen = $state(false);
   /** The open session dialog, if any: for a new session, or for a tab's settings. */
   let dialog: { kind: SessionKind; tab: Tab | null } | null = $state(null);
   let menuBar: MenuBar;
@@ -33,7 +37,38 @@
     newRttSession: () => (dialog = { kind: "rtt", tab: null }),
     newSwoSession: () => (dialog = { kind: "swo", tab: null }),
     sessionSettings,
+    settings: () => (settingsOpen = true),
+    saveOutput,
+    openLogFolder,
   });
+
+  /** Saves what the terminal in front shows, scrollback and all, to a file the user picks. */
+  async function saveOutput() {
+    const terminal = activeTerminal();
+    if (!terminal) {
+      return;
+    }
+    const name = activeTab()?.name ?? "ternimal";
+    const path = await save({
+      title: "Save output as",
+      // The tab's name, without the characters file names cannot have.
+      defaultPath: `${name.replace(/[<>:"/\\|?*]/g, "_")}.txt`,
+      filters: [
+        { name: "Text", extensions: ["txt", "log"] },
+        { name: "All files", extensions: ["*"] },
+      ],
+    });
+    if (path) {
+      await invoke("save_text", { path, text: terminal.text() }).catch((error) => console.error(error));
+    }
+    focusTerminal();
+  }
+
+  /** Shows the tab's log file in its folder, or the log folder when there is no log. */
+  async function openLogFolder() {
+    const path = activeTab()?.logPath ?? (settings.log.folder || (await defaultLogFolder()));
+    await revealItemInDir(path).catch((error) => console.error(error));
+  }
 
   /** Opens the settings of the tab in front, in the dialog of its kind. */
   function sessionSettings() {
@@ -62,7 +97,7 @@
   });
 
   function onkeydown(event: KeyboardEvent) {
-    if (aboutOpen || dialog) {
+    if (aboutOpen || settingsOpen || dialog) {
       return;
     }
     const item = itemForKey(menus, event);
@@ -128,6 +163,15 @@
   <ProbeDialog kind={dialog.kind} tab={dialog.tab} onclose={closeDialog} />
 {:else if dialog}
   <SessionDialog tab={dialog.tab} onclose={closeDialog} />
+{/if}
+
+{#if settingsOpen}
+  <SettingsDialog
+    onclose={() => {
+      settingsOpen = false;
+      focusTerminal();
+    }}
+  />
 {/if}
 
 {#if aboutOpen && info}

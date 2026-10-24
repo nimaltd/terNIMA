@@ -1,4 +1,5 @@
-// The open tabs, each with its session (serial or RTT), and saving them to workspace.toml.
+// The open tabs, each with its session (serial, RTT or SWO) and its log, and
+// saving them to workspace.toml.
 
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { Terminal } from "@xterm/xterm";
@@ -27,6 +28,13 @@ import {
   type SessionSetup,
   type TerminalOptions,
 } from "./serial";
+import { settings } from "./settings.svelte";
+
+/** Whether a log is being written, and where; or why it could not start. */
+type LogStatus = { path: string | null; problem: string | null };
+
+/** How a session's log file is written, for the Rust side. */
+type LogSetup = { folder: string; name: string; format: string; timestamps: boolean };
 
 const encoder = new TextEncoder();
 const ENTER = { cr: "\r", lf: "\n", crlf: "\r\n" };
@@ -61,6 +69,10 @@ export class Tab {
   tx = $state(0);
   /** When the connection started, while connected. */
   connectedAt: number | null = $state(null);
+  /** Whether what the tab receives is written to a log file. */
+  log = $state(false);
+  /** The log file being written, while the session runs with its log on. */
+  logPath: string | null = $state(null);
 
   private term: Terminal | null = null;
   /** What arrived before the terminal was ready. */
@@ -80,6 +92,7 @@ export class Tab {
     this.rtt = { ...DEFAULT_RTT, ...setup.rtt };
     this.swo = { ...DEFAULT_SWO, ...setup.swo };
     this.terminal = { ...DEFAULT_TERMINAL, ...setup.terminal };
+    this.log = setup.log ?? false;
   }
 
   get connected(): boolean {
@@ -95,7 +108,13 @@ export class Tab {
 
   /** How the tab is saved in workspace.toml. */
   setup(): SessionSetup {
-    const common = { name: this.name, kind: this.kind, connected: this.running, terminal: this.terminal };
+    const common = {
+      name: this.name,
+      kind: this.kind,
+      connected: this.running,
+      log: this.log,
+      terminal: this.terminal,
+    };
     switch (this.kind) {
       case "rtt":
         return $state.snapshot({ ...common, rtt: this.rtt });
@@ -132,20 +151,58 @@ export class Tab {
     const events = new Channel<SessionEvent>();
     events.onmessage = (event) => this.onEvent(event);
 
+    // The log starts with the session, so not a byte is missed.
+    const common = { id: this.id, log: this.logSetup(), data, events };
     const started =
       this.kind === "rtt"
-        ? invoke("open_rtt_session", { id: this.id, config: $state.snapshot(this.rtt), data, events })
+        ? invoke<LogStatus>("open_rtt_session", { ...common, config: $state.snapshot(this.rtt) })
         : this.kind === "swo"
-          ? invoke("open_swo_session", { id: this.id, config: $state.snapshot(this.swo), data, events })
-          : invoke("open_session", {
-              id: this.id,
+          ? invoke<LogStatus>("open_swo_session", { ...common, config: $state.snapshot(this.swo) })
+          : invoke<LogStatus>("open_session", {
+              ...common,
               port: $state.snapshot(this.port),
               config: $state.snapshot(this.serial),
-              data,
-              events,
             });
-    started.catch((error) => this.note(`could not start: ${error}`));
+    started
+      .then((status) => this.onLogStatus(status))
+      .catch((error) => this.note(`could not start: ${error}`));
     changed();
+  }
+
+  /** Turns the tab's log on or off. A running session starts a new file at once. */
+  setLog(on: boolean): void {
+    this.log = on;
+    changed();
+    if (!this.running) {
+      return;
+    }
+    if (!on && this.logPath) {
+      this.note(`log closed: ${this.logPath}`);
+    }
+    this.logPath = null;
+    invoke<LogStatus>("set_log", { id: this.id, log: this.logSetup() })
+      .then((status) => this.onLogStatus(status))
+      .catch((error) => this.note(`could not start the log: ${error}`));
+  }
+
+  /** How the log is written, from the settings, or null while the log is off. */
+  private logSetup(): LogSetup | null {
+    if (!this.log) {
+      return null;
+    }
+    const { folder, format, timestamps } = settings.log;
+    return { folder, name: this.name, format, timestamps };
+  }
+
+  private onLogStatus(status: LogStatus): void {
+    this.logPath = status.path;
+    if (status.path) {
+      this.note(`logging to ${status.path}`);
+    } else if (status.problem) {
+      this.log = false;
+      this.note(status.problem);
+      changed();
+    }
   }
 
   /** Disconnects. */
@@ -160,6 +217,7 @@ export class Tab {
     this.status = null;
     this.lines = null;
     this.connectedAt = null;
+    this.logPath = null;
     void invoke("close_session", { id: this.id });
     changed();
   }
@@ -296,6 +354,12 @@ export class Tab {
         } else {
           this.onWaiting(event.problem);
         }
+        return;
+      case "log_stopped":
+        this.log = false;
+        this.logPath = null;
+        this.note(event.problem);
+        changed();
         return;
       case "overflow":
         this.note(`SWO overflow: the chip dropped trace data ${event.count} times. A higher baud rate helps.`);

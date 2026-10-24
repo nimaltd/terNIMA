@@ -65,6 +65,9 @@ pub struct SessionSetup {
     /// Whether it was connected when the app closed. If so, it connects again at start.
     #[serde(default)]
     pub connected: bool,
+    /// Whether what it receives is written to a log file.
+    #[serde(default)]
+    pub log: bool,
     #[serde(default, skip_serializing_if = "is_default")]
     pub port: PortId,
     #[serde(default, skip_serializing_if = "is_default")]
@@ -121,6 +124,7 @@ mod tests {
             name: "Nucleo".into(),
             kind: SessionKind::Serial,
             connected: true,
+            log: true,
             port: PortId {
                 name: "COM6".into(),
                 usb: Some(UsbId {
@@ -146,6 +150,7 @@ mod tests {
             name: "H503 RTT".into(),
             kind: SessionKind::Rtt,
             connected: true,
+            log: false,
             port: PortId::default(),
             serial: SerialConfig::default(),
             rtt: RttConfig {

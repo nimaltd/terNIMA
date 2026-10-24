@@ -6,6 +6,8 @@ export interface TerminalActions {
   paste(): Promise<void>;
   selectAll(): void;
   clear(): void;
+  /** Everything in the terminal and its scrollback, as plain text. */
+  text(): string;
   focus(): void;
 }
 
