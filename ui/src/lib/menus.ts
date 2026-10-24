@@ -1,0 +1,186 @@
+// What is in the menu bar. Items for later phases of the roadmap are listed
+// already, greyed out with their phase, so the menus show where the app is going.
+
+import { openUrl } from "@tauri-apps/plugin-opener";
+import {
+  FONT_SIZE_DEFAULT,
+  FONT_SIZE_MAX,
+  FONT_SIZE_MIN,
+  settings,
+  updateSettings,
+  type ThemeChoice,
+} from "./settings.svelte";
+import { isMac, keys, matches } from "./shortcuts";
+import { activeTerminal } from "./terminal-actions";
+
+export type Item = {
+  label: string;
+  shortcut?: string;
+  /** The roadmap phase that brings this item. Until then it is greyed out. */
+  phase?: number;
+  enabled?: () => boolean;
+  checked?: () => boolean;
+  run?: () => void;
+};
+
+/** A menu's items, with `null` for a separator line. */
+export type Menu = { title: string; items: (Item | null)[] };
+
+/** What the menus ask of the app around them. */
+export type AppActions = {
+  about(): void;
+  exit(): void;
+};
+
+const GITHUB = "https://github.com/nimaltd/ternimal";
+
+export function buildMenus(app: AppActions): Menu[] {
+  const terminal = activeTerminal;
+  const hasTerminal = () => terminal() !== null;
+
+  const theme = (label: string, choice: ThemeChoice): Item => ({
+    label,
+    checked: () => settings.theme === choice,
+    run: () => updateSettings({ theme: choice }),
+  });
+  const textSize = (size: number) =>
+    updateSettings({ font_size: Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, size)) });
+
+  return [
+    {
+      title: "File",
+      items: [
+        { label: "New serial session...", phase: 1 },
+        { label: "New RTT session...", phase: 2 },
+        null,
+        { label: "Save output as...", phase: 1 },
+        null,
+        isMac
+          ? { label: "Quit ternimal", shortcut: "Cmd+Q", run: app.exit }
+          : { label: "Exit", run: app.exit },
+      ],
+    },
+    {
+      title: "Edit",
+      items: [
+        {
+          label: "Copy",
+          shortcut: keys("Ctrl+Shift+C", "Cmd+C"),
+          enabled: () => terminal()?.hasSelection() ?? false,
+          run: () => void terminal()?.copy(),
+        },
+        {
+          label: "Paste",
+          shortcut: keys("Ctrl+Shift+V", "Cmd+V"),
+          enabled: hasTerminal,
+          run: () => void terminal()?.paste(),
+        },
+        {
+          label: "Select all",
+          shortcut: keys("Ctrl+Shift+A", "Cmd+A"),
+          enabled: hasTerminal,
+          run: () => terminal()?.selectAll(),
+        },
+        null,
+        { label: "Find...", shortcut: keys("Ctrl+Shift+F", "Cmd+F"), phase: 3 },
+        {
+          label: "Clear screen",
+          shortcut: keys("Ctrl+Shift+K", "Cmd+K"),
+          enabled: hasTerminal,
+          run: () => terminal()?.clear(),
+        },
+      ],
+    },
+    {
+      title: "View",
+      items: [
+        { label: "Terminal", checked: () => true, run: () => {} },
+        { label: "Log", phase: 3 },
+        { label: "Hex", phase: 3 },
+        { label: "Plot", phase: 4 },
+        null,
+        {
+          label: "Bigger text",
+          shortcut: keys("Ctrl+=", "Cmd+="),
+          run: () => textSize(settings.font_size + 1),
+        },
+        {
+          label: "Smaller text",
+          shortcut: keys("Ctrl+-", "Cmd+-"),
+          run: () => textSize(settings.font_size - 1),
+        },
+        {
+          label: "Normal text size",
+          shortcut: keys("Ctrl+0", "Cmd+0"),
+          run: () => textSize(FONT_SIZE_DEFAULT),
+        },
+        null,
+        theme("System theme", "system"),
+        theme("Dark theme", "dark"),
+        theme("Light theme", "light"),
+      ],
+    },
+    {
+      title: "Connection",
+      items: [
+        { label: "Connect", phase: 1 },
+        { label: "Disconnect", phase: 1 },
+        null,
+        { label: "Port settings...", phase: 1 },
+        null,
+        { label: "DTR", phase: 1 },
+        { label: "RTS", phase: 1 },
+        { label: "Send break", phase: 1 },
+      ],
+    },
+    {
+      title: "Tools",
+      items: [
+        { label: "Send file...", phase: 3 },
+        { label: "Macros...", phase: 3 },
+        { label: "Plotter", phase: 4 },
+        null,
+        { label: "Flash firmware...", phase: 5 },
+        { label: "Calculators", phase: 6 },
+      ],
+    },
+    {
+      title: "Help",
+      items: [
+        { label: "ternimal on GitHub", run: () => void openUrl(GITHUB) },
+        { label: "Report a bug...", run: () => void openUrl(`${GITHUB}/issues/new`) },
+        null,
+        { label: "About ternimal", run: app.about },
+      ],
+    },
+  ];
+}
+
+/** Whether an item can be used right now. */
+export function isEnabled(item: Item): boolean {
+  return item.phase === undefined && item.run !== undefined && (item.enabled?.() ?? true);
+}
+
+/**
+ * The item whose shortcut this key press is, if any. Its key never reaches the
+ * device, even while the item is greyed out, so a shortcut always means one thing.
+ */
+export function itemForKey(menus: Menu[], event: KeyboardEvent): Item | null {
+  for (const menu of menus) {
+    for (const item of menu.items) {
+      if (item?.shortcut && matches(item.shortcut, event)) {
+        return item;
+      }
+    }
+  }
+  return null;
+}
+
+/** Alt+F opens File, Alt+E opens Edit and so on; not on macOS, where Option types characters. */
+export function menuForAltKey(menus: Menu[], event: KeyboardEvent): number | null {
+  if (isMac || !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+    return null;
+  }
+  const index = menus.findIndex((menu) => event.code === `Key${menu.title[0]}`);
+  return index >= 0 ? index : null;
+}

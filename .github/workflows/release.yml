@@ -1,0 +1,65 @@
+name: Release
+
+# A tag such as v0.1.0 builds the installers for every OS and puts them on a
+# draft GitHub Release. It can also be started by hand from the Actions tab.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            targets: ""
+            args: ""
+          - name: macOS
+            os: macos-latest
+            # One app for Apple Silicon and Intel.
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin
+          - name: Linux
+            # The oldest supported Ubuntu, so the AppImage runs on older systems too.
+            os: ubuntu-22.04
+            targets: ""
+            args: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Linux packages for Tauri
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev file
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.targets }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: ternimal v__VERSION__
+          releaseBody: See CHANGELOG.md for what changed.
+          releaseDraft: true
+          prerelease: true
+          args: ${{ matrix.args }}
