@@ -5,6 +5,7 @@
   import { open, save } from "@tauri-apps/plugin-dialog";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import About from "./lib/About.svelte";
+  import CommandPalette from "./lib/CommandPalette.svelte";
   import HexBar from "./lib/HexBar.svelte";
   import HighlightsDialog from "./lib/HighlightsDialog.svelte";
   import LinesView from "./lib/LinesView.svelte";
@@ -19,7 +20,9 @@
   import TcpDialog from "./lib/TcpDialog.svelte";
   import Terminal from "./lib/Terminal.svelte";
   import Toolbar from "./lib/Toolbar.svelte";
-  import { buildMenus, isEnabled, itemForKey, macroForKey, menuForAltKey } from "./lib/menus";
+  import { buildMenus, isEnabled, itemForKey, macroForKey, menuCommands, menuForAltKey } from "./lib/menus";
+  import type { Command } from "./lib/palette";
+  import { keys } from "./lib/shortcuts";
   import { defaultLogFolder, loadSettings, settings } from "./lib/settings.svelte";
   import { activeTab, changed, loadWorkspace, showTab, tabs, view, type Tab } from "./lib/tabs.svelte";
   import { activeTerminal } from "./lib/terminal-actions";
@@ -35,6 +38,8 @@
   let settingsOpen = $state(false);
   let macrosOpen = $state(false);
   let highlightsOpen = $state(false);
+  /** The command palette's commands while it is open. */
+  let palette: Command[] | null = $state(null);
   /**
    * The open session dialog, if any: for a new session, or for a tab's
    * settings. A new TCP session can start with a protocol picked.
@@ -59,7 +64,33 @@
     sendFile,
     macros: () => (macrosOpen = true),
     highlights: () => (highlightsOpen = true),
+    commandPalette: openPalette,
   });
+
+  /** Opens the command palette with what can be done now: the menus, the tabs and the macros. */
+  function openPalette() {
+    const commands = menuCommands(menus);
+    tabs.forEach((tab, index) =>
+      commands.push({
+        label: `Go to ${tab.name}`,
+        group: "Tab",
+        checked: index === view.active,
+        run: () => showTab(index),
+      }),
+    );
+    const tab = activeTab();
+    if (tab?.connected && tab.kind !== "swo") {
+      settings.macros.forEach((macro, index) =>
+        commands.push({
+          label: `Send ${macro.name}`,
+          group: "Macro",
+          shortcut: index < 9 ? keys(`Alt+${index + 1}`, `Cmd+${index + 1}`) : undefined,
+          run: () => void tab.sendMacro(macro),
+        }),
+      );
+    }
+    palette = commands;
+  }
 
   /** Picks a file and sends it through the tab in front. */
   async function sendFile() {
@@ -132,7 +163,7 @@
   });
 
   function onkeydown(event: KeyboardEvent) {
-    if (aboutOpen || settingsOpen || macrosOpen || highlightsOpen || dialog) {
+    if (aboutOpen || settingsOpen || macrosOpen || highlightsOpen || palette || dialog) {
       return;
     }
     const item = itemForKey(menus, event);
@@ -324,6 +355,16 @@
   <SettingsDialog
     onclose={() => {
       settingsOpen = false;
+      focusTerminal();
+    }}
+  />
+{/if}
+
+{#if palette}
+  <CommandPalette
+    commands={palette}
+    onclose={() => {
+      palette = null;
       focusTerminal();
     }}
   />

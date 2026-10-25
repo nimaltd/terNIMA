@@ -568,7 +568,7 @@ Done when the Zephyr shell works over RTT on a DAPLink and on a J-Link.
 - [ ] Pauses measured where the bytes are read, for 1 to 2 ms instead of 50 ms at least
 - [x] Send box with history, macros (Alt+1 to Alt+9), escapes such as `\r` and `\x1b`,
   and sending a file paced for the link, with progress and Stop
-- [ ] Command palette
+- [x] Command palette: every menu command, the tabs and the macros, found by a few letters
 
 Done when you can find one module's errors in a busy Zephyr log in seconds.
 

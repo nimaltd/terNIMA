@@ -171,6 +171,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   width as they grow, and
   Copy, Select all, Find and Save output as work on it. Its filters are
   kept per tab in `workspace.toml`, and the rules in `settings.toml`.
+- A command palette (View > Command palette, Ctrl+Shift+P or Cmd+Shift+P):
+  a few letters find any menu command that can be used now, a tab to go
+  to, or a macro to send, such as "sf" for Send file. The matched letters
+  are marked, a check shows what is on, and the commands used lately come
+  first when nothing is typed.
 - "New line after" in the toolbar: data that comes after a pause of 50 ms
   to 2 s starts on a new line, in the terminal and in the hex view, for
   devices that send messages without line endings. Not after what was just

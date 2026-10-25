@@ -10,6 +10,7 @@ import {
   updateSettings,
   type ThemeChoice,
 } from "./settings.svelte";
+import type { Command } from "./palette";
 import { isMac, keys, matches } from "./shortcuts";
 import { activeTab, closeTab, otherPane, showTab, splitView, tabs, unsplit, view } from "./tabs.svelte";
 import { activeTerminal } from "./terminal-actions";
@@ -53,6 +54,8 @@ export type AppActions = {
   macros(): void;
   /** Opens the Lines view's highlight rules. */
   highlights(): void;
+  /** Opens the command palette. */
+  commandPalette(): void;
 };
 
 const GITHUB = "https://github.com/nimaltd/ternima";
@@ -178,6 +181,12 @@ export function buildMenus(app: AppActions): Menu[] {
     {
       title: "View",
       items: [
+        {
+          label: "Command palette...",
+          shortcut: keys("Ctrl+Shift+P", "Cmd+Shift+P"),
+          run: app.commandPalette,
+        },
+        null,
         {
           label: "Terminal",
           enabled: hasTab,
@@ -363,6 +372,28 @@ export function buildMenus(app: AppActions): Menu[] {
       ],
     },
   ];
+}
+
+/**
+ * Every menu item that can be used now, as commands for the palette: the
+ * palette's own item and the items of later phases left out.
+ */
+export function menuCommands(menus: Menu[]): Command[] {
+  const commands: Command[] = [];
+  for (const menu of menus) {
+    for (const item of menu.items) {
+      if (item && isEnabled(item) && item.run && !item.label.startsWith("Command palette")) {
+        commands.push({
+          label: item.label.replace(/\.\.\.$/, ""),
+          group: menu.title,
+          shortcut: item.shortcut,
+          checked: item.checked?.() ?? false,
+          run: item.run,
+        });
+      }
+    }
+  }
+  return commands;
 }
 
 /** Whether an item can be used right now. */
