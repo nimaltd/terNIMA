@@ -10,6 +10,9 @@
   import HighlightsDialog from "./lib/HighlightsDialog.svelte";
   import LinesView from "./lib/LinesView.svelte";
   import PlotView from "./lib/PlotView.svelte";
+  import FramesView from "./lib/FramesView.svelte";
+  import FramesDialog from "./lib/FramesDialog.svelte";
+  import ModbusView from "./lib/ModbusView.svelte";
   import MacrosDialog from "./lib/MacrosDialog.svelte";
   import MenuBar from "./lib/MenuBar.svelte";
   import ProbeDialog from "./lib/ProbeDialog.svelte";
@@ -39,6 +42,8 @@
   let settingsOpen = $state(false);
   let macrosOpen = $state(false);
   let highlightsOpen = $state(false);
+  /** The tab whose frame layout is open. */
+  let framesTab: Tab | null = $state(null);
   /** The command palette's commands while it is open. */
   let palette: Command[] | null = $state(null);
   /**
@@ -67,6 +72,7 @@
     highlights: () => (highlightsOpen = true),
     commandPalette: openPalette,
     playRecording: () => void playRecording(null),
+    frameLayout: () => (framesTab = activeTab() ?? null),
   });
 
   /** Opens the command palette with what can be done now: the menus, the tabs and the macros. */
@@ -347,6 +353,16 @@
                 <PlotView {tab} active={i === view.active} />
               </div>
             {/if}
+            {#if tab.view === "modbus" && onScreen(i)}
+              <div class="view">
+                <ModbusView {tab} active={i === view.active} />
+              </div>
+            {/if}
+            {#if tab.view === "frames" && onScreen(i)}
+              <div class="view">
+                <FramesView {tab} active={i === view.active} onlayout={() => (framesTab = tab)} />
+              </div>
+            {/if}
             {#if tab.view === "hex" && onScreen(i)}
               <div class="view hexview">
                 <HexBar {tab} />
@@ -394,6 +410,16 @@
   <TcpDialog tab={dialog.tab} protocol={dialog.protocol} onclose={closeDialog} />
 {:else if dialog}
   <SessionDialog tab={dialog.tab} onclose={closeDialog} />
+{/if}
+
+{#if framesTab}
+  <FramesDialog
+    tab={framesTab}
+    onclose={() => {
+      framesTab = null;
+      focusTerminal();
+    }}
+  />
 {/if}
 
 {#if settingsOpen}

@@ -171,6 +171,8 @@ pub enum SessionEvent {
 pub struct Piece {
     sent: bool,
     bytes: Vec<u8>,
+    /// When it came, in ms since 1970.
+    at: f64,
 }
 
 /// Whether a log is being written, and where; or why it could not start.
@@ -620,10 +622,10 @@ pub fn open_replay_session(
                 let mut times = Vec::new();
                 for chunk in chunks {
                     let sent = chunk.direction == Direction::Sent;
+                    let at = started + chunk.at * 1000.0;
                     if !sent {
                         // Lines read at once came one after another since the read
                         // before: spread as the live views spread them.
-                        let at = started + chunk.at * 1000.0;
                         let found = splitter.feed(&chunk.bytes);
                         let gap = last_at.map_or(0.0, |before| (at - before).clamp(0.0, SPREAD_MS));
                         let count = found.len();
@@ -633,13 +635,11 @@ pub fn open_replay_session(
                         }
                         last_at = Some(at);
                     }
-                    match pieces.last_mut() {
-                        Some(last) if last.sent == sent => last.bytes.extend(chunk.bytes),
-                        _ => pieces.push(Piece {
-                            sent,
-                            bytes: chunk.bytes,
-                        }),
-                    }
+                    pieces.push(Piece {
+                        sent,
+                        bytes: chunk.bytes,
+                        at,
+                    });
                 }
                 events.send(SessionEvent::Replayed {
                     pieces,

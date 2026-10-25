@@ -3,7 +3,9 @@
 
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { Terminal } from "@xterm/xterm";
+import { DEFAULT_FRAME_SPEC, FrameReader, type Frame, type FrameSpec } from "./frames";
 import { HexDump } from "./hexdump";
+import { DEFAULT_MODBUS, ModbusSession, type ModbusSetup } from "./modbus.svelte";
 import { DEFAULT_TCP, address, protocolText, type TcpConfig } from "./net";
 import {
   DEFAULT_RTT,
@@ -79,9 +81,26 @@ const RTT_FILE_RATE = 1000;
 const LINES_MAX = 100_000;
 /** The most time, in ms, that lines read at once are spread over. */
 const SPREAD_MS = 200;
+/** The most frames a tab keeps; a tenth of them go when there are more. */
+const FRAMES_MAX = 50_000;
 
 /** A line as the Lines view keeps it: numbered from the tab's first, with when it came. */
 export type StoredLine = LogLine & { n: number; at: number };
+
+/** A frame as the Frames view keeps it: numbered from the tab's first, with when it came. */
+export type StoredFrame = Frame & { n: number; at: number };
+
+/** A frame layout as saved, filled in where it says nothing. */
+function frameSpecFrom(saved: Partial<FrameSpec> | undefined): FrameSpec {
+  const spec = structuredClone(DEFAULT_FRAME_SPEC);
+  return {
+    ...spec,
+    ...saved,
+    length: saved?.length ?? null,
+    fields: saved?.fields ?? [],
+    check: { ...spec.check, ...saved?.check },
+  };
+}
 
 let nextId = 1;
 
@@ -135,6 +154,29 @@ export class Tab {
   plotView: PlotView = $state({ ...DEFAULT_PLOT_VIEW });
   /** The number of the first line the plot reads: Clear in the Plot view moves it on. */
   plotFrom = $state(0);
+  /** The same for frames, when the plot reads them. */
+  plotFromFrame = $state(0);
+  /** How the data is split into frames, for the Frames view and the plot. */
+  frameSpec: FrameSpec = $state(structuredClone(DEFAULT_FRAME_SPEC));
+  /**
+   * The frames read lately, oldest first. Plain values rather than $state,
+   * as there can be many: `framesVersion` changes when they do.
+   */
+  readonly frames: StoredFrame[] = [];
+  framesVersion = $state(0);
+  /** How many of the frames kept are wrong. */
+  badFrames = 0;
+  private nextFrame = 0;
+  private frameReader: FrameReader | null = null;
+  /** How the Modbus view asks or answers. */
+  modbusSetup: ModbusSetup = $state(structuredClone(DEFAULT_MODBUS));
+  /** The tab's Modbus master or slave, on its own connection. */
+  readonly modbus = new ModbusSession({
+    send: (bytes) => this.sendBytes(bytes),
+    setup: () => this.modbusSetup,
+    changed: () => changed(),
+    connected: () => this.connected,
+  });
   /**
    * The lines received lately, oldest first, for the Lines view, with how
    * many of each level and module there are. Plain values rather than
@@ -189,6 +231,8 @@ export class Tab {
     this.view = setup.view ?? "terminal";
     this.hexView = { ...DEFAULT_HEX_VIEW, ...setup.hex_view };
     this.linesView = { ...DEFAULT_LINES_VIEW, ...setup.lines_view };
+    this.frameSpec = frameSpecFrom(setup.frames);
+    this.modbusSetup = { ...structuredClone(DEFAULT_MODBUS), ...setup.modbus };
     this.plotView = {
       ...DEFAULT_PLOT_VIEW,
       ...setup.plot_view,
@@ -225,6 +269,8 @@ export class Tab {
       hex_view: this.hexView,
       lines_view: this.linesView,
       plot_view: this.plotView,
+      frames: this.frameSpec,
+      modbus: this.modbusSetup,
       history: this.history,
     };
     switch (this.kind) {
@@ -294,6 +340,8 @@ export class Tab {
   /** Starts the plot again from the next line, leaving the lines kept as they are. */
   clearPlot(): void {
     this.plotFrom = this.nextLine;
+    this.plotFromFrame = this.nextFrame;
+    this.modbus.plotFrom = this.modbus.nextNumber;
   }
 
   /** Marks a line with a bookmark, or takes the bookmark off. */
@@ -489,6 +537,8 @@ export class Tab {
     this.recentBytes = 0;
     this.layOutHex();
     this.clearLines();
+    this.clearFrames();
+    this.frameReader = null;
     this.rx = 0;
     this.tx = 0;
   }
@@ -561,6 +611,7 @@ export class Tab {
     if (this.recordPath) {
       this.note(`recording saved: ${this.recordPath}`);
     }
+    this.modbus.stop();
     this.running = false;
     this.status = null;
     this.lines = null;
@@ -799,30 +850,92 @@ export class Tab {
     void invoke("reset_target", { id: this.id });
   }
 
-  private receive(bytes: Uint8Array): void {
+  /** Changes how frames are read, and reads what came lately again that way. */
+  setFrameSpec(spec: FrameSpec): void {
+    this.frameSpec = spec;
+    changed();
+    this.clearFrames();
+    this.frameReader = null;
+    for (const chunk of this.recent) {
+      if (!chunk.tx) this.readFrames(chunk.bytes, chunk.at);
+    }
+  }
+
+  /** What a frame layout would read from what came lately, before it is kept. */
+  previewFrames(spec: FrameSpec): { frames: number; good: number; first: Frame | null; problem: string | null } {
+    const reader = new FrameReader(spec);
+    let frames = 0;
+    let good = 0;
+    let first: Frame | null = null;
+    let problem: string | null = null;
+    for (const chunk of this.recent) {
+      if (chunk.tx) continue;
+      for (const frame of reader.feed(chunk.bytes, chunk.at)) {
+        frames++;
+        if (frame.ok) {
+          good++;
+          first ??= frame;
+        } else {
+          problem ??= frame.problem;
+        }
+      }
+    }
+    return { frames, good, first, problem };
+  }
+
+  /** Forgets the frames read, as Clear does for the terminal. */
+  clearFrames(): void {
+    this.frames.length = 0;
+    this.badFrames = 0;
+    this.framesVersion++;
+  }
+
+  /** Reads frames from received bytes, when a decoder is picked. */
+  private readFrames(bytes: Uint8Array, at: number): void {
+    if (this.frameSpec.decoder === "off") {
+      return;
+    }
+    this.frameReader ??= new FrameReader($state.snapshot(this.frameSpec));
+    const found = this.frameReader.feed(bytes, at);
+    if (found.length === 0) {
+      return;
+    }
+    for (const frame of found) {
+      this.frames.push({ ...frame, n: this.nextFrame++, at });
+      if (!frame.ok) this.badFrames++;
+    }
+    if (this.frames.length > FRAMES_MAX) {
+      const gone = this.frames.splice(0, this.frames.length - FRAMES_MAX + FRAMES_MAX / 10);
+      this.badFrames -= gone.filter((frame) => !frame.ok).length;
+    }
+    this.framesVersion++;
+  }
+
+  /** Bytes from the device, with when they came: now, or when a recording says. */
+  private receive(bytes: Uint8Array, at = Date.now()): void {
     this.rx += bytes.length;
     // After a pause, what comes starts on a new line, but not an echo of what
     // was just typed or sent: an interactive shell keeps its lines whole.
-    const now = Date.now();
     const pause = this.terminal.pause_ms;
     if (
       pause > 0 &&
-      now - this.lastReceived >= pause &&
+      at - this.lastReceived >= pause &&
       !this.sentSince &&
       this.term &&
       this.term.buffer.active.cursorX !== 0
     ) {
       this.write("\r\n");
     }
-    this.lastReceived = now;
+    this.lastReceived = at;
     this.sentSince = false;
     this.write(bytes);
-    this.keepForHex(false, bytes);
+    this.keepForHex(false, bytes, at);
+    this.readFrames(bytes, at);
+    this.modbus.receive(bytes, at);
   }
 
   /** Keeps bytes for the hex view, and shows them there if it is open. */
-  private keepForHex(tx: boolean, bytes: Uint8Array): void {
-    const at = Date.now();
+  private keepForHex(tx: boolean, bytes: Uint8Array, at = Date.now()): void {
     this.recent.push({ tx, at, bytes });
     this.recentBytes += bytes.length;
     // The oldest half goes at once, now and then, rather than a chunk at a time.
@@ -865,9 +978,9 @@ export class Tab {
           if (piece.sent) {
             this.tx += bytes.length;
             this.sentSince = true;
-            this.keepForHex(true, bytes);
+            this.keepForHex(true, bytes, piece.at);
           } else {
-            this.receive(bytes);
+            this.receive(bytes, piece.at);
           }
         }
         if (event.lines.length > 0) {

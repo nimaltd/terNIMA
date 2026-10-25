@@ -309,15 +309,12 @@ probe-rs gives us more than RTT. With the same probe, ternima can also:
   pick global variables by name from the ELF, ternima reads them through the probe
   many times a second and shows or plots them, like STM32CubeMonitor or J-Scope
 - **Read peripheral registers** by name and bit field, from the chip's SVD file
-- **Decode a HardFault:** read the fault registers and the stacked registers, and say
-  in plain words what went wrong and where (function, file and line from the ELF)
 - **Read SWO / ITM** output from probes that support it
-- **Show semihosting** output
 - Reset, halt and resume buttons
 
 ### Crash and address decoding
 
-When a line in the data contains code addresses (a Zephyr fatal error, a HardFault
+When a line in the data contains code addresses (a Zephyr fatal error, a fault
 handler's print, an ESP32 backtrace), ternima looks them up in the session's ELF
 file and adds the function name, file and line under it, as ESP-IDF's monitor does.
 This works over plain serial too, no probe needed.
@@ -329,8 +326,9 @@ This works over plain serial too, no probe needed.
 - **Frame decoder:** describe a binary frame (start bytes, length field, payload,
   CRC) and ternima splits the data into frames, checks the CRC and shows the fields.
   Ready made decoders for COBS, SLIP, Modbus RTU, NMEA (GPS) and MAVLink
-- **Modbus master:** read and write coils and registers over RS-485, poll a table of
-  registers, scan for devices
+- **Modbus tester, RTU and ASCII, master and slave:** as a master, read and write
+  coils and registers, poll a table of registers and scan the bus for devices; as a
+  slave, answer from a table of registers, to test a master
 - **Spy mode:** open two ports, one on each wire of a UART link between two devices,
   and see both directions in one timeline, colored by direction
 - **Bridge:** connect a port to a TCP port (plain or RFC 2217), so another computer or
@@ -571,22 +569,25 @@ Done when you can find one module's errors in a busy Zephyr log in seconds.
 - [x] Time chart with zoom, pause, cursors and stats
 - [x] XY chart, histogram, FFT, scope style trigger
 - [x] CSV and PNG export
-- [ ] Values from binary frames and from raw RTT channels (int16, float...)
+- [x] Values from binary frames and from raw RTT channels: the Frames view's layout,
+  with a fixed size and no start or check for raw int16 or float samples
 - [x] Record and replay
 
 ### Phase 5: probe tools
 
 - [ ] Crash and address decoding from the ELF
 - [ ] Live variable watch and plot
-- [ ] HardFault decoder
 - [ ] SVD register viewer
 - [x] SWO / ITM (done in Phase 2)
-- [ ] Semihosting
 
 ### Phase 6: device and protocol tools
 
-- [ ] Frame decoder with COBS, SLIP, Modbus RTU, NMEA and MAVLink
-- [ ] Modbus master
+- [x] Frame decoder: your own layout (start bytes, a length, fields and a check), COBS,
+  SLIP and NMEA, with a Frames view and the plot reading the fields
+- [x] Modbus RTU and ASCII in the frame decoder: requests and answers read off a bus
+- [ ] MAVLink in the frame decoder
+- [x] Modbus tester: RTU, ASCII and TCP, master and slave, with polling, a unit scan and
+  the plot reading what is polled
 - [ ] Spy mode and bridge (TCP, RFC 2217, port to port)
 - [ ] Send and expect tests
 - [ ] External tool buttons

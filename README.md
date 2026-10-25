@@ -24,7 +24,9 @@ The name is "terminal" with my name, Nima, in it: ter-NIMA.
 - Log, hex and plot views of the same data, side by side if you like
 - A live plotter with XY, histogram, FFT and a scope trigger, Arduino Serial Plotter format included
 - Record a session and play it back later with its timing, faster or slower, from any point
-- Probe tools: watch variables live, decode HardFaults and crash addresses from your ELF
+- Binary frames split, checked and read: your own layout with a CRC, COBS, SLIP, NMEA and Modbus
+- A Modbus RTU, ASCII and TCP tester, as a master that polls and plots, or as a slave that answers
+- Probe tools: watch variables live, read registers by name, and decode crash addresses from your ELF
 - Remembers everything when you close it, finds your device again even if its COM number changed, and reconnects when you plug it back in
 
 ---

@@ -6,7 +6,8 @@
   import "uplot/dist/uPlot.min.css";
   import { FFT_MAX, histogram, lastCrossing, peak, spectrum, type Spectrum } from "./analysis";
   import type { Chart, PlotView, Trigger } from "./serial";
-  import type { StoredLine, Tab } from "./tabs.svelte";
+  import type { Sample } from "./modbus.svelte";
+  import type { StoredFrame, StoredLine, Tab } from "./tabs.svelte";
   import { clearActiveTerminal, setActiveTerminal, type TerminalActions } from "./terminal-actions";
   import { appScheme, type Scheme } from "./theme.svelte";
   import { compileRegex, readValues } from "./values";
@@ -99,7 +100,7 @@
   /** How much of `tab.textLines` has been read, and the number of its first line then. */
   let scanned = 0;
   let firstLine = -1;
-  let plottedFrom = -1;
+  let plottedFrom = "";
 
   type Span = { min: number; max: number };
   /** The time the time chart shows, in seconds, which the other charts work on too. */
@@ -174,9 +175,20 @@
     follow = true;
   }
 
+  /** What the plot reads: the lines, the frames of the Frames view, or what the Modbus master read. */
+  function source(): (StoredLine | StoredFrame | Sample)[] {
+    const mode = tab.plotView.mode;
+    return mode === "frames" ? tab.frames : mode === "modbus" ? tab.modbus.samples : tab.textLines;
+  }
+
+  /** The number of the first item the plot reads, as Clear left it. */
+  function firstPlotted(mode: PlotView["mode"]): number {
+    return mode === "frames" ? tab.plotFromFrame : mode === "modbus" ? tab.modbus.plotFrom : tab.plotFrom;
+  }
+
   /** Reads the values in the lines: all of them again, or only the new ones. */
   function refresh(full: boolean) {
-    const lines = tab.textLines;
+    const lines = source();
     const first = lines[0]?.n ?? -1;
     const gone = first - firstLine;
     if (lines.length === 0 || (scanned > 0 && gone >= scanned)) {
@@ -200,15 +212,14 @@
     draw();
   }
 
-  function add(line: StoredLine, mode: PlotView["mode"], regex: RegExp | null) {
-    if (line.n < tab.plotFrom) return;
-    origin ??= line.at;
-    // Zephyr's time and module are no values; a regex gets the whole line.
-    const values = mode === "regex" ? readValues(line.text, "regex", regex) : readValues(line.level ? line.message : line.text);
+  function add(item: StoredLine | StoredFrame | Sample, mode: PlotView["mode"], regex: RegExp | null) {
+    if (item.n < firstPlotted(mode)) return;
+    origin ??= item.at;
+    const values = valuesOf(item, mode, regex);
     if (values.length === 0) return;
     const row = times.length;
-    times.push(Math.max((line.at - origin) / 1000, times[row - 1] ?? 0));
-    lineNumbers.push(line.n);
+    times.push(Math.max((item.at - origin) / 1000, times[row - 1] ?? 0));
+    lineNumbers.push(item.n);
     for (const column of columns) column.push(null);
     for (const [name, value] of values) {
       let index = columnOf.get(name);
@@ -226,6 +237,17 @@
     }
   }
 
+  /** A line's values, read as the mode says, or a good frame's. */
+  function valuesOf(item: StoredLine | StoredFrame | Sample, mode: PlotView["mode"], regex: RegExp | null) {
+    if (mode === "frames" || mode === "modbus") {
+      const frame = item as StoredFrame | Sample;
+      return frame.ok ? frame.values : [];
+    }
+    const line = item as StoredLine;
+    // Zephyr's time and module are no values; a regex gets the whole line.
+    return mode === "regex" ? readValues(line.text, "regex", regex) : readValues(line.level ? line.message : line.text);
+  }
+
   /** Drops the points of the lines before `first`. */
   function drop(first: number) {
     let count = 0;
@@ -239,18 +261,19 @@
 
   // Another way of reading the lines, or Clear, reads them all again.
   $effect(() => {
-    void [tab.plotView.mode, pattern, tab.plotFrom];
+    void [tab.plotView.mode, pattern, tab.plotFrom, tab.plotFromFrame, tab.modbus.plotFrom];
     untrack(() => {
-      if (tab.plotFrom !== plottedFrom) {
-        plottedFrom = tab.plotFrom;
+      const from = `${tab.plotFrom} ${tab.plotFromFrame} ${tab.modbus.plotFrom}`;
+      if (from !== plottedFrom) {
+        plottedFrom = from;
         restart();
       }
       refresh(true);
     });
   });
-  // New lines: only they need reading.
+  // New lines or frames: only they need reading.
   $effect(() => {
-    void tab.linesVersion;
+    void [tab.linesVersion, tab.framesVersion, tab.modbus.version];
     untrack(() => refresh(false));
   });
   // Another chart, or other settings for it, draws it again at once.
@@ -1129,6 +1152,8 @@
       >
         <option value="auto">Numbers</option>
         <option value="regex">Regex</option>
+        <option value="frames">Frames</option>
+        <option value="modbus">Modbus</option>
       </select>
     </label>
     {#if tab.plotView.mode === "regex"}
@@ -1317,6 +1342,10 @@
         <p>
           {#if tab.plotView.mode === "regex"}
             {draftProblem ?? "No line matches the regex yet."}
+          {:else if tab.plotView.mode === "frames"}
+            No frames with values yet. Pick how frames are read in the Frames view, with the fields to read.
+          {:else if tab.plotView.mode === "modbus"}
+            Nothing read yet. Poll some registers in the Modbus view, and their values are drawn here.
           {:else}
             No numbers yet. Lines such as <code>temp=21.5 hum=40</code>, <code>21.5,40</code> or
             <code>{'{"temp": 21.5}'}</code> are drawn as they come. For other lines, read them with a regex.

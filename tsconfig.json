@@ -10,7 +10,9 @@
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    // The modules the tests import name their .ts, as Node needs.
+    "allowImportingTsExtensions": true
   },
   "include": ["ui/src/**/*.ts", "ui/src/**/*.svelte", "vite.config.ts"],
   // Node runs the tests as they are, with its own types.

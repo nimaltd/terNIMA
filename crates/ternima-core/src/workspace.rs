@@ -97,6 +97,256 @@ pub enum View {
     Lines,
     /// The numbers in the lines, drawn over time.
     Plot,
+    /// The data split into frames, each checked and its fields read.
+    Frames,
+    /// A Modbus master or slave.
+    Modbus,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModbusRole {
+    /// Asks devices.
+    #[default]
+    Master,
+    /// Answers a master from its tables.
+    Slave,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModbusMode {
+    /// Binary, with a CRC.
+    #[default]
+    Rtu,
+    /// Lines of hex, with an LRC.
+    Ascii,
+    /// With an MBAP header and no check, over a TCP tab.
+    Tcp,
+}
+
+/// How register values are shown.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegisterFormat {
+    #[default]
+    Unsigned,
+    Signed,
+    Hex,
+    /// Two registers as a 32 bit float, the first the high word.
+    Float,
+    /// Two registers as a 32 bit float, the first the low word.
+    FloatSwapped,
+}
+
+/// One request in the master's list.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModbusRequest {
+    pub unit: u8,
+    pub function: u8,
+    pub address: u16,
+    pub count: u16,
+    /// What a write writes, such as "1, 2, 3".
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub values: String,
+    /// Asked again and again while polling.
+    pub poll: bool,
+}
+
+impl Default for ModbusRequest {
+    fn default() -> Self {
+        Self {
+            unit: 1,
+            function: 3,
+            address: 0,
+            count: 10,
+            values: String::new(),
+            poll: true,
+        }
+    }
+}
+
+/// How a tab's Modbus view asks or answers.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModbusSetup {
+    pub role: ModbusRole,
+    pub mode: ModbusMode,
+    pub timeout_ms: u32,
+    pub poll_ms: u32,
+    pub format: RegisterFormat,
+    pub requests: Vec<ModbusRequest>,
+    /// The slave's own unit, and its tables from address `start` on.
+    pub unit: u8,
+    pub start: u16,
+    pub holding: Vec<u16>,
+    pub input: Vec<u16>,
+    pub coils: Vec<bool>,
+    pub discrete: Vec<bool>,
+}
+
+/// How many of each a slave's tables hold at first.
+const SLAVE_TABLE: usize = 20;
+
+impl Default for ModbusSetup {
+    fn default() -> Self {
+        Self {
+            role: ModbusRole::Master,
+            mode: ModbusMode::Rtu,
+            timeout_ms: 1000,
+            poll_ms: 1000,
+            format: RegisterFormat::Unsigned,
+            requests: vec![ModbusRequest::default()],
+            unit: 1,
+            start: 0,
+            holding: vec![0; SLAVE_TABLE],
+            input: vec![0; SLAVE_TABLE],
+            coils: vec![false; SLAVE_TABLE],
+            discrete: vec![false; SLAVE_TABLE],
+        }
+    }
+}
+
+/// How a tab's data is split into frames.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FrameDecoder {
+    #[default]
+    Off,
+    /// Frames of your own: start bytes, a length or a fixed size, fields and a check.
+    Layout,
+    /// Frames ended by a 0 byte, COBS encoded.
+    Cobs,
+    /// Frames between C0 bytes, SLIP escaped.
+    Slip,
+    /// NMEA sentences from GPS receivers.
+    Nmea,
+    /// Modbus RTU read off a bus.
+    ModbusRtu,
+    /// Modbus ASCII read off a bus.
+    ModbusAscii,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Endian {
+    #[default]
+    Le,
+    Be,
+}
+
+/// What a frame's length counts: the bytes after the length, or the whole frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LengthCounts {
+    #[default]
+    After,
+    Frame,
+}
+
+/// Where a frame's length is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LengthField {
+    pub offset: u32,
+    /// 1 or 2 bytes.
+    pub size: u8,
+    pub endian: Endian,
+    pub counts: LengthCounts,
+    /// Added to the length, for the bytes it leaves out, such as a check.
+    pub adjust: i32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FieldType {
+    #[default]
+    U8,
+    I8,
+    U16,
+    I16,
+    U32,
+    I32,
+    F32,
+    F64,
+}
+
+/// A number in a frame, `scale` times what its bytes hold.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FrameField {
+    pub name: String,
+    pub offset: u32,
+    #[serde(rename = "type")]
+    pub kind: FieldType,
+    pub endian: Endian,
+    pub scale: f64,
+}
+
+impl Default for FrameField {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            offset: 0,
+            kind: FieldType::U8,
+            endian: Endian::Le,
+            scale: 1.0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckKind {
+    #[default]
+    None,
+    Sum8,
+    Xor8,
+    Crc8,
+    Crc16Modbus,
+    Crc16Ccitt,
+    Crc16Xmodem,
+    Crc32,
+}
+
+/// A check at the end of each frame, over its bytes from `from` up to the check.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FrameCheck {
+    pub kind: CheckKind,
+    pub from: u32,
+    pub endian: Endian,
+}
+
+/// How a tab splits what it receives into frames, for the Frames view and the plot.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FrameSpec {
+    pub decoder: FrameDecoder,
+    /// The bytes every frame starts with, in hex such as "AA 55".
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub start: String,
+    /// Where the length is; without one, frames are `size` bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub length: Option<LengthField>,
+    pub size: u32,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<FrameField>,
+    pub check: FrameCheck,
+}
+
+impl Default for FrameSpec {
+    fn default() -> Self {
+        Self {
+            decoder: FrameDecoder::Off,
+            start: String::new(),
+            length: None,
+            size: 8,
+            fields: Vec::new(),
+            check: FrameCheck::default(),
+        }
+    }
 }
 
 /// How the plot reads numbers from lines.
@@ -108,6 +358,10 @@ pub enum ValueMode {
     Auto,
     /// The user's regex, one value per capture group.
     Regex,
+    /// The fields of the frames the tab's frame decoder reads.
+    Frames,
+    /// The values the Modbus master reads.
+    Modbus,
 }
 
 /// What the Plot view draws.
@@ -304,6 +558,10 @@ pub struct SessionSetup {
     pub lines_view: LinesView,
     #[serde(default, skip_serializing_if = "is_default")]
     pub plot_view: PlotView,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub frames: FrameSpec,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub modbus: ModbusSetup,
     /// The lines sent from the send box, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub history: Vec<SentLine>,
@@ -489,6 +747,8 @@ mod tests {
             hex_view: HexView::default(),
             lines_view: LinesView::default(),
             plot_view: PlotView::default(),
+            frames: FrameSpec::default(),
+            modbus: ModbusSetup::default(),
             history: Vec::new(),
         }
     }
@@ -514,6 +774,8 @@ mod tests {
             hex_view: HexView::default(),
             lines_view: LinesView::default(),
             plot_view: PlotView::default(),
+            frames: FrameSpec::default(),
+            modbus: ModbusSetup::default(),
             history: Vec::new(),
         }
     }
@@ -645,6 +907,79 @@ mod tests {
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains("mode = \"regex\""), "{text}");
         assert!(text.contains("chart = \"fft\""), "{text}");
+    }
+
+    #[test]
+    fn a_frame_layout_is_kept() {
+        let dir = TempDir::new("workspace-frames");
+        let path = dir.file("workspace.toml");
+        let workspace = Workspace {
+            sessions: vec![SessionSetup {
+                view: View::Frames,
+                frames: FrameSpec {
+                    decoder: FrameDecoder::Layout,
+                    start: "AA 55".into(),
+                    length: Some(LengthField {
+                        offset: 2,
+                        size: 1,
+                        adjust: 2,
+                        ..LengthField::default()
+                    }),
+                    fields: vec![FrameField {
+                        name: "temp".into(),
+                        offset: 3,
+                        kind: FieldType::I16,
+                        scale: 0.01,
+                        ..FrameField::default()
+                    }],
+                    check: FrameCheck {
+                        kind: CheckKind::Crc16Modbus,
+                        ..FrameCheck::default()
+                    },
+                    ..FrameSpec::default()
+                },
+                ..nucleo()
+            }],
+            ..Workspace::default()
+        };
+        workspace.save(&path).unwrap();
+        assert_eq!(Workspace::load(&path), workspace);
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("kind = \"crc16_modbus\""), "{text}");
+        assert!(text.contains("type = \"i16\""), "{text}");
+    }
+
+    #[test]
+    fn a_modbus_setup_is_kept() {
+        let dir = TempDir::new("workspace-modbus");
+        let path = dir.file("workspace.toml");
+        let mut modbus = ModbusSetup {
+            role: ModbusRole::Slave,
+            mode: ModbusMode::Ascii,
+            format: RegisterFormat::FloatSwapped,
+            unit: 17,
+            ..ModbusSetup::default()
+        };
+        modbus.requests.push(ModbusRequest {
+            function: 16,
+            values: "1, 2".into(),
+            poll: false,
+            ..ModbusRequest::default()
+        });
+        modbus.holding[3] = 1234;
+        modbus.coils[0] = true;
+        let workspace = Workspace {
+            sessions: vec![SessionSetup {
+                view: View::Modbus,
+                modbus,
+                ..nucleo()
+            }],
+            ..Workspace::default()
+        };
+        workspace.save(&path).unwrap();
+        assert_eq!(Workspace::load(&path), workspace);
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("format = \"float_swapped\""), "{text}");
     }
 
     #[test]

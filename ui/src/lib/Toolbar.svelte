@@ -28,6 +28,16 @@
       label: "Plot",
       title: "The numbers in the lines, drawn over time, with cursors, stats and export (Ctrl+Shift+G)",
     },
+    {
+      view: "frames",
+      label: "Frames",
+      title: "The data split into frames: your own layout, COBS, SLIP or NMEA, each checked and its fields read (Ctrl+Shift+B)",
+    },
+    {
+      view: "modbus",
+      label: "Modbus",
+      title: "A Modbus RTU, ASCII or TCP master or slave on this connection (Ctrl+Shift+M)",
+    },
   ];
 
   /** How fast a recording can play, against how it was recorded. */
