@@ -597,6 +597,7 @@ Done when you can find one module's errors in a busy Zephyr log in seconds.
 
 ### Phase 7: 1.0
 
+- [x] 1.0.0 released for Windows, macOS and Linux, not signed yet
 - [ ] Code signing on Windows and macOS
 - [ ] Portable `.zip` for Windows
 - [ ] Auto update

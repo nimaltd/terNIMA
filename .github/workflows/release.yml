@@ -1,7 +1,8 @@
 name: Release
 
-# A tag such as v0.1.0 builds the installers for every OS and puts them on a
-# draft GitHub Release. It can also be started by hand from the Actions tab.
+# A tag such as v1.0.0 builds the installers for every OS and puts them on a
+# draft GitHub Release, published once all three are there. It can also be
+# started by hand from the Actions tab.
 on:
   push:
     tags: ["v*"]
@@ -59,7 +60,20 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: terNIMA v__VERSION__
-          releaseBody: See CHANGELOG.md for what changed.
+          releaseBody: |
+            A serial, RTT, SWO and TCP terminal for embedded developers, with Zephyr logs, a plotter, frame decoders, a Modbus tester, and record and replay.
+
+            **Downloads**
+            - Windows 10 and 11: the `-setup.exe` installer, or the `.msi`
+            - macOS, Apple Silicon and Intel: the `.dmg`
+            - Linux: the `.AppImage`, `.deb` or `.rpm`
+
+            **The apps are not signed yet**
+            - Windows may say "Windows protected your PC": click More info, then Run anyway.
+            - macOS may say the app is damaged or cannot be checked: move it to Applications, then run `xattr -cr /Applications/terNIMA.app` in Terminal.
+            - Linux: `chmod +x` the AppImage, and join the `dialout` group to use serial ports.
+
+            What changed: [CHANGELOG.md](https://github.com/nimaltd/ternima/blob/main/CHANGELOG.md).
           releaseDraft: true
-          prerelease: true
+          prerelease: false
           args: ${{ matrix.args }}

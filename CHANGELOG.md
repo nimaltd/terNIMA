@@ -5,6 +5,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-25
+
+The first release, for Windows, macOS and Linux. The apps are not signed
+yet; the README says how to open them.
+
 ### Changed
 
 - The project is called ternima now. It started as ternimal, a name another
@@ -280,3 +285,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   as one piece and the port was opened again. A port that takes no bytes
   at all for 2 s, as when flow control holds it, drops the rest and stays
   open.
+
+[Unreleased]: https://github.com/nimaltd/ternima/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/nimaltd/ternima/releases/tag/v1.0.0

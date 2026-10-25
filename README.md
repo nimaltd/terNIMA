@@ -8,11 +8,29 @@ A serial, RTT and Zephyr terminal for embedded developers, the same on Windows, 
 
 The name is "terminal" with my name, Nima, in it: ter-NIMA.
 
-> **Status:** early development. There is nothing to download yet. What it will do, what it is built with and the order it is built in are all in [docs/PLAN.md](docs/PLAN.md).
+---
+
+## ⬇️ Download
+
+terNIMA for Windows, macOS and Linux is on the [Releases](https://github.com/nimaltd/ternima/releases/latest) page:
+
+| OS | File |
+|---|---|
+| Windows 10 and 11, x64 | the `-setup.exe` installer, or the `.msi` |
+| macOS, Apple Silicon and Intel | the `.dmg` |
+| Linux, x64 | the `.AppImage`, or the `.deb` or `.rpm` |
+
+The apps are not signed yet, so the first time:
+
+- **Windows** may say "Windows protected your PC": click **More info**, then **Run anyway**.
+- **macOS** may say the app is damaged or cannot be checked: move it to Applications, then run `xattr -cr /Applications/terNIMA.app` in Terminal.
+- **Linux**: make the AppImage runnable with `chmod +x`, and to use serial ports, add yourself to the `dialout` group (`uucp` on Arch).
+
+What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
-## ✨ What it will do
+## ✨ What it does
 
 - Serial ports with every option: any baud rate, data bits, parity, stop bits, flow control, DTR, RTS and break
 - SEGGER RTT through CMSIS-DAP, J-Link and ST-Link probes, with no vendor software needed
@@ -26,23 +44,24 @@ The name is "terminal" with my name, Nima, in it: ter-NIMA.
 - Record a session and play it back later with its timing, faster or slower, from any point
 - Binary frames split, checked and read: your own layout with a CRC, COBS, SLIP, NMEA and Modbus
 - A Modbus RTU, ASCII and TCP tester, as a master that polls and plots, or as a slave that answers
-- Probe tools: watch variables live, read registers by name, and decode crash addresses from your ELF
 - Remembers everything when you close it, finds your device again even if its COM number changed, and reconnects when you plug it back in
+
+Coming next: probe tools to watch variables live from your ELF, read registers by name from SVD files, and decode crash addresses.
 
 ---
 
 ## 🗺️ Roadmap
 
-| Phase | What |
-|---|---|
-| 0 | Skeleton: the app window and builds for all three OSes |
-| 1 | Serial |
-| 2 | RTT and network |
-| 3 | Log, hex and input |
-| 4 | Plotter |
-| 5 | Probe tools |
-| 6 | Device and protocol tools |
-| 7 | 1.0 |
+| Phase | What | |
+|---|---|---|
+| 0 | Skeleton: the app window and builds for all three OSes | ✅ |
+| 1 | Serial | ✅ |
+| 2 | RTT and network | ✅ |
+| 3 | Log, hex and input | ✅ |
+| 4 | Plotter | ✅ |
+| 5 | Probe tools | next |
+| 6 | Device and protocol tools | frames and Modbus done |
+| 7 | 1.0 | released; signing, auto update and package managers to come |
 
 Each phase's checklist is in [docs/PLAN.md](docs/PLAN.md#roadmap).
 
