@@ -1,10 +1,10 @@
 //! Runs an SWO session for a few seconds and prints what it reports.
-//! Run with `cargo run -p ternimal-core --example swo -- <chip> <clock Hz> [baud] [port] [seconds]`.
+//! Run with `cargo run -p ternima-core --example swo -- <chip> <clock Hz> [baud] [port] [seconds]`.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use ternimal_core::swo::{Event, ProbeRs, Session, SwoConfig};
+use ternima_core::swo::{Event, ProbeRs, Session, SwoConfig};
 
 fn main() {
     let mut args = std::env::args().skip(1);

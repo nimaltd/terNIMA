@@ -5,16 +5,21 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- The project is called ternima now. It started as ternimal, a name another
+  project already had.
+
 ### Added
 
-- The project plan in `docs/PLAN.md`: what ternimal does, what it is built
+- The project plan in `docs/PLAN.md`: what ternima does, what it is built
   with, and the order it is built in.
 - README, Apache 2.0 licence and NOTICE files.
-- The app skeleton: a Rust workspace with `ternimal-core` and the Tauri 2 app,
+- The app skeleton: a Rust workspace with `ternima-core` and the Tauri 2 app,
   and a Svelte UI with a tab bar, an xterm.js terminal and a status bar.
 - A welcome text in the terminal that shows the logo, the version, and every
   kind of color and style the terminal draws: 16, 256 and 24-bit color, bold,
-  dim, italic, underline, inverse and strikethrough. The logo is TERNIMAL in
+  dim, italic, underline, inverse and strikethrough. The logo is TERNIMA in
   block letters with a shadow edge and NIMA in orange, in colors picked for
   the dark or the light theme.
 - JetBrains Mono and Inter fonts shipped with the app, and dark and light
@@ -52,9 +57,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   again when it comes back, with a marker line in the terminal for each
   connect, disconnect and reconnect.
 - Plain messages when a port cannot be opened: in use by another program,
-  open in another tab of ternimal, or, on Linux, missing dialout rights.
+  open in another tab of ternima, or, on Linux, missing dialout rights.
 - `workspace.toml` keeps the open tabs, each with its port and settings.
-  Tabs that were connected when ternimal closed connect again when it starts.
+  Tabs that were connected when ternima closed connect again when it starts.
 - A status bar with the state of the tab in front, how long it has been
   connected, and the bytes received and sent.
 - Ctrl+Tab and Ctrl+Shift+Tab move between tabs; Ctrl+Shift+W closes one.
@@ -78,7 +83,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   (checked to divide the clock exactly), and one stimulus port or all. The
   toolbar has a port picker and Reset target; overflows of the chip's trace
   FIFO are noted in the terminal.
-- On STM32H5 chips ternimal turns the trace pin on itself, at DBGMCU_CR
+- On STM32H5 chips ternima turns the trace pin on itself, at DBGMCU_CR
   0x44024004, as probe-rs looks for it where the U5 and L5 have it.
 - A shared probe module for RTT and SWO: the probe list, the chip search and
   attaching.
@@ -90,7 +95,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   the tab and the time, and the status bar shows it; a click shows it in
   its folder. A failed write turns the log off and says why.
 - A Settings window (File > Settings, Ctrl+,) with the theme, the text size
-  and the logging options: log new tabs, the folder ("ternimal logs" in
+  and the logging options: log new tabs, the folder ("ternima logs" in
   Documents unless set), the format, and the date and time on each line.
 - File > Save output as (Ctrl+Shift+S) saves what the terminal shows,
   scrollback and all, as text. File > Open log folder shows the logs.
@@ -98,7 +103,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   was, and goes back to its earlier size when un-maximized. If the screen it
   was on has been unplugged, it opens in the middle of the main screen. It
   starts hidden until it is in place, so it never jumps.
-- Example programs in `crates/ternimal-core/examples`: `probes` lists probes
+- Example programs in `crates/ternima-core/examples`: `probes` lists probes
   and reads an STM32's ID register, `rtt` and `swo` run a session from the
   command line, `flash` writes an ELF file to a chip, and `detect` finds out
   which chip is on the probe.
@@ -118,6 +123,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   halves. A click or F6 gives the keyboard to the other pane, and a tab
   picked in the tab bar takes the place of the pane that has the keyboard.
   The split is kept in `workspace.toml`.
-- Startup settings: whether ternimal reopens the tabs from last time,
+- Startup settings: whether ternima reopens the tabs from last time,
   connects the ones that were connected, and opens the window where it was.
   All three are on unless turned off in Settings.

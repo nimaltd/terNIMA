@@ -31,7 +31,7 @@
     onmousedown={(event) => event.stopPropagation()}
   >
     <img src={icon} alt="" width="80" height="80" />
-    <h1 id="about-title">ternimal</h1>
+    <h1 id="about-title">ternima</h1>
     <p class="version">Version {version}</p>
     <p>A serial, RTT and Zephyr terminal for embedded developers.</p>
     <p class="muted">
@@ -39,7 +39,7 @@
       Apache License 2.0
     </p>
     <div class="buttons">
-      <button onclick={() => openUrl("https://github.com/nimaltd/ternimal")}>GitHub</button>
+      <button onclick={() => openUrl("https://github.com/nimaltd/ternima")}>GitHub</button>
       <button class="primary" onclick={onclose}>Close</button>
     </div>
   </div>

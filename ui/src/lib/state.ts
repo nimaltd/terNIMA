@@ -21,8 +21,8 @@ export function stateText(tab: Tab): string {
       return tab.problem ?? "";
     case "waiting":
       return tab.kind === "serial"
-        ? `Waiting for ${tab.port.name}: plug it in and ternimal connects by itself`
-        : "Waiting for the probe: plug it in and ternimal connects by itself";
+        ? `Waiting for ${tab.port.name}: plug it in and ternima connects by itself`
+        : "Waiting for the probe: plug it in and ternima connects by itself";
     case "stopped":
       return "Not connected";
   }

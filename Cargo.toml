@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/ternimal-core", "src-tauri"]
+members = ["crates/ternima-core", "src-tauri"]
 resolver = "3"
 
 [workspace.package]
@@ -8,8 +8,8 @@ edition = "2024"
 rust-version = "1.90"
 license = "Apache-2.0"
 authors = ["Nima Askari (NimaLTD) <nima.askari@gmail.com>"]
-repository = "https://github.com/nimaltd/ternimal"
-homepage = "https://github.com/nimaltd/ternimal"
+repository = "https://github.com/nimaltd/ternima"
+homepage = "https://github.com/nimaltd/ternima"
 
 [profile.release]
 codegen-units = 1

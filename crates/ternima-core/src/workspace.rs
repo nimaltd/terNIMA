@@ -12,7 +12,7 @@ use crate::swo::SwoConfig;
 use crate::tomlfile;
 
 const HEADER: &str =
-    "# ternimal workspace: the tabs that were open. ternimal writes it on every change.\n\n";
+    "# ternima workspace: the tabs that were open. ternima writes it on every change.\n\n";
 
 /// What the Enter key sends.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

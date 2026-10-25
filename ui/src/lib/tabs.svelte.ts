@@ -56,7 +56,7 @@ export class Tab {
   rtt: RttConfig = $state({ ...DEFAULT_RTT });
   swo: SwoConfig = $state({ ...DEFAULT_SWO });
   terminal: TerminalOptions = $state({ ...DEFAULT_TERMINAL });
-  /** True while the session runs: connected, or ternimal is waiting for the device. */
+  /** True while the session runs: connected, or ternima is waiting for the device. */
   running = $state(false);
   /** What the session last said, while it runs. */
   status: Status | null = $state(null);
@@ -403,7 +403,7 @@ export class Tab {
     this.status = { state: "waiting", problem };
   }
 
-  /** When the program that has the port is ternimal itself, says which tab has it. */
+  /** When the program that has the port is ternima itself, says which tab has it. */
   private explain(problem: string): string {
     if (this.kind !== "serial") {
       return problem;

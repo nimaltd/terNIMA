@@ -4291,7 +4291,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ternimal"
+name = "ternima"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -4300,11 +4300,11 @@ dependencies = [
  "tauri-plugin-clipboard-manager",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
- "ternimal-core",
+ "ternima-core",
 ]
 
 [[package]]
-name = "ternimal-core"
+name = "ternima-core"
 version = "0.1.0"
 dependencies = [
  "chrono",

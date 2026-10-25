@@ -7,7 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewWindow, Window};
-use ternimal_core::workspace::{Area, WindowState, Workspace};
+use ternima_core::workspace::{Area, WindowState, Workspace};
 
 use crate::Saved;
 

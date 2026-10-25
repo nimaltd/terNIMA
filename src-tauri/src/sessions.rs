@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use serde::Serialize;
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Manager, State};
-use ternimal_core::logfile::{LogSetup, Logger};
-use ternimal_core::{probe, rtt, serial, swo};
+use ternima_core::logfile::{LogSetup, Logger};
+use ternima_core::{probe, rtt, serial, swo};
 
 /// A running session of any kind.
 enum Running {
@@ -93,14 +93,14 @@ pub struct LogStatus {
     problem: Option<String>,
 }
 
-/// The folder logs go to when the settings leave it empty: "ternimal logs" in Documents.
+/// The folder logs go to when the settings leave it empty: "ternima logs" in Documents.
 fn default_folder(app: &AppHandle) -> PathBuf {
     let documents = app
         .path()
         .document_dir()
         .or_else(|_| app.path().home_dir())
         .unwrap_or_else(|_| PathBuf::from("."));
-    documents.join("ternimal logs")
+    documents.join("ternima logs")
 }
 
 /// Starts a log for a session, if the UI asked for one.
@@ -217,8 +217,8 @@ pub fn search_chips(text: String, limit: usize) -> Vec<String> {
 pub fn detect_chip(
     probe: Option<probe::ProbeId>,
     speed_khz: u32,
-) -> Result<ternimal_core::detect::Detected, String> {
-    ternimal_core::detect::detect(probe.as_ref(), speed_khz)
+) -> Result<ternima_core::detect::Detected, String> {
+    ternima_core::detect::detect(probe.as_ref(), speed_khz)
 }
 
 /// The folder logs go to when the settings leave it empty.

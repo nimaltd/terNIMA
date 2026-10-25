@@ -45,7 +45,7 @@
   {/if}
   <span class="spacer"></span>
   {#if info}
-    <span>ternimal v{info.version}</span>
+    <span>ternima v{info.version}</span>
     <span class="divider"></span>
     <span>{info.os} {info.arch}</span>
   {/if}

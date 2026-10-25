@@ -4,11 +4,11 @@ Thanks for wanting to help. Bug reports, fixes and new features are all welcome.
 There is no contributor agreement to sign: under section 5 of the Apache Licence
 2.0, anything you submit for inclusion is covered by the project's own licence.
 
-What ternimal will do, and in which order, is in [docs/PLAN.md](docs/PLAN.md).
+What ternima will do, and in which order, is in [docs/PLAN.md](docs/PLAN.md).
 
 ## Reporting a bug
 
-Open an issue and include your OS and its version, the ternimal version (it is in
+Open an issue and include your OS and its version, the ternima version (it is in
 the status bar), what you connect to (USB serial chip, probe, board), what you did,
 what you expected and what happened instead.
 
@@ -49,26 +49,26 @@ They end up in `target/release/bundle/`.
 
 Two things that are easy to trip over:
 
-- `target/release/ternimal` only changes when you run `npm run tauri build`
+- `target/release/ternima` only changes when you run `npm run tauri build`
   again. After pulling new code, build again before running it.
-- `target/debug/ternimal` loads its UI from the dev server, so it only works
+- `target/debug/ternima` loads its UI from the dev server, so it only works
   while `npm run tauri dev` runs. Started on its own, its window stays empty.
 
 ## Layout
 
 ```
-crates/ternimal-core/   everything without UI: transports, sessions, config, parsers
-src-tauri/              the app: connects ternimal-core to the UI
+crates/ternima-core/   everything without UI: transports, sessions, config, parsers
+src-tauri/              the app: connects ternima-core to the UI
 ui/                     the UI: Svelte, TypeScript and xterm.js
 docs/                   the plan
 ```
 
-Code that does not need the window goes into `ternimal-core`, with tests, so it
+Code that does not need the window goes into `ternima-core`, with tests, so it
 can be tested without starting the app.
 
 ## Making a change
 
-1. Add or update a test in `ternimal-core` that fails before your change and passes
+1. Add or update a test in `ternima-core` that fails before your change and passes
    after it. If a change cannot be covered by a test, say why in the pull request.
 2. Run the same checks CI runs:
 

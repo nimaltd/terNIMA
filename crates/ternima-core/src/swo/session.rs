@@ -186,7 +186,7 @@ impl Session {
             state: None,
         };
         let thread = thread::Builder::new()
-            .name("ternimal-swo".into())
+            .name("ternima-swo".into())
             .spawn(move || worker.run())
             .expect("the OS could not start a thread");
         Self {

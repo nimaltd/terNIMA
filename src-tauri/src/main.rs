@@ -1,6 +1,6 @@
-//! The ternimal app: the window, and the commands the UI calls in Rust.
+//! The ternima app: the window, and the commands the UI calls in Rust.
 //!
-//! The real work lives in `ternimal-core`. This file only connects it to the UI.
+//! The real work lives in `ternima-core`. This file only connects it to the UI.
 
 // No console window next to the app in release builds on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -13,8 +13,8 @@ use std::sync::{Mutex, PoisonError};
 
 use serde::Serialize;
 use tauri::{Manager, State, WindowEvent};
-use ternimal_core::settings::Settings;
-use ternimal_core::workspace::Workspace;
+use ternima_core::settings::Settings;
+use ternima_core::workspace::Workspace;
 
 /// What the status bar shows about the app and the computer it runs on.
 #[derive(Serialize)]
@@ -50,15 +50,15 @@ impl<T: Clone> Saved<T> {
 #[tauri::command]
 fn app_info() -> AppInfo {
     AppInfo {
-        version: ternimal_core::VERSION,
+        version: ternima_core::VERSION,
         os: std::env::consts::OS,
         arch: std::env::consts::ARCH,
     }
 }
 
 #[tauri::command]
-fn welcome_banner(background: ternimal_core::Background) -> String {
-    ternimal_core::welcome_banner(background)
+fn welcome_banner(background: ternima_core::Background) -> String {
+    ternima_core::welcome_banner(background)
 }
 
 #[tauri::command]
@@ -162,5 +162,5 @@ fn main() {
             sessions::save_text,
         ])
         .run(tauri::generate_context!())
-        .expect("ternimal could not start");
+        .expect("ternima could not start");
 }

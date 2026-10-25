@@ -47,7 +47,7 @@ export type AppActions = {
   openLogFolder(): void;
 };
 
-const GITHUB = "https://github.com/nimaltd/ternimal";
+const GITHUB = "https://github.com/nimaltd/ternima";
 
 export function buildMenus(app: AppActions): Menu[] {
   const terminal = activeTerminal;
@@ -115,7 +115,7 @@ export function buildMenus(app: AppActions): Menu[] {
         { label: "Settings...", shortcut: keys("Ctrl+,", "Cmd+,"), run: app.settings },
         null,
         isMac
-          ? { label: "Quit ternimal", shortcut: "Cmd+Q", run: app.exit }
+          ? { label: "Quit ternima", shortcut: "Cmd+Q", run: app.exit }
           : { label: "Exit", run: app.exit },
       ],
     },
@@ -286,10 +286,10 @@ export function buildMenus(app: AppActions): Menu[] {
     {
       title: "Help",
       items: [
-        { label: "ternimal on GitHub", run: () => void openUrl(GITHUB) },
+        { label: "ternima on GitHub", run: () => void openUrl(GITHUB) },
         { label: "Report a bug...", run: () => void openUrl(`${GITHUB}/issues/new`) },
         null,
-        { label: "About ternimal", run: app.about },
+        { label: "About ternima", run: app.about },
       ],
     },
   ];

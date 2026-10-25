@@ -117,7 +117,7 @@ impl Session {
             state: None,
         };
         let thread = thread::Builder::new()
-            .name("ternimal-serial".into())
+            .name("ternima-serial".into())
             .spawn(move || worker.run())
             .expect("the OS could not start a thread");
         Self {

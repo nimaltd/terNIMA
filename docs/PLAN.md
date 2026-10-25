@@ -1,10 +1,10 @@
-# ternimal plan
+# ternima plan
 
-ternimal is a desktop terminal for embedded work: serial ports, SEGGER RTT through
+ternima is a desktop terminal for embedded work: serial ports, SEGGER RTT through
 any common debug probe, Zephyr's shell and logs, and the tools around them, in one
 app that looks and works the same on Windows, Linux and macOS.
 
-The name is "terminal" with my name, Nima, inside it: ter-NIMA-l.
+The name is "terminal" with my name, Nima, in it: ter-NIMA.
 
 This file is the plan: what we build, what we build it with, and in which order. It
 will change as we learn. The checklists at the bottom show where we are.
@@ -76,7 +76,7 @@ Other options we looked at:
 +-------------------------------------------------------------------------+
 ```
 
-- The menu bar is drawn by ternimal, so it looks the same on every OS and follows
+- The menu bar is drawn by ternima, so it looks the same on every OS and follows
   the theme. Alt+F, Alt+E and so on open the menus on Windows and Linux. Items that
   a later phase brings are listed already, greyed out with their phase number.
 - In the terminal view you type straight into the device, as in PuTTY.
@@ -116,13 +116,13 @@ Other options we looked at:
 ### RTT over TCP
 
 - J-Link: while J-Link GDB Server, J-Link Commander, Ozone or your IDE has a J-Link
-  session open, SEGGER serves RTT on `localhost:19021`. ternimal connects there, so
+  session open, SEGGER serves RTT on `localhost:19021`. ternima connects there, so
   you see RTT while you debug
-- OpenOCD: after `rtt server start <port> <channel>`, ternimal connects to that port
+- OpenOCD: after `rtt server start <port> <channel>`, ternima connects to that port
 
 ### J-Link through SEGGER's own library (later)
 
-- ternimal loads `JLinkARM.dll`, `libjlinkarm.so` or `libjlinkarm.dylib` from your
+- ternima loads `JLinkARM.dll`, `libjlinkarm.so` or `libjlinkarm.dylib` from your
   J-Link install while it runs. We cannot ship that library ourselves, SEGGER's
   licence does not allow it
 - For people who want SEGGER's driver rather than probe-rs's
@@ -206,7 +206,7 @@ See [Plotter and dashboard](#plotter-and-dashboard) below.
 - Each tab turns its log on or off (the Log button, File > Log this tab, Ctrl+Shift+L);
   new tabs can start with it on (Settings > Logging)
 - Every log is a new file named after the tab and the time, in a folder of your choice
-  ("ternimal logs" in Documents unless set)
+  ("ternima logs" in Documents unless set)
 - A marker in the file when the device connects, disconnects and comes back
 - File > Save output as saves what the terminal shows, scrollback and all
 - Later: a new file by size or by day
@@ -228,11 +228,11 @@ good one.
 
 | OS | Folder |
 |---|---|
-| Windows | `%APPDATA%\com.nimaltd.ternimal\` |
-| Linux | `~/.config/com.nimaltd.ternimal/` |
-| macOS | `~/Library/Application Support/com.nimaltd.ternimal/` |
+| Windows | `%APPDATA%\com.nimaltd.ternima\` |
+| Linux | `~/.config/com.nimaltd.ternima/` |
+| macOS | `~/Library/Application Support/com.nimaltd.ternima/` |
 
-**Portable mode:** if a file called `ternimal.portable` sits next to the program,
+**Portable mode:** if a file called `ternima.portable` sits next to the program,
 the config goes into a `config` folder beside it instead. Handy on a USB stick.
 
 ### Finding the same port again
@@ -257,7 +257,7 @@ dtr = true
 rts = false
 ```
 
-When ternimal starts, or a device is plugged in, it looks for each session's port in
+When ternima starts, or a device is plugged in, it looks for each session's port in
 this order:
 
 1. Same VID, PID, serial number and USB interface. The name may have changed; that
@@ -310,13 +310,13 @@ small chart. Buttons and sliders send commands back, such as `pwm {value}\r\n`.
 
 ## Probe tools
 
-probe-rs gives us more than RTT. With the same probe, ternimal can also:
+probe-rs gives us more than RTT. With the same probe, ternima can also:
 
 - **Flash** an ELF, HEX or BIN file, reset the target and reconnect RTT, with one
   button or one key. Remembers the file per session. Optionally flashes again
   whenever the file changes, so a build in your IDE goes straight to the board
 - **Watch variables live** while the target runs, without changing the firmware:
-  pick global variables by name from the ELF, ternimal reads them through the probe
+  pick global variables by name from the ELF, ternima reads them through the probe
   many times a second and shows or plots them, like STM32CubeMonitor or J-Scope
 - **Read peripheral registers** by name and bit field, from the chip's SVD file
 - **Decode a HardFault:** read the fault registers and the stacked registers, and say
@@ -328,7 +328,7 @@ probe-rs gives us more than RTT. With the same probe, ternimal can also:
 ### Crash and address decoding
 
 When a line in the data contains code addresses (a Zephyr fatal error, a HardFault
-handler's print, an ESP32 backtrace), ternimal looks them up in the session's ELF
+handler's print, an ESP32 backtrace), ternima looks them up in the session's ELF
 file and adds the function name, file and line under it, as ESP-IDF's monitor does.
 This works over plain serial too, no probe needed.
 
@@ -337,21 +337,21 @@ This works over plain serial too, no probe needed.
 ## Device and protocol tools
 
 - **Frame decoder:** describe a binary frame (start bytes, length field, payload,
-  CRC) and ternimal splits the data into frames, checks the CRC and shows the fields.
+  CRC) and ternima splits the data into frames, checks the CRC and shows the fields.
   Ready made decoders for COBS, SLIP, Modbus RTU, NMEA (GPS) and MAVLink
 - **Modbus master:** read and write coils and registers over RS-485, poll a table of
   registers, scan for devices
 - **Spy mode:** open two ports, one on each wire of a UART link between two devices,
   and see both directions in one timeline, colored by direction
 - **Bridge:** connect a port to a TCP port (plain or RFC 2217), so another computer or
-  another ternimal can use the device over the network; or connect two ports together
+  another ternima can use the device over the network; or connect two ports together
 - **Send and expect tests:** a list of steps such as "send `ver`, expect `v1.2` within
   2 s". Runs on one device or on many, and gives a pass or fail report. Useful for
   production testing
 - **Record and replay:** save a session with its timing and play it back later, for
   testing parsers and plots without hardware
 - **External tool buttons:** run a command such as `west flash` or `make flash`.
-  ternimal lets go of the port or probe while it runs, then reconnects
+  ternima lets go of the port or probe while it runs, then reconnects
 - **ESP32:** flash with espflash, reset into the bootloader with DTR and RTS, decode
   backtraces
 - **STM32:** flash through the built in UART bootloader (AN3155), with BOOT0 and reset
@@ -375,13 +375,13 @@ Small tools in a side panel:
 ### Layout
 
 ```
-ternimal/
+ternima/
   Cargo.toml              Rust workspace
   package.json            UI build (Vite)
   crates/
-    ternimal-core/        everything without UI: transports, sessions, config,
+    ternima-core/        everything without UI: transports, sessions, config,
                           logging, parsers. Tested on its own
-  src-tauri/              the Tauri app: connects ternimal-core to the UI
+  src-tauri/              the Tauri app: connects ternima-core to the UI
   ui/                     Svelte 5 + TypeScript + xterm.js + uPlot
   docs/                   this plan and the user guide
   .github/workflows/      CI and releases
@@ -448,14 +448,14 @@ keyboard and send box -> session task -> transport -> device
 | Linux | `.AppImage`, `.deb`, `.rpm` |
 
 Later: code signing on Windows and macOS, auto update from GitHub Releases, and
-listings in winget, Homebrew and Flathub. Arch and Fedora already have a package
-called `ternimal` (another project), so packages there need a different name.
+listings in winget, Homebrew and Flathub. No package is called `ternima` in the AUR,
+on crates.io or on npm (checked in October 2026), so it can keep its name there.
 
 ---
 
 ## Testing
 
-- Unit tests in `ternimal-core`: config load and save, port matching, line splitting,
+- Unit tests in `ternima-core`: config load and save, port matching, line splitting,
   the Zephyr parser, plot value parsing, frame decoding
 - A fake transport that plays back recorded data, to test sessions and reconnecting
   without hardware
@@ -472,15 +472,16 @@ called `ternimal` (another project), so packages there need a different name.
   always reliable. xterm.js falls back to its normal renderer. We test on Ubuntu and
   Fedora
 - **One program per probe:** probe-rs cannot share a probe with a running debugger.
-  ternimal says so clearly and offers RTT over TCP
+  ternima says so clearly and offers RTT over TCP
 - **J-Link on Windows** with probe-rs may need the WinUSB driver, until the SEGGER
   library route is done
 - **macOS shortcuts** have not been tried on a Mac yet. macOS's own app menu may
   catch Cmd+C, Cmd+V and Cmd+A before the in-window menu sees them
-- **The name:** another project called ternimal exists (github.com/p-e-w/ternimal, a
-  small animation program under GPL-3.0, inactive since 2018). There is no crate
-  called `ternimal` on crates.io. We keep the name, always show it with a tagline,
-  and put serial, RTT, J-Link and Zephyr in the repository description and topics
+- **The name:** the project started as ternimal, but another project has that name
+  (github.com/p-e-w/ternimal, a small animation program under GPL-3.0, inactive since
+  2018) and an Arch package of it, so it is ternima now. We always show it with a
+  tagline, and put serial, RTT, J-Link and Zephyr in the repository description and
+  topics
 
 ---
 
@@ -489,7 +490,7 @@ called `ternimal` (another project), so packages there need a different name.
 ### Phase 0: skeleton
 
 - [x] Plan, README, LICENSE.md, NOTICE, CHANGELOG
-- [x] Rust workspace with `ternimal-core` and the Tauri app
+- [x] Rust workspace with `ternima-core` and the Tauri app
 - [x] A window with xterm.js showing a colored welcome text
 - [x] Bundled fonts, dark and light themes
 - [x] CI that builds and tests on Windows, Linux and macOS
@@ -511,7 +512,7 @@ Done when the installers from CI open the same window on all three OSes.
 - [x] `workspace.toml` with the tabs and sessions, saved on every change; tabs that were
   connected connect again at start
 - [x] Finding the same port again, "Waiting for...", reconnecting with a marker line
-- [x] Clear messages when a port cannot be opened, naming the tab when ternimal itself has it
+- [x] Clear messages when a port cannot be opened, naming the tab when ternima itself has it
 - [x] Tabs, with Ctrl+Tab and Ctrl+Shift+Tab, and a state dot on each
 - [x] Status bar: state, time connected, bytes in and out
 - [x] Logging to file: per tab on or off, text or raw, timestamps, markers; a Settings
@@ -539,7 +540,7 @@ Done when it replaces PuTTY or Tera Term for everyday UART work.
   and log lines on channel 1; typing, channel switching and Reset target all tried
 - [x] SWO, brought forward from Phase 5: ITM decoding, a stimulus port or all ports,
   core clock and baud checked, reconnect, Reset target. Tried on the H503 at 2 MHz.
-  probe-rs turns the STM32H5 trace pin on at the wrong address, so ternimal also sets
+  probe-rs turns the STM32H5 trace pin on at the wrong address, so ternima also sets
   it at 0x44024004 (worth reporting to probe-rs)
 - [x] Finding the chip by itself: an STM32's DBGMCU ID register gives its family (the H503
   answers DEV_ID 0x474), and probe-rs's own detection covers the chips it can tell apart.
@@ -577,7 +578,7 @@ Done when you can find one module's errors in a busy Zephyr log in seconds.
 ### Phase 5: probe tools
 
 - [ ] Flash ELF, HEX or BIN, reset, reconnect; flash again when the file changes
-  (a first try is `cargo run -p ternimal-core --example flash -- <chip> <file.elf>`)
+  (a first try is `cargo run -p ternima-core --example flash -- <chip> <file.elf>`)
 - [ ] Crash and address decoding from the ELF
 - [ ] Live variable watch and plot
 - [ ] HardFault decoder
@@ -604,5 +605,5 @@ Done when you can find one module's errors in a busy Zephyr log in seconds.
 - [ ] Auto update
 - [ ] User guide
 - [ ] winget, Homebrew and Flathub
-- [ ] Command line mode: `ternimal --port COM3 -b 115200`
+- [ ] Command line mode: `ternima --port COM3 -b 115200`
 - [ ] Scripting (Rhai or Lua) and triggers (on a pattern: beep, notify, send a command)

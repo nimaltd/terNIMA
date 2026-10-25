@@ -1,6 +1,6 @@
 //! Flashes an ELF file through the only probe plugged in, then resets the chip
 //! so the new firmware runs.
-//! Run with `cargo run -p ternimal-core --example flash -- <chip> <file.elf>`.
+//! Run with `cargo run -p ternima-core --example flash -- <chip> <file.elf>`.
 
 use std::time::Instant;
 

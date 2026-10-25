@@ -1,4 +1,4 @@
-// The serial and workspace types of ternimal-core, as the UI sees them, and
+// The serial and workspace types of ternima-core, as the UI sees them, and
 // the commands that reach them.
 
 import { invoke } from "@tauri-apps/api/core";

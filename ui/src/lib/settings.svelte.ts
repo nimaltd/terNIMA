@@ -8,24 +8,24 @@ export type LogFormat = "text" | "raw";
 export type LogSettings = {
   /** New tabs start with their log on. */
   new_tabs: boolean;
-  /** Where log files go. Empty means "ternimal logs" in Documents. */
+  /** Where log files go. Empty means "ternima logs" in Documents. */
   folder: string;
   format: LogFormat;
   /** The date and time at the start of every line of a text log. */
   timestamps: boolean;
 };
 
-/** What comes back when ternimal starts. */
+/** What comes back when ternima starts. */
 export type StartupSettings = {
   /** Opens the tabs from last time, with their settings and split view. */
   restore_tabs: boolean;
-  /** Connects the tabs that were connected when ternimal closed. */
+  /** Connects the tabs that were connected when ternima closed. */
   reconnect: boolean;
   /** Opens the window where it was, at the size it had. */
   restore_window: boolean;
 };
 
-/** The same fields as `Settings` in ternimal-core's settings.rs. */
+/** The same fields as `Settings` in ternima-core's settings.rs. */
 export type Settings = {
   theme: ThemeChoice;
   font_size: number;

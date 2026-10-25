@@ -1,12 +1,12 @@
-# 📟 ternimal
+# 📟 ternima
 
-[![CI](https://github.com/nimaltd/ternimal/actions/workflows/ci.yml/badge.svg)](https://github.com/nimaltd/ternimal/actions/workflows/ci.yml)
-[![Stars](https://img.shields.io/github/stars/nimaltd/ternimal?style=social)](https://github.com/nimaltd/ternimal)
+[![CI](https://github.com/nimaltd/ternima/actions/workflows/ci.yml/badge.svg)](https://github.com/nimaltd/ternima/actions/workflows/ci.yml)
+[![Stars](https://img.shields.io/github/stars/nimaltd/ternima?style=social)](https://github.com/nimaltd/ternima)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE.md)
 
 A serial, RTT and Zephyr terminal for embedded developers, the same on Windows, Linux and macOS.
 
-The name is "terminal" with my name, Nima, inside it: ter-NIMA-l.
+The name is "terminal" with my name, Nima, in it: ter-NIMA.
 
 > **Status:** early development. There is nothing to download yet. What it will do, what it is built with and the order it is built in are all in [docs/PLAN.md](docs/PLAN.md).
 
@@ -45,7 +45,7 @@ Each phase's checklist is in [docs/PLAN.md](docs/PLAN.md#roadmap).
 
 ## 🛠️ Building it
 
-ternimal is written in Rust and TypeScript with [Tauri](https://tauri.app). With Rust, Node.js and Tauri's prerequisites installed:
+ternima is written in Rust and TypeScript with [Tauri](https://tauri.app). With Rust, Node.js and Tauri's prerequisites installed:
 
 ```bash
 npm install

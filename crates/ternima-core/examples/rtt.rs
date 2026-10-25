@@ -1,10 +1,10 @@
 //! Runs an RTT session for a few seconds and prints what it reports.
-//! Run with `cargo run -p ternimal-core --example rtt -- <chip> [seconds]`.
+//! Run with `cargo run -p ternima-core --example rtt -- <chip> [seconds]`.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use ternimal_core::rtt::{Event, ProbeRs, RttConfig, Session};
+use ternima_core::rtt::{Event, ProbeRs, RttConfig, Session};
 
 fn main() {
     let mut args = std::env::args().skip(1);

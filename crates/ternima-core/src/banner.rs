@@ -9,12 +9,12 @@ use serde::Deserialize;
 
 use crate::VERSION;
 
-/// "TERNIMAL" in block letters with a shadow edge: one entry per letter, six rows each.
+/// "TERNIMA" in block letters with a shadow edge: one entry per letter, six rows each.
 ///
 /// `█` is the face of a letter and the line characters are its shadow, drawn
 /// in a darker color so the letters stand out from the screen.
 #[rustfmt::skip]
-const LOGO: [[&str; 6]; 8] = [
+const LOGO: [[&str; 6]; 7] = [
     ["████████╗", "╚══██╔══╝", "   ██║   ", "   ██║   ", "   ██║   ", "   ╚═╝   "],
     ["███████╗", "██╔════╝", "█████╗  ", "██╔══╝  ", "███████╗", "╚══════╝"],
     ["██████╗ ", "██╔══██╗", "██████╔╝", "██╔══██╗", "██║  ██║", "╚═╝  ╚═╝"],
@@ -22,10 +22,9 @@ const LOGO: [[&str; 6]; 8] = [
     ["██╗", "██║", "██║", "██║", "██║", "╚═╝"],
     ["███╗   ███╗", "████╗ ████║", "██╔████╔██║", "██║╚██╔╝██║", "██║ ╚═╝ ██║", "╚═╝     ╚═╝"],
     [" █████╗ ", "██╔══██╗", "███████║", "██╔══██║", "██║  ██║", "╚═╝  ╚═╝"],
-    ["██╗     ", "██║     ", "██║     ", "██║     ", "███████╗", "╚══════╝"],
 ];
 
-/// The letters of "nima" inside "ternimal", drawn in orange.
+/// The letters of "nima" at the end of "ternima", drawn in orange.
 const NIMA: std::ops::Range<usize> = 3..7;
 
 const RESET: &str = "\x1b[0m";
@@ -87,7 +86,7 @@ pub fn welcome_banner(background: Background) -> String {
     );
     let _ = write!(
         out,
-        "  {DIM}https://github.com/nimaltd/ternimal{RESET}\r\n\r\n"
+        "  {DIM}https://github.com/nimaltd/ternima{RESET}\r\n\r\n"
     );
 
     // The 16 basic colors, normal and bright.

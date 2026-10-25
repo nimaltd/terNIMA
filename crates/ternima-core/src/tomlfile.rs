@@ -1,4 +1,4 @@
-//! Reading and writing ternimal's TOML files, such as `settings.toml`.
+//! Reading and writing ternima's TOML files, such as `settings.toml`.
 
 use std::fs;
 use std::io;
@@ -51,7 +51,7 @@ pub(crate) mod tests {
     impl TempDir {
         pub(crate) fn new(name: &str) -> Self {
             let dir =
-                std::env::temp_dir().join(format!("ternimal-test-{name}-{}", std::process::id()));
+                std::env::temp_dir().join(format!("ternima-test-{name}-{}", std::process::id()));
             let _ = fs::remove_dir_all(&dir);
             fs::create_dir_all(&dir).unwrap();
             Self(dir)

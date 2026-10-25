@@ -1,4 +1,4 @@
-// The debug probe, RTT and SWO types of ternimal-core, as the UI sees them,
+// The debug probe, RTT and SWO types of ternima-core, as the UI sees them,
 // and the commands that reach them.
 
 import { invoke } from "@tauri-apps/api/core";
@@ -125,7 +125,7 @@ export function hzText(hz: number): string {
   return `${hz} Hz`;
 }
 
-/** What is wrong with an SWO clock and baud rate, as ternimal-core checks it. */
+/** What is wrong with an SWO clock and baud rate, as ternima-core checks it. */
 export function swoProblem(clockHz: number, baud: number): string | null {
   if (!Number.isInteger(clockHz) || clockHz <= 0) {
     return "Enter the chip's core clock in Hz, such as 64000000: the SWO speed is divided from it.";

@@ -1,4 +1,4 @@
-//! Numbers written as hex text in ternimal's files, the way people read them.
+//! Numbers written as hex text in ternima's files, the way people read them.
 
 /// A u16 as four hex digits, such as "0483", the way USB IDs are usually shown.
 pub mod u16 {

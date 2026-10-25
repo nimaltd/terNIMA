@@ -1,5 +1,5 @@
 [package]
-name = "ternimal"
+name = "ternima"
 description = "A serial, RTT and Zephyr terminal for embedded developers"
 version.workspace = true
 edition.workspace = true
@@ -18,4 +18,4 @@ tauri = { version = "2", features = [] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
-ternimal-core = { path = "../crates/ternimal-core" }
+ternima-core = { path = "../crates/ternima-core" }

@@ -1,6 +1,6 @@
 //! Lists debug probes, attaches to the first one without halting or resetting
 //! the target, and looks for an RTT control block.
-//! Run with `cargo run -p ternimal-core --example probes [chip]`.
+//! Run with `cargo run -p ternima-core --example probes [chip]`.
 
 use std::time::{Duration, Instant};
 

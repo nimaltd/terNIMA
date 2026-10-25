@@ -16,7 +16,7 @@ pub const FONT_SIZE_MAX: u8 = 32;
 pub const FONT_SIZE_DEFAULT: u8 = 14;
 
 /// Written at the top of the file, so someone who opens it knows what it is.
-const HEADER: &str = "# ternimal settings. Edit them while ternimal is closed.\n\n";
+const HEADER: &str = "# ternima settings. Edit them while ternima is closed.\n\n";
 
 /// Which colors the app uses.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,7 +35,7 @@ pub enum Theme {
 pub struct LogSettings {
     /// New tabs start with their log on.
     pub new_tabs: bool,
-    /// Where log files go. Empty means a "ternimal logs" folder in Documents.
+    /// Where log files go. Empty means a "ternima logs" folder in Documents.
     pub folder: String,
     pub format: LogFormat,
     /// Puts the date and time at the start of every line of a text log.
@@ -53,13 +53,13 @@ impl Default for LogSettings {
     }
 }
 
-/// What comes back when ternimal starts.
+/// What comes back when ternima starts.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StartupSettings {
     /// Opens the tabs from last time, with their settings and split view.
     pub restore_tabs: bool,
-    /// Connects the tabs that were connected when ternimal closed.
+    /// Connects the tabs that were connected when ternima closed.
     pub reconnect: bool,
     /// Opens the window where it was, at the size it had.
     pub restore_window: bool,
@@ -160,7 +160,7 @@ mod tests {
         let path = dir.file("settings.toml");
         Settings::default().save(&path).unwrap();
         let text = fs::read_to_string(&path).unwrap();
-        assert!(text.starts_with("# ternimal settings"));
+        assert!(text.starts_with("# ternima settings"));
         assert!(text.contains("theme = \"system\""));
         assert!(text.contains("font_size = 14"));
     }

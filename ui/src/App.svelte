@@ -51,7 +51,7 @@
     if (!terminal) {
       return;
     }
-    const name = activeTab()?.name ?? "ternimal";
+    const name = activeTab()?.name ?? "ternima";
     const path = await save({
       title: "Save output as",
       // The tab's name, without the characters file names cannot have.
