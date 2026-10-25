@@ -108,12 +108,15 @@ fn main() {
             let dir = app.path().app_config_dir()?;
             let settings = dir.join("settings.toml");
             let workspace = dir.join("workspace.toml");
+            let settings_now = Settings::load(&settings);
+            let restore_window = settings_now.startup.restore_window;
             app.manage(Saved {
-                current: Mutex::new(Settings::load(&settings)),
+                current: Mutex::new(settings_now),
                 path: settings,
             });
             let workspace_now = Workspace::load(&workspace);
-            let window_before = workspace_now.window;
+            // Without "open the window where it was", it opens in the middle.
+            let window_before = workspace_now.window.filter(|_| restore_window);
             app.manage(Saved {
                 current: Mutex::new(workspace_now),
                 path: workspace,
@@ -141,6 +144,7 @@ fn main() {
             sessions::list_ports,
             sessions::list_probes,
             sessions::search_chips,
+            sessions::detect_chip,
             sessions::open_session,
             sessions::open_rtt_session,
             sessions::open_swo_session,

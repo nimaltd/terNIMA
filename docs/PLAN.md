@@ -541,11 +541,17 @@ Done when it replaces PuTTY or Tera Term for everyday UART work.
   core clock and baud checked, reconnect, Reset target. Tried on the H503 at 2 MHz.
   probe-rs turns the STM32H5 trace pin on at the wrong address, so ternimal also sets
   it at 0x44024004 (worth reporting to probe-rs)
-- [ ] Finding the chip by itself. probe-rs cannot tell STM32 chips apart; reading their
-  DBGMCU ID register can (the H503 answered DEV_ID 0x474)
+- [x] Finding the chip by itself: an STM32's DBGMCU ID register gives its family (the H503
+  answers DEV_ID 0x474), and probe-rs's own detection covers the chips it can tell apart.
+  The Detect button, and the dialog by itself when the chip is empty
 - [ ] RTT over TCP (J-Link on 19021, OpenOCD)
 - [ ] Plain TCP and Telnet sessions
-- [ ] Split panes
+- [x] Split view: two tabs side by side or one above the other, with a line to drag between
+  them, kept in `workspace.toml`
+- [x] Find in the terminal output: next and previous, match case, whole word, regex, and a
+  count of matches
+- [x] Startup settings: reopen the tabs, connect the ones that were connected, and open the
+  window where it was, each one on or off
 
 Done when the Zephyr shell works over RTT on a DAPLink and on a J-Link.
 

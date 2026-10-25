@@ -26,6 +26,8 @@ import {
   type SessionEvent,
   type SessionKind,
   type SessionSetup,
+  type Split,
+  type SplitDirection,
   type TerminalOptions,
 } from "./serial";
 import { settings } from "./settings.svelte";
@@ -429,7 +431,13 @@ export class Tab {
 
 /** The open tabs, and which one is in front. */
 export const tabs: Tab[] = $state([]);
-export const view = $state({ active: 0 });
+
+/**
+ * What is on screen. `active` is the tab with the keyboard. With a split
+ * view, two tabs are on screen, `first` (left or top) and `second`, and
+ * `active` is one of them.
+ */
+export const view: { active: number; split: Split | null } = $state({ active: 0, split: null });
 
 let loaded = false;
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -438,28 +446,36 @@ export function activeTab(): Tab | undefined {
   return tabs[view.active];
 }
 
-/** Opens the tabs saved last time, and connects the ones that were connected. */
+/**
+ * Opens the tabs saved last time, and connects the ones that were connected,
+ * as far as the Startup settings say. The settings must be loaded first.
+ */
 export async function loadWorkspace(): Promise<void> {
   // Sessions from before a reload of the page would hold their ports with nobody watching.
   await closeAllSessions();
   const workspace = await getWorkspace();
-  for (const setup of workspace.sessions) {
-    tabs.push(new Tab(setup));
-  }
-  view.active = workspace.active;
-  loaded = true;
-  workspace.sessions.forEach((setup, index) => {
-    if (setup.connected) {
-      tabs[index].start();
+  const { restore_tabs, reconnect } = settings.startup;
+  if (restore_tabs) {
+    for (const setup of workspace.sessions) {
+      tabs.push(new Tab(setup));
     }
-  });
+    view.active = workspace.active;
+    view.split = workspace.split ?? null;
+  }
+  loaded = true;
+  if (restore_tabs && reconnect) {
+    workspace.sessions.forEach((setup, index) => {
+      if (setup.connected) {
+        tabs[index].start();
+      }
+    });
+  }
 }
 
 export function addTab(setup: SessionSetup): Tab {
   const tab = new Tab(setup);
   tabs.push(tab);
-  view.active = tabs.length - 1;
-  changed();
+  showTab(tabs.length - 1);
   return tab;
 }
 
@@ -469,16 +485,75 @@ export function closeTab(tab: Tab): void {
   if (index < 0) {
     return;
   }
+  // A split view ends when one of its tabs closes; the other stays in front.
+  if (view.split && (index === view.split.first || index === view.split.second)) {
+    view.active = index === view.split.first ? view.split.second : view.split.first;
+    view.split = null;
+  }
   tabs.splice(index, 1);
-  if (view.active >= tabs.length) {
-    view.active = Math.max(0, tabs.length - 1);
+  const after = (position: number) => (position > index ? position - 1 : position);
+  view.active = Math.min(after(view.active), Math.max(0, tabs.length - 1));
+  if (view.split) {
+    view.split.first = after(view.split.first);
+    view.split.second = after(view.split.second);
   }
   changed();
 }
 
+/**
+ * Brings a tab in front. With a split view, a tab on screen gets the
+ * keyboard, and another one takes the place of the pane that has it.
+ */
 export function showTab(index: number): void {
-  if (tabs.length > 0) {
-    view.active = (index + tabs.length) % tabs.length;
+  if (tabs.length === 0) {
+    return;
+  }
+  const wanted = (index + tabs.length) % tabs.length;
+  const split = view.split;
+  if (split && wanted !== split.first && wanted !== split.second) {
+    if (view.active === split.first) {
+      split.first = wanted;
+    } else {
+      split.second = wanted;
+    }
+  }
+  view.active = wanted;
+  changed();
+}
+
+/**
+ * Shows a second tab next to the one in front: the next tab along. The panes
+ * keep the order of the tab bar, and the tab in front keeps the keyboard.
+ */
+export function splitView(direction: SplitDirection): void {
+  if (tabs.length < 2) {
+    return;
+  }
+  if (view.split) {
+    view.split.direction = direction;
+  } else {
+    const other = (view.active + 1) % tabs.length;
+    view.split = {
+      first: Math.min(view.active, other),
+      second: Math.max(view.active, other),
+      direction,
+      ratio: 50,
+    };
+  }
+  changed();
+}
+
+/** Back to one tab on screen: the one with the keyboard. */
+export function unsplit(): void {
+  view.split = null;
+  changed();
+}
+
+/** Gives the keyboard to the other pane of a split view. */
+export function otherPane(): void {
+  const split = view.split;
+  if (split) {
+    view.active = view.active === split.first ? split.second : split.first;
     changed();
   }
 }
@@ -490,9 +565,11 @@ export function changed(): void {
   }
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    setWorkspace({ active: view.active, sessions: tabs.map((tab) => tab.setup()) }).catch(
-      (error) => console.error(error),
-    );
+    setWorkspace({
+      active: view.active,
+      split: $state.snapshot(view.split),
+      sessions: tabs.map((tab) => tab.setup()),
+    }).catch((error) => console.error(error));
   }, 300);
 }
 

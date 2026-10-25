@@ -100,4 +100,24 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   starts hidden until it is in place, so it never jumps.
 - Example programs in `crates/ternimal-core/examples`: `probes` lists probes
   and reads an STM32's ID register, `rtt` and `swo` run a session from the
-  command line, and `flash` writes an ELF file to a chip.
+  command line, `flash` writes an ELF file to a chip, and `detect` finds out
+  which chip is on the probe.
+- The probe dialog finds out the chip by itself: the Detect button, or at
+  once when a probe is picked and the chip is still empty. STM32 chips are
+  told apart by their DBGMCU ID register, which probe-rs does not read, and
+  the dialog lists the chips of the family when the package is not known
+  (STM32H503CB, EB, KB or RB). Other chips use probe-rs's own detection.
+  It does not halt or reset the chip.
+- Find in the terminal output: Edit > Find (Ctrl+Shift+F) opens a search bar
+  over the terminal with match case, whole word and regex, the number of
+  matches, and every match marked. Enter and F3 go to the next match;
+  Shift+Enter and Shift+F3 to the one before.
+- Split view: View > Split right (Ctrl+Shift+E) or Split down (Ctrl+Shift+D)
+  shows the next tab next to the one in front, each with its own toolbar.
+  Drag the line between them to share the room, or double-click it for
+  halves. A click or F6 gives the keyboard to the other pane, and a tab
+  picked in the tab bar takes the place of the pane that has the keyboard.
+  The split is kept in `workspace.toml`.
+- Startup settings: whether ternimal reopens the tabs from last time,
+  connects the ones that were connected, and opens the window where it was.
+  All three are on unless turned off in Settings.

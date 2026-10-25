@@ -15,10 +15,21 @@ export type LogSettings = {
   timestamps: boolean;
 };
 
+/** What comes back when ternimal starts. */
+export type StartupSettings = {
+  /** Opens the tabs from last time, with their settings and split view. */
+  restore_tabs: boolean;
+  /** Connects the tabs that were connected when ternimal closed. */
+  reconnect: boolean;
+  /** Opens the window where it was, at the size it had. */
+  restore_window: boolean;
+};
+
 /** The same fields as `Settings` in ternimal-core's settings.rs. */
 export type Settings = {
   theme: ThemeChoice;
   font_size: number;
+  startup: StartupSettings;
   log: LogSettings;
 };
 
@@ -31,6 +42,7 @@ export const FONT_SIZE_DEFAULT = 14;
 export const settings: Settings = $state({
   theme: "system",
   font_size: FONT_SIZE_DEFAULT,
+  startup: { restore_tabs: true, reconnect: true, restore_window: true },
   log: { new_tabs: false, folder: "", format: "text", timestamps: true },
 });
 

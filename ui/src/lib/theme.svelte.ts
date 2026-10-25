@@ -54,6 +54,12 @@ export const terminalThemes: Record<Scheme, ITheme> = {
   },
 };
 
+/** Search match colors: every match, and the one the search is on. */
+export const searchColors: Record<Scheme, { match: string; current: string }> = {
+  dark: { match: "#4d3d0f", current: "#9a6b00" },
+  light: { match: "#fff1b8", current: "#ffc53d" },
+};
+
 const lightQuery = window.matchMedia("(prefers-color-scheme: light)");
 const osScheme = (): Scheme => (lightQuery.matches ? "light" : "dark");
 

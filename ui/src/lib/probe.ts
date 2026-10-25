@@ -54,6 +54,19 @@ export function searchChips(text: string, limit = 40): Promise<string[]> {
   return invoke<string[]>("search_chips", { text, limit });
 }
 
+/** What was found on the board. */
+export type Detected = {
+  chip: string | null;
+  /** Every chip it may be: the same silicon often comes in several packages. */
+  candidates: string[];
+  description: string;
+};
+
+/** Finds out which chip is on the board through a probe. Only reads, for STM32. */
+export function detectChip(probe: ProbeId, speedKhz: number): Promise<Detected> {
+  return invoke<Detected>("detect_chip", { probe, speedKhz });
+}
+
 export function sameProbe(a: ProbeId | null | undefined, b: ProbeId | null | undefined): boolean {
   return !!a && !!b && a.vid === b.vid && a.pid === b.pid && (a.serial ?? null) === (b.serial ?? null);
 }

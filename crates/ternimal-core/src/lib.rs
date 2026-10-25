@@ -4,6 +4,7 @@
 //! they can be tested on their own.
 
 mod banner;
+pub mod detect;
 mod hex;
 pub mod logfile;
 pub mod probe;

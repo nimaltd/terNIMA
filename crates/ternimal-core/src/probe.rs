@@ -4,6 +4,7 @@
 use std::sync::OnceLock;
 
 use probe_rs::config::Registry;
+use probe_rs::probe::Probe;
 use probe_rs::probe::list::Lister;
 use probe_rs::{Permissions, Session};
 use serde::{Deserialize, Serialize};
@@ -58,8 +59,27 @@ pub fn list_probes() -> Vec<ProbeInfo> {
 /// `Err(None)` when the probe is not plugged in, and the reason when it is
 /// but did not work.
 pub fn attach(target: &Target) -> Result<Session, Option<String>> {
+    let probe = find_and_open(target.probe, target.speed_khz)?;
+    let chip = target.chip.trim();
+    let attached = if target.under_reset {
+        probe.attach_under_reset(chip, Permissions::default())
+    } else {
+        probe.attach(chip, Permissions::default())
+    };
+    attached.map_err(|error| Some(format!("Could not attach to {chip}: {error}")))
+}
+
+/// Opens the probe and sets its speed, without attaching to the chip.
+pub fn open(id: Option<&ProbeId>, speed_khz: u32) -> Result<Probe, String> {
+    find_and_open(id, speed_khz)
+        .map_err(|problem| problem.unwrap_or_else(|| "The probe is not plugged in.".into()))
+}
+
+/// Finds the probe among those plugged in, opens it and sets its speed.
+/// Gives `Err(None)` when it is not plugged in.
+fn find_and_open(id: Option<&ProbeId>, speed_khz: u32) -> Result<Probe, Option<String>> {
     let probes = Lister::new().list_all();
-    let info = match target.probe {
+    let info = match id {
         Some(id) => probes.iter().find(|probe| {
             probe.vendor_id == id.vid
                 && probe.product_id == id.pid
@@ -83,21 +103,14 @@ pub fn attach(target: &Target) -> Result<Session, Option<String>> {
             info.identifier
         ))
     })?;
-    if target.speed_khz > 0 {
-        probe.set_speed(target.speed_khz).map_err(|error| {
+    if speed_khz > 0 {
+        probe.set_speed(speed_khz).map_err(|error| {
             Some(format!(
-                "Could not set the speed to {} kHz: {error}",
-                target.speed_khz
+                "Could not set the speed to {speed_khz} kHz: {error}"
             ))
         })?;
     }
-    let chip = target.chip.trim();
-    let attached = if target.under_reset {
-        probe.attach_under_reset(chip, Permissions::default())
-    } else {
-        probe.attach(chip, Permissions::default())
-    };
-    attached.map_err(|error| Some(format!("Could not attach to {chip}: {error}")))
+    Ok(probe)
 }
 
 /// Every chip name probe-rs knows, read once.

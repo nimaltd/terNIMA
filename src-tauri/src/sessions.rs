@@ -212,6 +212,15 @@ pub fn search_chips(text: String, limit: usize) -> Vec<String> {
     probe::search_chips(&text, limit)
 }
 
+/// Finds out which chip is on the board through a probe. Only reads, for STM32.
+#[tauri::command(async)]
+pub fn detect_chip(
+    probe: Option<probe::ProbeId>,
+    speed_khz: u32,
+) -> Result<ternimal_core::detect::Detected, String> {
+    ternimal_core::detect::detect(probe.as_ref(), speed_khz)
+}
+
 /// The folder logs go to when the settings leave it empty.
 #[tauri::command]
 pub fn default_log_folder(app: AppHandle) -> String {

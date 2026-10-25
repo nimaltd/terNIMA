@@ -15,7 +15,7 @@
   import Toolbar from "./lib/Toolbar.svelte";
   import { buildMenus, isEnabled, itemForKey, menuForAltKey } from "./lib/menus";
   import { defaultLogFolder, loadSettings, settings } from "./lib/settings.svelte";
-  import { activeTab, loadWorkspace, tabs, view, type Tab } from "./lib/tabs.svelte";
+  import { activeTab, changed, loadWorkspace, showTab, tabs, view, type Tab } from "./lib/tabs.svelte";
   import { activeTerminal } from "./lib/terminal-actions";
   import type { SessionKind } from "./lib/serial";
   import { appScheme } from "./lib/theme.svelte";
@@ -29,6 +29,9 @@
   /** The open session dialog, if any: for a new session, or for a tab's settings. */
   let dialog: { kind: SessionKind; tab: Tab | null } | null = $state(null);
   let menuBar: MenuBar;
+  let pane: HTMLElement;
+  /** Whether the line between the two panes of a split view is being dragged. */
+  let dragging = $state(false);
 
   const menus = buildMenus({
     about: () => (aboutOpen = true),
@@ -81,8 +84,11 @@
   onMount(() => {
     invoke<AppInfo>("app_info").then((result) => (info = result));
     // The terminals wait for the settings, so they open at the saved text size,
-    // and for the workspace, so the tabs from last time come back.
-    Promise.all([loadSettings(), loadWorkspace()])
+    // and for the workspace, so the tabs from last time come back. The
+    // workspace waits for the settings, which say how much of it comes back.
+    loadSettings()
+      .catch((error) => console.error(error))
+      .then(() => loadWorkspace())
       .catch((error) => console.error(error))
       .finally(() => (ready = true));
   });
@@ -128,6 +134,59 @@
     dialog = null;
     focusTerminal();
   }
+
+  /** Whether a tab is on screen: the one in front, or the other half of a split view. */
+  function onScreen(index: number): boolean {
+    const split = view.split;
+    return index === view.active || (split !== null && (index === split.first || index === split.second));
+  }
+
+  /** Where a tab's pane sits in a split view, as CSS; all the room without one. */
+  function place(index: number): string {
+    const split = view.split;
+    if (!split) {
+      return "inset: 0";
+    }
+    const [start, end] = split.direction === "right" ? ["left", "right"] : ["top", "bottom"];
+    const across = split.direction === "right" ? "top: 0; bottom: 0" : "left: 0; right: 0";
+    return index === split.first
+      ? `${across}; ${start}: 0; ${end}: ${100 - split.ratio}%`
+      : `${across}; ${start}: ${split.ratio}%; ${end}: 0`;
+  }
+
+  /** A click in the other pane of a split view gives it the keyboard. */
+  function focusPane(index: number) {
+    if (index !== view.active) {
+      showTab(index);
+    }
+  }
+
+  function startDrag(event: PointerEvent) {
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    dragging = true;
+  }
+
+  function drag(event: PointerEvent) {
+    const split = view.split;
+    if (!dragging || !split) {
+      return;
+    }
+    const room = pane.getBoundingClientRect();
+    const share =
+      split.direction === "right"
+        ? (event.clientX - room.left) / room.width
+        : (event.clientY - room.top) / room.height;
+    // The same limits as workspace.rs keeps, so both panes stay usable.
+    split.ratio = Math.min(85, Math.max(15, Math.round(share * 100)));
+  }
+
+  function endDrag() {
+    if (dragging) {
+      dragging = false;
+      changed();
+      focusTerminal();
+    }
+  }
 </script>
 
 <svelte:window {onkeydown} />
@@ -136,23 +195,56 @@
   <MenuBar bind:this={menuBar} {menus} onclose={focusTerminal} />
   <TabBar onnew={(kind) => (dialog = { kind, tab: null })} />
 
-  {#if activeTab()}
-    <Toolbar tab={activeTab()!} onsettings={sessionSettings} />
-  {/if}
-
-  <main class="pane">
+  <main class="pane" class:dragging bind:this={pane}>
     {#if ready}
       {#if tabs.length === 0}
-        <div class="layer">
-          <Terminal active={true} {isAppKey} />
+        <div class="slot" style="inset: 0">
+          <div class="layer">
+            <Terminal active={true} {isAppKey} />
+          </div>
         </div>
       {/if}
       <!-- Every tab keeps its terminal, so its scrollback stays while another tab is in front. -->
       {#each tabs as tab, i (tab.id)}
-        <div class="layer" class:hidden={i !== view.active}>
-          <Terminal {tab} active={i === view.active} {isAppKey} />
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          class="slot"
+          class:hidden={!onScreen(i)}
+          class:focused={view.split !== null && i === view.active}
+          class:second={view.split !== null && i === view.split.second}
+          class:down={view.split?.direction === "down"}
+          style={place(i)}
+          onmousedown={() => focusPane(i)}
+        >
+          {#if onScreen(i)}
+            <Toolbar {tab} onsettings={() => (dialog = { kind: tab.kind, tab })} />
+          {/if}
+          <div class="layer">
+            <Terminal {tab} active={i === view.active} {isAppKey} />
+          </div>
         </div>
       {/each}
+      {#if view.split}
+        <!-- The line between the panes: drag it to share the room, double-click for halves. -->
+        <div
+          class="divider {view.split.direction}"
+          role="separator"
+          aria-orientation={view.split.direction === "right" ? "vertical" : "horizontal"}
+          aria-valuenow={view.split.ratio}
+          title="Drag to resize, double-click for halves"
+          style={view.split.direction === "right" ? `left: ${view.split.ratio}%` : `top: ${view.split.ratio}%`}
+          onpointerdown={startDrag}
+          onpointermove={drag}
+          onpointerup={endDrag}
+          onpointercancel={endDrag}
+          ondblclick={() => {
+            if (view.split) {
+              view.split.ratio = 50;
+              changed();
+            }
+          }}
+        ></div>
+      {/if}
     {/if}
   </main>
 
@@ -198,13 +290,80 @@
     background: var(--bg);
   }
 
-  .layer {
+  /* One tab's place on screen: its toolbar over its terminal. */
+  .slot {
     position: absolute;
-    inset: 0;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .slot.hidden {
+    display: none;
+  }
+
+  /* In a split view, a line between the panes, and a mark on the one with the keyboard. */
+  .slot.second {
+    border-left: 1px solid var(--border);
+  }
+
+  .slot.second.down {
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .slot.focused::before {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 1;
+    height: 2px;
+    background: var(--accent);
+    content: "";
+  }
+
+  .layer {
+    position: relative;
+    flex: 1;
+    min-height: 0;
     padding: 8px 4px 4px 12px;
   }
 
-  .layer.hidden {
-    display: none;
+  .divider {
+    position: absolute;
+    z-index: 2;
+    touch-action: none;
+  }
+
+  .divider.right {
+    top: 0;
+    bottom: 0;
+    width: 7px;
+    margin-left: -3px;
+    cursor: col-resize;
+  }
+
+  .divider.down {
+    left: 0;
+    right: 0;
+    height: 7px;
+    margin-top: -3px;
+    cursor: row-resize;
+  }
+
+  .divider:hover,
+  .dragging .divider {
+    background: var(--accent-soft);
+  }
+
+  /* While the line is dragged, the terminals must not select text under the pointer. */
+  .pane.dragging {
+    user-select: none;
+  }
+
+  .pane.dragging .slot {
+    pointer-events: none;
   }
 </style>

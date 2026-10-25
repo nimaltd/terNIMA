@@ -53,12 +53,35 @@ impl Default for LogSettings {
     }
 }
 
+/// What comes back when ternimal starts.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StartupSettings {
+    /// Opens the tabs from last time, with their settings and split view.
+    pub restore_tabs: bool,
+    /// Connects the tabs that were connected when ternimal closed.
+    pub reconnect: bool,
+    /// Opens the window where it was, at the size it had.
+    pub restore_window: bool,
+}
+
+impl Default for StartupSettings {
+    fn default() -> Self {
+        Self {
+            restore_tabs: true,
+            reconnect: true,
+            restore_window: true,
+        }
+    }
+}
+
 /// Everything in `settings.toml`. A value missing from the file takes its default.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub theme: Theme,
     pub font_size: u8,
+    pub startup: StartupSettings,
     pub log: LogSettings,
 }
 
@@ -67,6 +90,7 @@ impl Default for Settings {
         Self {
             theme: Theme::System,
             font_size: FONT_SIZE_DEFAULT,
+            startup: StartupSettings::default(),
             log: LogSettings::default(),
         }
     }
@@ -113,6 +137,11 @@ mod tests {
         let settings = Settings {
             theme: Theme::Light,
             font_size: 18,
+            startup: StartupSettings {
+                restore_tabs: true,
+                reconnect: false,
+                restore_window: false,
+            },
             log: LogSettings {
                 new_tabs: true,
                 folder: "D:/logs".into(),

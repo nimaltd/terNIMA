@@ -127,15 +127,51 @@ impl WindowState {
     }
 }
 
+/// Where the second pane of a split view goes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SplitDirection {
+    /// Side by side.
+    #[default]
+    Right,
+    /// One above the other.
+    Down,
+}
+
+/// Two tabs on screen at once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Split {
+    /// The tab in the first pane (left or top), counted from 0.
+    pub first: usize,
+    /// The tab in the second pane (right or bottom).
+    pub second: usize,
+    #[serde(default)]
+    pub direction: SplitDirection,
+    /// The first pane's share of the room, in percent.
+    #[serde(default = "half")]
+    pub ratio: u8,
+}
+
+fn half() -> u8 {
+    50
+}
+
+/// The smallest share either pane of a split view gets, in percent.
+const SPLIT_MIN: u8 = 15;
+
 /// Everything in `workspace.toml`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Workspace {
-    /// The tab in front, counted from 0.
+    /// The tab in front, counted from 0. With a split view, it is one of the
+    /// two tabs on screen: the one with the keyboard.
     pub active: usize,
     /// The window's place and size when it last moved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window: Option<WindowState>,
+    /// Two tabs on screen at once, if so.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub split: Option<Split>,
     pub sessions: Vec<SessionSetup>,
 }
 
@@ -151,9 +187,26 @@ impl Workspace {
     }
 
     /// The same workspace with the tab in front pointing at a tab that exists,
-    /// and without a window size too small to be real.
+    /// a split view only of two tabs that exist, and without a window size too
+    /// small to be real.
     pub fn checked(mut self) -> Self {
         self.active = self.active.min(self.sessions.len().saturating_sub(1));
+        let count = self.sessions.len();
+        self.split = self
+            .split
+            .filter(|split| {
+                split.first < count && split.second < count && split.first != split.second
+            })
+            .map(|split| Split {
+                ratio: split.ratio.clamp(SPLIT_MIN, 100 - SPLIT_MIN),
+                ..split
+            });
+        if let Some(split) = self.split
+            && self.active != split.first
+            && self.active != split.second
+        {
+            self.active = split.first;
+        }
         self.window = self
             .window
             .filter(|window| window.width >= WINDOW_MIN.0 && window.height >= WINDOW_MIN.1);
@@ -220,6 +273,7 @@ mod tests {
         let workspace = Workspace {
             active: 0,
             window: None,
+            split: None,
             sessions: vec![nucleo(), rtt_tab()],
         };
         workspace.save(&path).unwrap();
@@ -245,6 +299,7 @@ mod tests {
         let workspace = Workspace {
             active: 1,
             window: None,
+            split: None,
             sessions: vec![
                 nucleo(),
                 SessionSetup {
@@ -293,6 +348,7 @@ mod tests {
         let workspace = Workspace {
             active: 7,
             window: None,
+            split: None,
             sessions: vec![nucleo()],
         };
         assert_eq!(workspace.checked().active, 0);
@@ -300,6 +356,7 @@ mod tests {
             Workspace {
                 active: 3,
                 window: None,
+                split: None,
                 sessions: vec![]
             }
             .checked()
@@ -341,6 +398,7 @@ mod tests {
                 maximized: true,
                 ..window(120, 80, 1200, 760)
             }),
+            split: None,
             sessions: vec![nucleo()],
         };
         workspace.save(&path).unwrap();
@@ -375,5 +433,57 @@ mod tests {
         // Its title bar is above the top of the screen.
         assert!(!window(100, -500, 1200, 760).reachable(&[LAPTOP]));
         assert!(!window(100, 100, 1200, 760).reachable(&[]));
+    }
+
+    fn three_tabs(split: Option<Split>, active: usize) -> Workspace {
+        Workspace {
+            active,
+            window: None,
+            split,
+            sessions: vec![nucleo(), rtt_tab(), nucleo()],
+        }
+    }
+
+    fn split(first: usize, second: usize, ratio: u8) -> Split {
+        Split {
+            first,
+            second,
+            direction: SplitDirection::Down,
+            ratio,
+        }
+    }
+
+    #[test]
+    fn split_view_is_kept() {
+        let dir = TempDir::new("workspace-split");
+        let path = dir.file("workspace.toml");
+        let workspace = three_tabs(Some(split(0, 2, 60)), 2);
+        workspace.save(&path).unwrap();
+        assert_eq!(Workspace::load(&path), workspace);
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains("[split]") && text.contains("direction = \"down\""),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn split_view_needs_two_different_tabs_that_exist() {
+        assert_eq!(three_tabs(Some(split(0, 3, 50)), 0).checked().split, None);
+        assert_eq!(three_tabs(Some(split(1, 1, 50)), 1).checked().split, None);
+    }
+
+    #[test]
+    fn split_share_stays_usable() {
+        let checked = three_tabs(Some(split(0, 1, 2)), 0).checked();
+        assert_eq!(checked.split.unwrap().ratio, 15);
+        let checked = three_tabs(Some(split(0, 1, 99)), 0).checked();
+        assert_eq!(checked.split.unwrap().ratio, 85);
+    }
+
+    #[test]
+    fn tab_in_front_is_one_of_the_split_tabs() {
+        assert_eq!(three_tabs(Some(split(1, 2, 50)), 0).checked().active, 1);
+        assert_eq!(three_tabs(Some(split(1, 2, 50)), 2).checked().active, 2);
     }
 }

@@ -7,6 +7,7 @@
     DEFAULT_SWO,
     SPEEDS,
     SWO_BAUDS,
+    detectChip,
     hzText,
     listProbes,
     sameProbe,
@@ -59,6 +60,11 @@
   let name = $state(start?.name ?? "");
   let nameTyped = start !== null;
   let error = $state("");
+  let detecting = $state(false);
+  /** What detection found, in words. */
+  let found = $state("");
+  /** Detection runs by itself once, for a new session with no chip yet. */
+  let detectedOnce = start !== null;
 
   // The tab's own probe stays in the list while it is unplugged, so it can stay chosen.
   const shown: ProbeInfo[] = $derived.by(() => {
@@ -104,6 +110,38 @@
         target.chip = chip;
         nameChip();
       }
+    }
+    if (!target.chip && !detectedOnce && !inUse(probe)) {
+      detectedOnce = true;
+      void detect();
+    }
+  }
+
+  /** Asks the chip what it is, through the probe chosen. */
+  async function detect() {
+    if (!target.probe) {
+      return;
+    }
+    detecting = true;
+    error = "";
+    found = "";
+    try {
+      const result = await detectChip(target.probe, target.speed_khz);
+      if (result.chip) {
+        target.chip = result.chip;
+        chips = result.candidates;
+        nameChip();
+        found =
+          result.candidates.length > 1
+            ? `Found ${result.description}. It comes in other packages too: pick yours from the list if you like.`
+            : `Found ${result.description}.`;
+      } else {
+        found = `Found ${result.description}. Type its name.`;
+      }
+    } catch (problem) {
+      error = String(problem);
+    } finally {
+      detecting = false;
     }
   }
 
@@ -271,7 +309,18 @@
       {/each}
     </datalist>
   </label>
-  <p class="dlg-hint">Type part of the name and pick it from the list, as probe-rs names it.</p>
+  <div class="detect">
+    <p class="dlg-hint">
+      {#if detecting}
+        Asking the chip what it is...
+      {:else if found}
+        {found}
+      {:else}
+        Type part of the name and pick it from the list, as probe-rs names it, or detect it.
+      {/if}
+    </p>
+    <button class="btn small" disabled={!target.probe || detecting} onclick={detect}>Detect</button>
+  </div>
 
   {#if KIND === "rtt"}
     <label class="dlg-label elf">
@@ -413,6 +462,21 @@
     max-width: 150px;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .detect {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .detect .btn {
+    flex-shrink: 0;
+    height: 24px;
+    margin-top: 4px;
+    padding: 0 10px;
+    font-size: 12px;
   }
 
   .elf {

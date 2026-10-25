@@ -54,6 +54,9 @@
       <div
         class="tab"
         class:active={i === view.active}
+        class:shown={view.split !== null &&
+          i !== view.active &&
+          (i === view.split.first || i === view.split.second)}
         role="tab"
         tabindex="-1"
         aria-selected={i === view.active}
@@ -185,6 +188,13 @@
     box-shadow: inset 0 2px 0 var(--accent);
     /* The active tab covers the bar's bottom border, so it joins the pane. */
     margin-bottom: -1px;
+  }
+
+  /* The other tab of a split view: on screen, without the keyboard. */
+  .tab.shown {
+    color: var(--text);
+    background: var(--bg);
+    box-shadow: inset 0 2px 0 var(--muted);
   }
 
   .name {

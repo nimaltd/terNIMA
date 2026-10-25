@@ -60,7 +60,18 @@ export type SessionSetup = {
   terminal: TerminalOptions;
 };
 
-export type Workspace = { active: number; sessions: SessionSetup[] };
+export type SplitDirection = "right" | "down";
+
+/** Two tabs on screen at once: first (left or top) and second. */
+export type Split = {
+  first: number;
+  second: number;
+  direction: SplitDirection;
+  /** The first pane's share of the room, in percent. */
+  ratio: number;
+};
+
+export type Workspace = { active: number; split?: Split | null; sessions: SessionSetup[] };
 
 export type SessionState =
   | { state: "waiting"; problem: string | null }

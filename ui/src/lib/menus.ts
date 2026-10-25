@@ -11,7 +11,7 @@ import {
   type ThemeChoice,
 } from "./settings.svelte";
 import { isMac, keys, matches } from "./shortcuts";
-import { activeTab, closeTab, showTab, tabs, view } from "./tabs.svelte";
+import { activeTab, closeTab, otherPane, showTab, splitView, tabs, unsplit, view } from "./tabs.svelte";
 import { activeTerminal } from "./terminal-actions";
 
 export type Item = {
@@ -141,7 +141,19 @@ export function buildMenus(app: AppActions): Menu[] {
           run: () => terminal()?.selectAll(),
         },
         null,
-        { label: "Find...", shortcut: keys("Ctrl+Shift+F", "Cmd+F"), phase: 3 },
+        {
+          label: "Find...",
+          shortcut: keys("Ctrl+Shift+F", "Cmd+F"),
+          enabled: hasTerminal,
+          run: () => terminal()?.openSearch(),
+        },
+        { label: "Find next", shortcut: "F3", enabled: hasTerminal, run: () => terminal()?.findNext() },
+        {
+          label: "Find previous",
+          shortcut: "Shift+F3",
+          enabled: hasTerminal,
+          run: () => terminal()?.findPrevious(),
+        },
         {
           label: "Clear screen",
           shortcut: keys("Ctrl+Shift+K", "Cmd+K"),
@@ -157,6 +169,23 @@ export function buildMenus(app: AppActions): Menu[] {
         { label: "Log", phase: 3 },
         { label: "Hex", phase: 3 },
         { label: "Plot", phase: 4 },
+        null,
+        {
+          label: "Split right",
+          shortcut: keys("Ctrl+Shift+E", "Cmd+Shift+E"),
+          enabled: hasTabs,
+          checked: () => view.split?.direction === "right",
+          run: () => splitView("right"),
+        },
+        {
+          label: "Split down",
+          shortcut: keys("Ctrl+Shift+D", "Cmd+Shift+D"),
+          enabled: hasTabs,
+          checked: () => view.split?.direction === "down",
+          run: () => splitView("down"),
+        },
+        { label: "One tab only", enabled: () => view.split !== null, run: unsplit },
+        { label: "Other pane", shortcut: "F6", enabled: () => view.split !== null, run: otherPane },
         null,
         {
           label: "Next tab",

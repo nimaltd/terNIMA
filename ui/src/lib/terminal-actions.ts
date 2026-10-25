@@ -9,6 +9,11 @@ export interface TerminalActions {
   /** Everything in the terminal and its scrollback, as plain text. */
   text(): string;
   focus(): void;
+  /** Opens the search bar, with the selected text in it if there is some. */
+  openSearch(): void;
+  /** Goes to the next or the previous match of the last search. */
+  findNext(): void;
+  findPrevious(): void;
 }
 
 let active: TerminalActions | null = null;

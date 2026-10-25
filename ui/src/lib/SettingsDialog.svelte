@@ -9,6 +9,7 @@
     settings,
     updateSettings,
     type LogSettings,
+    type StartupSettings,
     type ThemeChoice,
   } from "./settings.svelte";
 
@@ -17,6 +18,7 @@
   // A copy of the settings: nothing changes until Save.
   let theme: ThemeChoice = $state(settings.theme);
   let fontSize = $state(settings.font_size);
+  let startup: StartupSettings = $state({ ...settings.startup });
   let log: LogSettings = $state({ ...settings.log });
   let defaultFolder = $state("");
   let error = $state("");
@@ -42,7 +44,7 @@
       error = `The text size must be a whole number from ${FONT_SIZE_MIN} to ${FONT_SIZE_MAX}.`;
       return;
     }
-    updateSettings({ theme, font_size: fontSize, log: { ...log, folder: log.folder.trim() } });
+    updateSettings({ theme, font_size: fontSize, startup: { ...startup }, log: { ...log, folder: log.folder.trim() } });
     onclose();
   }
 </script>
@@ -61,6 +63,21 @@
     <label class="dlg-label">
       Text size
       <input class="field mono" type="number" min={FONT_SIZE_MIN} max={FONT_SIZE_MAX} bind:value={fontSize} />
+    </label>
+  </div>
+
+  <h2 class="dlg-section">Startup</h2>
+  <p class="dlg-hint">What ternimal brings back from last time when it starts.</p>
+  <div class="dlg-checks startup">
+    <label class="dlg-check">
+      <input type="checkbox" bind:checked={startup.restore_tabs} /> Reopen the tabs, with their settings and split view
+    </label>
+    <label class="dlg-check under" class:dlg-muted={!startup.restore_tabs}>
+      <input type="checkbox" bind:checked={startup.reconnect} disabled={!startup.restore_tabs} /> Connect the tabs that
+      were connected
+    </label>
+    <label class="dlg-check">
+      <input type="checkbox" bind:checked={startup.restore_window} /> Open the window where it was, at its size
     </label>
   </div>
 
@@ -108,6 +125,15 @@
 </Modal>
 
 <style>
+  .startup {
+    flex-direction: column;
+  }
+
+  /* Connecting the tabs again needs them reopened first. */
+  .under {
+    padding-left: 24px;
+  }
+
   .folder {
     margin-top: 12px;
   }
