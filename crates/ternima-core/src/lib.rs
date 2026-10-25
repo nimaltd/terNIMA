@@ -11,6 +11,8 @@ pub mod lines;
 pub mod logfile;
 pub mod net;
 pub mod probe;
+pub mod record;
+pub mod replay;
 pub mod rtt;
 pub mod send;
 pub mod serial;

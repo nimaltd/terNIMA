@@ -61,17 +61,7 @@ impl Logger {
     }
 
     fn create_with(setup: &LogSetup, stamp: &str, clock: Clock) -> io::Result<Self> {
-        fs::create_dir_all(&setup.folder)?;
-        let base = file_name(&setup.name);
-        let mut path = setup.folder.join(format!("{base} {stamp}.log"));
-        // Two logs started in the same second get a number.
-        let mut number = 2;
-        while path.exists() {
-            path = setup.folder.join(format!("{base} {stamp} ({number}).log"));
-            number += 1;
-        }
-        let file = File::options().write(true).create_new(true).open(&path)?;
-
+        let (file, path) = new_file(&setup.folder, &setup.name, stamp, "log")?;
         let mut logger = Self {
             file: BufWriter::new(file),
             path,
@@ -190,6 +180,27 @@ fn local_time() -> String {
 }
 
 /// A session name made safe for a file name on every OS.
+/// Makes a new file in `folder`, made if needed, named after the session and
+/// `stamp`, such as "Nucleo 2026-10-25 14-02-11.log". Two started in the same
+/// second get a number.
+pub(crate) fn new_file(
+    folder: &Path,
+    name: &str,
+    stamp: &str,
+    extension: &str,
+) -> io::Result<(File, PathBuf)> {
+    fs::create_dir_all(folder)?;
+    let base = file_name(name);
+    let mut path = folder.join(format!("{base} {stamp}.{extension}"));
+    let mut number = 2;
+    while path.exists() {
+        path = folder.join(format!("{base} {stamp} ({number}).{extension}"));
+        number += 1;
+    }
+    let file = File::options().write(true).create_new(true).open(&path)?;
+    Ok((file, path))
+}
+
 fn file_name(name: &str) -> String {
     let safe: String = name
         .chars()

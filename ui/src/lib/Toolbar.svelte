@@ -2,7 +2,8 @@
   import { address, protocolText } from "./net";
   import { channelText, hzText } from "./probe";
   import { PAUSES, pauseText, summary, type LineEnding, type ModemLines, type View } from "./serial";
-  import { changed, type Tab } from "./tabs.svelte";
+  import { playTime } from "./state";
+  import { changed, fileName, type Tab } from "./tabs.svelte";
   import { activeTerminal } from "./terminal-actions";
 
   let { tab, onsettings }: { tab: Tab; onsettings: () => void } = $props();
@@ -29,6 +30,14 @@
     },
   ];
 
+  /** How fast a recording can play, against how it was recorded. */
+  const SPEEDS = [0.25, 0.5, 1, 2, 5, 10, 100];
+
+  /** Where the position slider is while it is dragged, in seconds. */
+  let seeking: number | null = $state(null);
+  const length = $derived(tab.playback?.length ?? 0);
+  const position = $derived(tab.playback?.position ?? 0);
+
   /** Does something, then gives the keyboard back to the terminal. */
   function act(action: () => void) {
     action();
@@ -37,7 +46,25 @@
 </script>
 
 <div class="toolbar">
-  {#if tab.running}
+  {#if tab.kind === "replay"}
+    {#if tab.playback?.playing}
+      <button class="btn play" title="Pause (the tab keeps what it showed)" onclick={() => act(() => tab.pause())}>Pause</button>
+    {:else}
+      <button class="btn primary play" title="Play the recording from where it is" onclick={() => act(() => tab.play())}>Play</button>
+    {/if}
+    <button
+      class="btn small"
+      disabled={!tab.running}
+      title="Play from the start again"
+      onclick={() =>
+        act(() => {
+          tab.seek(0);
+          tab.play();
+        })}
+    >
+      Restart
+    </button>
+  {:else if tab.running}
     <button class="btn" onclick={() => act(() => tab.stop())}>Disconnect</button>
   {:else}
     <button class="btn primary" onclick={() => act(() => tab.start())}>Connect</button>
@@ -130,6 +157,44 @@
       <span class="muted">{protocolText(tab.tcp)}</span>
       <span class="muted">▾</span>
     </button>
+  {:else if tab.kind === "replay"}
+    <button class="btn target" title={`${tab.replay.path}: click to play another recording`} onclick={onsettings}>
+      <span class="mono file">{fileName(tab.replay.path)}</span>
+      <span class="muted">▾</span>
+    </button>
+
+    <span class="separator"></span>
+
+    <label class="option" title="How fast it plays, against how it was recorded">
+      Speed
+      <select
+        class="field"
+        value={String(tab.replay.speed)}
+        onchange={(event) => act(() => tab.setSpeed(Number(event.currentTarget.value)))}
+      >
+        {#each [...new Set([...SPEEDS, tab.replay.speed])].sort((a, b) => a - b) as speed (speed)}
+          <option value={String(speed)}>{speed}×</option>
+        {/each}
+      </select>
+    </label>
+    <input
+      class="seek"
+      type="range"
+      min="0"
+      max={length}
+      step="any"
+      value={seeking ?? position}
+      disabled={!tab.running || length === 0}
+      title="Go to a point in the recording"
+      aria-label="Position in the recording"
+      oninput={(event) => (seeking = Number(event.currentTarget.value))}
+      onchange={(event) => {
+        tab.seek(Number(event.currentTarget.value));
+        seeking = null;
+        activeTerminal()?.focus();
+      }}
+    />
+    <span class="time">{playTime(seeking ?? position)} / {playTime(length)}</span>
   {:else}
     <button class="btn target" title="SWO settings" onclick={onsettings}>
       <span class="mono">{tab.swo.chip || "No chip"}</span>
@@ -172,15 +237,30 @@
 
   <span class="spacer"></span>
 
-  <button
-    class="btn small log"
-    class:on={tab.log}
-    title={tab.logPath ?? (tab.log ? "The log starts when the tab connects" : "Write what this tab receives to a log file")}
-    onclick={() => act(() => tab.setLog(!tab.log))}
-  >
-    <span class="dot"></span>
-    Log
-  </button>
+  {#if tab.kind !== "replay"}
+    <button
+      class="btn small log"
+      class:on={tab.log}
+      title={tab.logPath ?? (tab.log ? "The log starts when the tab connects" : "Write what this tab receives to a log file")}
+      onclick={() => act(() => tab.setLog(!tab.log))}
+    >
+      <span class="dot"></span>
+      Log
+    </button>
+    <button
+      class="btn small log"
+      class:on={tab.recordPath !== null}
+      disabled={!tab.running}
+      title={tab.recordPath ??
+        (tab.running
+          ? "Record what this tab receives and sends, with its timing, to play it back later (File > Play a recording)"
+          : "Connect first, then record")}
+      onclick={() => act(() => tab.setRecording(tab.recordPath === null))}
+    >
+      <span class="dot"></span>
+      Rec
+    </button>
+  {/if}
 
   <div class="views" role="group" aria-label="View">
     {#each VIEWS as { view, label, title } (view)}
@@ -214,7 +294,7 @@
 
   {#if tab.kind === "swo"}
     <span class="muted" title="SWO only comes from the chip">Output only</span>
-  {:else}
+  {:else if tab.kind !== "replay"}
     <label class="option" title="What the Enter key sends">
       Enter
       <select
@@ -306,6 +386,29 @@
   .option select {
     height: 24px;
     padding: 0 4px;
+  }
+
+  .play {
+    min-width: 64px;
+  }
+
+  .file {
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .seek {
+    width: 150px;
+    accent-color: var(--accent);
+  }
+
+  .time {
+    min-width: 13ch;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
   }
 
   .log .dot {

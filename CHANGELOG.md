@@ -176,6 +176,18 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   to, or a macro to send, such as "sf" for Send file. The matched letters
   are marked, a check shows what is on, and the commands used lately come
   first when nothing is typed.
+- Record and replay. Rec in the toolbar, or File > Record this tab,
+  records every byte a tab receives and sends, with when, to a `.trec`
+  file in the log folder, named after the tab and the time. It is a text
+  file that can be read: a line for each piece, with its time, `<` or `>`,
+  and the bytes in quotes, escaped where they are not text. File > Play a
+  recording (Ctrl+Shift+O, or "A recording" under the + of the tab bar)
+  plays one in a tab of its own, with its timing: Play and Pause, Restart,
+  0.25× to 100×, and a slider to go to any point. The terminal, hex,
+  Lines and Plot views show it as they showed the session, sent bytes
+  included, and lines keep the time they were recorded at, so the plot
+  shows the real timing at any speed. A replay tab comes back paused the
+  next time terNIMA opens.
 - A Plot view (View > Plot, Ctrl+Shift+G, or Plot in the toolbar): the
   numbers in the received lines, drawn over time. It reads `temp=21.5
   hum=40`, the Arduino Serial Plotter's `temp:21.5,hum:40`, plain
@@ -224,6 +236,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Removed
 
 - Flash programming is no longer planned, and its menu item is gone.
+- The dashboard is no longer planned: the Plot view's table shows the
+  numbers, and macros send commands.
 
 ### Fixed
 

@@ -1,5 +1,6 @@
-//! The session commands the UI calls, for serial ports, RTT, SWO and TCP,
-//! the sessions they run, and the log file each can write.
+//! The session commands the UI calls, for serial ports, RTT, SWO, TCP and
+//! recordings played back, the sessions they run, and the log file and
+//! recording each can write.
 
 use std::collections::HashMap;
 use std::io;
@@ -9,13 +10,19 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Manager, State};
 use ternima_core::lines::{self, LineSplitter};
 use ternima_core::logfile::{LogSetup, Logger};
+use ternima_core::record::{self, Direction, Recorder};
+use ternima_core::replay::{self, Player};
 use ternima_core::send::{self, Pace, Stopped};
 use ternima_core::{net, probe, rtt, serial, swo};
+
+/// The most time, in ms, that lines read at once are spread over, the same
+/// as SPREAD_MS in tabs.svelte.ts, which does it for live sessions.
+const SPREAD_MS: f64 = 200.0;
 
 /// A running session of any kind.
 enum Running {
@@ -23,25 +30,31 @@ enum Running {
     Rtt(rtt::Session),
     Swo(swo::Session),
     Tcp(net::Session),
+    Replay(Player),
 }
 
 impl Running {
-    /// Sends bytes to the device. False for SWO, which only receives.
-    fn write(&self, data: Vec<u8>) -> bool {
+    /// Whether bytes can be sent: not to SWO, which only receives, nor to a recording.
+    fn takes_input(&self) -> bool {
+        !matches!(self, Running::Swo(_) | Running::Replay(_))
+    }
+
+    /// Sends bytes to the device.
+    fn write(&self, data: Vec<u8>) {
         match self {
             Running::Serial(session) => session.write(data),
             Running::Rtt(session) => session.write(data),
             Running::Tcp(session) => session.write(data),
-            Running::Swo(_) => return false,
+            Running::Swo(_) | Running::Replay(_) => {}
         }
-        true
     }
 }
 
-/// A session's log, shared between its thread and the commands.
+/// A session's log and recording, shared between its thread and the commands.
 #[derive(Default)]
 struct LogState {
     logger: Option<Logger>,
+    recorder: Option<Recorder>,
     /// What the session is connected to now, for the first line of a log
     /// turned on while it runs.
     connected_to: Option<String>,
@@ -77,11 +90,23 @@ impl Sessions {
         }
     }
 
-    /// Sends bytes to a session. False when it is not running, or only receives.
+    /// Sends bytes to a session, and records them if it records. False when
+    /// it is not running, or only receives.
     fn write(&self, id: u32, data: Vec<u8>) -> bool {
-        self.lock()
-            .get(&id)
-            .is_some_and(|entry| entry.running.write(data))
+        let all = self.lock();
+        let Some(entry) = all.get(&id).filter(|entry| entry.running.takes_input()) else {
+            return false;
+        };
+        let mut state = lock_log(&entry.log);
+        // A recording that cannot be written stops.
+        if let Some(recorder) = &mut state.recorder
+            && recorder.data(Direction::Sent, &data).is_err()
+        {
+            state.recorder = None;
+        }
+        drop(state);
+        entry.running.write(data);
+        true
     }
 
     /// Adds a session. One with the same number is replaced; closing it can
@@ -116,6 +141,21 @@ pub enum SessionEvent {
         lines: Vec<lines::Line>,
         at: f64,
     },
+    /// What a recording played back next, in order, with its lines and when
+    /// each came, in ms since 1970. It all comes on this one channel, so it
+    /// keeps its order with `Restarted`.
+    Replayed {
+        pieces: Vec<Piece>,
+        lines: Vec<lines::Line>,
+        times: Vec<f64>,
+    },
+    /// A recording plays from the start again: what it showed goes.
+    Restarted,
+    ReplayState(replay::PlayState),
+    /// Writing the recording failed, so it stopped.
+    RecordingStopped {
+        problem: String,
+    },
     /// The chip's trace FIFO overflowed this many times since the last report.
     Overflow {
         count: u32,
@@ -126,7 +166,15 @@ pub enum SessionEvent {
     },
 }
 
+/// Bytes a recording played back, as they were received or sent.
+#[derive(Clone, Serialize)]
+pub struct Piece {
+    sent: bool,
+    bytes: Vec<u8>,
+}
+
 /// Whether a log is being written, and where; or why it could not start.
+/// The same for a recording.
 #[derive(Clone, Default, Serialize)]
 pub struct LogStatus {
     path: Option<String>,
@@ -220,15 +268,42 @@ fn send_lines(splitter: &mut LineSplitter, events: &Channel<SessionEvent>, bytes
     }
 }
 
+/// Writes to a session's recording. A failed write stops it and tells the UI why.
+fn write_record(
+    log: &SharedLog,
+    events: &Channel<SessionEvent>,
+    write: impl FnOnce(&mut Recorder) -> io::Result<()>,
+) {
+    let mut state = lock_log(log);
+    let Some(recorder) = &mut state.recorder else {
+        return;
+    };
+    if let Err(error) = write(recorder) {
+        let path = recorder.path().display().to_string();
+        state.recorder = None;
+        let _ = events.send(SessionEvent::RecordingStopped {
+            problem: format!("Recording stopped: could not write {path}: {error}"),
+        });
+    }
+}
+
 fn log_data(log: &SharedLog, events: &Channel<SessionEvent>, bytes: &[u8]) {
     write_log(log, events, |state| match &mut state.logger {
         Some(logger) => logger.data(bytes),
         None => Ok(()),
     });
+    write_record(log, events, |recorder| {
+        recorder.data(Direction::Received, bytes)
+    });
 }
 
 /// Notes a connect, with what it connected to, or a disconnect.
 fn log_state(log: &SharedLog, events: &Channel<SessionEvent>, connected_to: Option<String>) {
+    let note = match &connected_to {
+        Some(what) => format!("connected to {what}"),
+        None => "disconnected".to_string(),
+    };
+    write_record(log, events, |recorder| recorder.note(&note));
     write_log(log, events, |state| {
         state.connected_to = connected_to.clone();
         match (&mut state.logger, connected_to) {
@@ -244,6 +319,7 @@ fn new_log(app: &AppHandle, setup: Option<LogSetup>) -> (SharedLog, LogStatus) {
     let (logger, status) = start_log(app, setup, None);
     let state = LogState {
         logger,
+        recorder: None,
         connected_to: None,
     };
     (Arc::new(Mutex::new(state)), status)
@@ -452,6 +528,161 @@ pub fn set_log(
     status
 }
 
+/// Starts recording a running session to a new file in `folder` (empty for
+/// the log folder), or stops it without a folder. A recording keeps every
+/// byte received and sent with its time, to play back later.
+#[tauri::command(async)]
+pub fn set_recording(
+    id: u32,
+    folder: Option<String>,
+    name: String,
+    app: AppHandle,
+    sessions: State<Sessions>,
+) -> LogStatus {
+    let Some(shared) = sessions.lock().get(&id).map(|entry| entry.log.clone()) else {
+        return LogStatus {
+            path: None,
+            problem: Some("Connect first, then record.".into()),
+        };
+    };
+    let Some(folder) = folder else {
+        lock_log(&shared).recorder = None;
+        return LogStatus::default();
+    };
+    let folder = if folder.is_empty() {
+        default_folder(&app)
+    } else {
+        PathBuf::from(folder)
+    };
+    let connected_to = lock_log(&shared).connected_to.clone();
+    let started = Recorder::create(&folder, &name).and_then(|mut recorder| {
+        if let Some(what) = connected_to {
+            recorder.note(&format!("connected to {what}"))?;
+        }
+        Ok(recorder)
+    });
+    match started {
+        Ok(recorder) => {
+            let path = Some(recorder.path().display().to_string());
+            lock_log(&shared).recorder = Some(recorder);
+            LogStatus {
+                path,
+                problem: None,
+            }
+        }
+        Err(error) => LogStatus {
+            path: None,
+            problem: Some(format!(
+                "Could not start a recording in {}: {error}",
+                folder.display()
+            )),
+        },
+    }
+}
+
+/// What the UI learns of a recording it opens.
+#[derive(Clone, Serialize)]
+pub struct ReplayInfo {
+    /// The name of the tab it was recorded from.
+    name: String,
+    /// How long it plays, in seconds.
+    length: f64,
+}
+
+/// Opens a recording to play back, paused at its start. What it received
+/// and sent, and its lines, come to `events` in order as it plays.
+#[tauri::command(async)]
+pub fn open_replay_session(
+    id: u32,
+    path: String,
+    speed: f64,
+    events: Channel<SessionEvent>,
+    sessions: State<Sessions>,
+) -> Result<ReplayInfo, String> {
+    let recording = record::read(std::path::Path::new(&path))?;
+    let info = ReplayInfo {
+        name: recording.name.clone(),
+        length: recording.length(),
+    };
+    // Lines keep the time they were recorded at, so the plot shows it, at any speed.
+    let started = recording.started_ms.unwrap_or_else(|| {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0.0, |since| since.as_secs_f64() * 1000.0)
+    });
+    let mut splitter = LineSplitter::default();
+    let mut last_at: Option<f64> = None;
+    let player = Player::start(recording, speed, move |event| {
+        let _ = match event {
+            replay::Event::Chunks(chunks) => {
+                let mut pieces: Vec<Piece> = Vec::new();
+                let mut lines = Vec::new();
+                let mut times = Vec::new();
+                for chunk in chunks {
+                    let sent = chunk.direction == Direction::Sent;
+                    if !sent {
+                        // Lines read at once came one after another since the read
+                        // before: spread as the live views spread them.
+                        let at = started + chunk.at * 1000.0;
+                        let found = splitter.feed(&chunk.bytes);
+                        let gap = last_at.map_or(0.0, |before| (at - before).clamp(0.0, SPREAD_MS));
+                        let count = found.len();
+                        for (index, line) in found.into_iter().enumerate() {
+                            lines.push(line);
+                            times.push(at - (count - 1 - index) as f64 * gap / count as f64);
+                        }
+                        last_at = Some(at);
+                    }
+                    match pieces.last_mut() {
+                        Some(last) if last.sent == sent => last.bytes.extend(chunk.bytes),
+                        _ => pieces.push(Piece {
+                            sent,
+                            bytes: chunk.bytes,
+                        }),
+                    }
+                }
+                events.send(SessionEvent::Replayed {
+                    pieces,
+                    lines,
+                    times,
+                })
+            }
+            replay::Event::Restarted => {
+                splitter = LineSplitter::default();
+                last_at = None;
+                events.send(SessionEvent::Restarted)
+            }
+            replay::Event::State(state) => events.send(SessionEvent::ReplayState(state)),
+        };
+    });
+    sessions.insert(id, Running::Replay(player), Arc::default());
+    Ok(info)
+}
+
+/// What the UI asks of a recording being played.
+#[derive(Clone, Copy, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ReplayCommand {
+    Play,
+    Pause,
+    Speed { speed: f64 },
+    Seek { position: f64 },
+}
+
+#[tauri::command]
+pub fn control_replay(id: u32, command: ReplayCommand, sessions: State<Sessions>) {
+    sessions.with(id, |session| {
+        if let Running::Replay(player) = session {
+            match command {
+                ReplayCommand::Play => player.play(),
+                ReplayCommand::Pause => player.pause(),
+                ReplayCommand::Speed { speed } => player.set_speed(speed),
+                ReplayCommand::Seek { position } => player.seek(position),
+            }
+        }
+    });
+}
+
 /// Writes text to a file the user chose, for File > Save output as.
 #[tauri::command(async)]
 pub fn save_text(path: String, text: String) -> Result<(), String> {
@@ -650,6 +881,6 @@ pub fn reset_target(id: u32, sessions: State<Sessions>) {
         Running::Rtt(session) => session.reset(),
         Running::Swo(session) => session.reset(),
         // No probe of its own: an RTT server's probe belongs to the debugger.
-        Running::Serial(_) | Running::Tcp(_) => {}
+        Running::Serial(_) | Running::Tcp(_) | Running::Replay(_) => {}
     });
 }

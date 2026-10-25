@@ -170,7 +170,7 @@ or of two (UART and RTT).
 
 ### Plot view
 
-See [Plotter and dashboard](#plotter-and-dashboard) below.
+See [Plotter](#plotter) below.
 
 ---
 
@@ -280,9 +280,7 @@ An RTT session is found again by the probe's serial number and the chip.
 
 ---
 
-## Plotter and dashboard
-
-### Plotter
+## Plotter
 
 Draws numbers from the data as live charts, like an oscilloscope.
 
@@ -300,11 +298,6 @@ Draws numbers from the data as live charts, like an oscilloscope.
 - Trigger like a scope: wait for a rising or falling edge through a level, then hold
 - Per series: color, scale, offset, hide; min, max and average
 - Export the data as CSV and the chart as PNG
-
-### Dashboard
-
-A page of widgets built from the same values: number, gauge, bar, LED, text, and a
-small chart. Buttons and sliders send commands back, such as `pwm {value}\r\n`.
 
 ---
 
@@ -572,15 +565,14 @@ Done when the Zephyr shell works over RTT on a DAPLink and on a J-Link.
 
 Done when you can find one module's errors in a busy Zephyr log in seconds.
 
-### Phase 4: plotter and dashboard
+### Phase 4: plotter
 
 - [x] Value parsing: plain, named, Arduino, JSON, regex
 - [x] Time chart with zoom, pause, cursors and stats
 - [x] XY chart, histogram, FFT, scope style trigger
 - [x] CSV and PNG export
 - [ ] Values from binary frames and from raw RTT channels (int16, float...)
-- [ ] Dashboard widgets, with buttons and sliders that send commands
-- [ ] Record and replay
+- [x] Record and replay
 
 ### Phase 5: probe tools
 

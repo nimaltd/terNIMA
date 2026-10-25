@@ -18,13 +18,14 @@ export function stateText(tab: Tab): string {
       if (tab.kind === "rtt") return rttText(tab);
       if (tab.kind === "swo") return swoText(tab);
       if (tab.kind === "tcp") return `Connected to ${tab.target}, ${protocolText(tab.tcp)}`;
+      if (tab.kind === "replay") return replayText(tab);
       return `Connected to ${tab.target}`;
     case "problem":
       return tab.problem ?? "";
     case "waiting":
       return waitingText(tab);
     case "stopped":
-      return "Not connected";
+      return tab.kind === "replay" ? "Not open" : "Not connected";
   }
 }
 
@@ -35,6 +36,8 @@ function waitingText(tab: Tab): string {
       return `Waiting for ${tab.port.name}: plug it in and terNIMA connects by itself`;
     case "tcp":
       return tcpWaitingText(tab);
+    case "replay":
+      return "Opening the recording";
     default:
       return "Waiting for the probe: plug it in and terNIMA connects by itself";
   }
@@ -64,6 +67,25 @@ function rttText(tab: Tab): string {
 function swoText(tab: Tab): string {
   const ports = tab.swo.all_ports ? "all ITM ports" : `ITM port ${tab.swo.port}`;
   return `SWO from ${tab.target} at ${hzText(tab.swo.baud)}, ${ports}`;
+}
+
+/** "Playing Nucleo.trec at 2×, 0:12.3 of 1:00.0" */
+function replayText(tab: Tab): string {
+  const play = tab.playback;
+  if (!play) return `Playing ${tab.target}`;
+  const speed = play.speed === 1 ? "" : ` at ${play.speed}×`;
+  const where = `${playTime(play.position)} of ${playTime(play.length)}`;
+  if (play.playing) return `Playing ${tab.target}${speed}, ${where}`;
+  if (play.position >= play.length) return `Played ${tab.target} to the end, ${playTime(play.length)}`;
+  return `Paused ${tab.target} at ${where}`;
+}
+
+/** A time in a recording: "1:02.5". */
+export function playTime(seconds: number): string {
+  const tenths = Math.max(0, Math.round(seconds * 10));
+  const minutes = Math.floor(tenths / 600);
+  const rest = ((tenths % 600) / 10).toFixed(1).padStart(4, "0");
+  return `${minutes}:${rest}`;
 }
 
 /** "1.2 KB" */

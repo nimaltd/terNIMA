@@ -115,6 +115,10 @@
         <strong>TCP or Telnet</strong>
         <span>A device, a serial bridge or a shell on the network</span>
       </button>
+      <button role="menuitem" onclick={() => pick("replay")}>
+        <strong>A recording</strong>
+        <span>Play back what a tab recorded, with its timing</span>
+      </button>
     </div>
   {/if}
 </div>

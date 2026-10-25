@@ -56,6 +56,8 @@ export type AppActions = {
   highlights(): void;
   /** Opens the command palette. */
   commandPalette(): void;
+  /** Picks a recording and plays it in a new tab. */
+  playRecording(): void;
 };
 
 const GITHUB = "https://github.com/nimaltd/ternima";
@@ -119,6 +121,20 @@ export function buildMenus(app: AppActions): Menu[] {
             const tab = activeTab();
             tab?.setLog(!tab.log);
           },
+        },
+        {
+          label: "Record this tab",
+          enabled: () => activeTab()?.running === true && activeTab()?.kind !== "replay",
+          checked: () => activeTab()?.recordPath != null,
+          run: () => {
+            const tab = activeTab();
+            tab?.setRecording(tab.recordPath === null);
+          },
+        },
+        {
+          label: "Play a recording...",
+          shortcut: keys("Ctrl+Shift+O", "Cmd+O"),
+          run: app.playRecording,
         },
         { label: "Open log folder", run: app.openLogFolder },
         {
@@ -366,7 +382,7 @@ export function buildMenus(app: AppActions): Menu[] {
       items: [
         {
           label: "Send file...",
-          enabled: () => connected() && activeTab()?.kind !== "swo" && !activeTab()?.sending,
+          enabled: () => connected() && activeTab()?.takesInput === true && !activeTab()?.sending,
           run: app.sendFile,
         },
         {

@@ -19,6 +19,7 @@ import {
   DEFAULT_HEX_VIEW,
   DEFAULT_LINES_VIEW,
   DEFAULT_PLOT_VIEW,
+  DEFAULT_REPLAY,
   DEFAULT_SERIAL,
   DEFAULT_TERMINAL,
   closeAllSessions,
@@ -28,6 +29,8 @@ import {
   type HexView,
   type LinesView,
   type PlotView,
+  type PlayState,
+  type ReplaySetup,
   type LogLine,
   type ModemLines,
   type PortId,
@@ -49,6 +52,16 @@ type LogStatus = { path: string | null; problem: string | null };
 
 /** How a session's log file is written, for the Rust side. */
 type LogSetup = { folder: string; name: string; format: string; timestamps: boolean };
+
+/** What the Rust side learns of a recording it opens. */
+type ReplayInfo = { name: string; length: number };
+
+/** What a recording being played is asked to do. */
+type ReplayCommand =
+  | { kind: "play" }
+  | { kind: "pause" }
+  | { kind: "speed"; speed: number }
+  | { kind: "seek"; position: number };
 
 /** How sending a file goes, from the Rust side. */
 type FileProgress = { sent: number; total: number; done: boolean; cancelled: boolean; problem: string | null };
@@ -85,6 +98,7 @@ export class Tab {
   rtt: RttConfig = $state({ ...DEFAULT_RTT });
   swo: SwoConfig = $state({ ...DEFAULT_SWO });
   tcp: TcpConfig = $state({ ...DEFAULT_TCP });
+  replay: ReplaySetup = $state({ ...DEFAULT_REPLAY });
   terminal: TerminalOptions = $state({ ...DEFAULT_TERMINAL });
   /** True while the session runs: connected, or ternima is waiting for the device. */
   running = $state(false);
@@ -105,6 +119,12 @@ export class Tab {
   log = $state(false);
   /** The log file being written, while the session runs with its log on. */
   logPath: string | null = $state(null);
+  /** The recording being written, while the tab records. */
+  recordPath: string | null = $state(null);
+  /** Where the recording a replay tab plays is, once it is open. */
+  playback: PlayState | null = $state(null);
+  /** Set to play a recording as soon as it is open. */
+  private playWhenOpen = false;
   /** What the tab shows: the terminal, every byte in hex, every line, or a chart of the numbers. */
   view: View = $state("terminal");
   /** How the hex view breaks its lines. */
@@ -163,6 +183,7 @@ export class Tab {
     this.rtt = { ...DEFAULT_RTT, ...setup.rtt };
     this.swo = { ...DEFAULT_SWO, ...setup.swo };
     this.tcp = { ...DEFAULT_TCP, ...setup.tcp };
+    this.replay = { ...DEFAULT_REPLAY, ...setup.replay };
     this.terminal = { ...DEFAULT_TERMINAL, ...setup.terminal };
     this.log = setup.log ?? false;
     this.view = setup.view ?? "terminal";
@@ -178,6 +199,11 @@ export class Tab {
 
   get connected(): boolean {
     return this.status?.state === "connected";
+  }
+
+  /** Whether the tab can send: SWO only receives, and a recording only plays back. */
+  get takesInput(): boolean {
+    return this.kind !== "swo" && this.kind !== "replay";
   }
 
   /** Why the session cannot connect, if that is the case now. */
@@ -208,6 +234,8 @@ export class Tab {
         return $state.snapshot({ ...common, swo: this.swo });
       case "tcp":
         return $state.snapshot({ ...common, tcp: this.tcp });
+      case "replay":
+        return $state.snapshot({ ...common, replay: this.replay });
       default:
         return $state.snapshot({ ...common, port: this.port, serial: this.serial });
     }
@@ -291,11 +319,13 @@ export class Tab {
    * one after another since the read before, so they are spread over that
    * time, up to SPREAD_MS: a fast stream then draws as a curve, not steps.
    */
-  private addLines(lines: LogLine[], at: number): void {
+  private addLines(lines: LogLine[], at: number, times?: number[]): void {
     const step = this.linesAt > 0 ? Math.min(Math.max(0, at - this.linesAt), SPREAD_MS) / lines.length : 0;
     this.linesAt = at;
     lines.forEach((line, index) => {
-      this.textLines.push({ ...line, n: this.nextLine++, at: at - (lines.length - 1 - index) * step });
+      // A recording knows when each line came.
+      const when = times?.[index] ?? at - (lines.length - 1 - index) * step;
+      this.textLines.push({ ...line, n: this.nextLine++, at: when });
       this.count(line, 1);
     });
     if (this.textLines.length > LINES_MAX) {
@@ -352,6 +382,11 @@ export class Tab {
     data.onmessage = (message) => this.receive(new Uint8Array(message));
     const events = new Channel<SessionEvent>();
     events.onmessage = (event) => this.onEvent(event);
+    if (this.kind === "replay") {
+      this.openRecording(events);
+      changed();
+      return;
+    }
 
     // The log starts with the session, so not a byte is missed.
     const common = { id: this.id, log: this.logSetup(), data, events };
@@ -377,6 +412,106 @@ export class Tab {
       .then((status) => this.onLogStatus(status))
       .catch((error) => this.note(`could not start: ${error}`));
     changed();
+  }
+
+  /** Opens the tab's recording, paused at its start, or plays it at once if asked to. */
+  private openRecording(events: Channel<SessionEvent>): void {
+    const { path, speed } = this.replay;
+    invoke<ReplayInfo>("open_replay_session", { id: this.id, path, speed, events })
+      .then((info) => {
+        if (!this.running) {
+          return;
+        }
+        this.target = fileName(path);
+        this.connectedAt = Date.now();
+        this.status = { state: "connected" };
+        this.note(`playing ${this.target}: ${duration(info.length * 1000)} recorded from ${info.name || "a tab"}`);
+        if (this.playWhenOpen) {
+          this.playWhenOpen = false;
+          this.control({ kind: "play" });
+        }
+      })
+      .catch((error) => {
+        this.note(String(error));
+        this.stop();
+      });
+  }
+
+  /** Plays the recording of a replay tab, opening it first if it is not open. */
+  play(): void {
+    if (this.kind !== "replay") {
+      return;
+    }
+    if (!this.running) {
+      this.playWhenOpen = true;
+      this.start();
+      return;
+    }
+    this.control({ kind: "play" });
+  }
+
+  pause(): void {
+    this.control({ kind: "pause" });
+  }
+
+  /** Goes to a point in the recording, in seconds: back means from the start again. */
+  seek(position: number): void {
+    this.control({ kind: "seek", position });
+  }
+
+  /** Plays the recording this many times as fast as it was recorded. */
+  setSpeed(speed: number): void {
+    this.replay.speed = speed;
+    this.control({ kind: "speed", speed });
+    changed();
+  }
+
+  /** Plays another recording in this replay tab, from its start. */
+  openFile(path: string): void {
+    this.stop();
+    this.replay.path = path;
+    this.name = recordingName(path);
+    this.clearViews();
+    this.play();
+    changed();
+  }
+
+  private control(command: ReplayCommand): void {
+    if (this.running) {
+      void invoke("control_replay", { id: this.id, command });
+    }
+  }
+
+  /** Clears what the tab shows, for a recording that starts again. */
+  private clearViews(): void {
+    this.write("\x1bc");
+    this.recent = [];
+    this.recentBytes = 0;
+    this.layOutHex();
+    this.clearLines();
+    this.rx = 0;
+    this.tx = 0;
+  }
+
+  /** Starts or stops recording what the tab receives and sends, with its timing, to play back later. */
+  setRecording(on: boolean): void {
+    if (!this.running || this.kind === "replay") {
+      return;
+    }
+    const before = this.recordPath;
+    const folder = on ? settings.log.folder : null;
+    invoke<LogStatus>("set_recording", { id: this.id, folder, name: this.name })
+      .then((status) => {
+        this.recordPath = status.path;
+        if (status.path) {
+          this.note(`recording to ${status.path}`);
+        } else if (status.problem) {
+          this.note(status.problem);
+        } else if (before) {
+          this.note(`recording saved: ${before}`);
+        }
+      })
+      .catch((error) => this.note(`could not record: ${error}`));
   }
 
   /** Turns the tab's log on or off. A running session starts a new file at once. */
@@ -423,11 +558,16 @@ export class Tab {
     if (this.connected) {
       this.note(`closed at ${clock(Date.now())}`);
     }
+    if (this.recordPath) {
+      this.note(`recording saved: ${this.recordPath}`);
+    }
     this.running = false;
     this.status = null;
     this.lines = null;
     this.connectedAt = null;
     this.logPath = null;
+    this.recordPath = null;
+    this.playback = null;
     void invoke("close_session", { id: this.id });
     changed();
   }
@@ -492,10 +632,14 @@ export class Tab {
     if (!this.connected) {
       return;
     }
-    if (this.kind === "swo") {
+    if (!this.takesInput) {
       if (!this.hinted) {
         this.hinted = true;
-        this.note("SWO only comes from the chip: what you type goes nowhere. Use RTT to type to it.");
+        this.note(
+          this.kind === "swo"
+            ? "SWO only comes from the chip: what you type goes nowhere. Use RTT to type to it."
+            : "A recording only plays back: what you type goes nowhere.",
+        );
       }
       return;
     }
@@ -513,6 +657,9 @@ export class Tab {
   async sendLine(text: string, hex: boolean, enter: boolean): Promise<void> {
     if (this.kind === "swo") {
       throw "SWO only comes from the chip. Use RTT to send to it.";
+    }
+    if (this.kind === "replay") {
+      throw "A recording only plays back.";
     }
     if (!this.connected) {
       throw "Not connected.";
@@ -561,12 +708,12 @@ export class Tab {
     void invoke("write_session", { id: this.id, data: Array.from(bytes) });
     this.tx += bytes.length;
     this.sentSince = true;
-    this.record(true, bytes);
+    this.keepForHex(true, bytes);
   }
 
   /** Sends a file, paced for the link, with its progress in `sending`. */
   async sendFile(path: string): Promise<void> {
-    if (!this.connected || this.sending || this.kind === "swo") {
+    if (!this.connected || this.sending || !this.takesInput) {
       return;
     }
     const name = path.split(/[\\/]/).pop() ?? path;
@@ -670,11 +817,11 @@ export class Tab {
     this.lastReceived = now;
     this.sentSince = false;
     this.write(bytes);
-    this.record(false, bytes);
+    this.keepForHex(false, bytes);
   }
 
   /** Keeps bytes for the hex view, and shows them there if it is open. */
-  private record(tx: boolean, bytes: Uint8Array): void {
+  private keepForHex(tx: boolean, bytes: Uint8Array): void {
     const at = Date.now();
     this.recent.push({ tx, at, bytes });
     this.recentBytes += bytes.length;
@@ -711,6 +858,31 @@ export class Tab {
         return;
       case "text_lines":
         this.addLines(event.lines, event.at);
+        return;
+      case "replayed":
+        for (const piece of event.pieces) {
+          const bytes = new Uint8Array(piece.bytes);
+          if (piece.sent) {
+            this.tx += bytes.length;
+            this.sentSince = true;
+            this.keepForHex(true, bytes);
+          } else {
+            this.receive(bytes);
+          }
+        }
+        if (event.lines.length > 0) {
+          this.addLines(event.lines, event.times.at(-1) ?? Date.now(), event.times);
+        }
+        return;
+      case "restarted":
+        this.clearViews();
+        return;
+      case "replay_state":
+        this.playback = { position: event.position, length: event.length, playing: event.playing, speed: event.speed };
+        return;
+      case "recording_stopped":
+        this.recordPath = null;
+        this.note(event.problem);
         return;
       case "state":
         if (event.state === "connected") {
@@ -798,6 +970,8 @@ export class Tab {
         return this.port.name;
       case "tcp":
         return address(this.tcp);
+      case "replay":
+        return fileName(this.replay.path);
       default:
         return "the probe";
     }
@@ -974,6 +1148,16 @@ export function changed(): void {
 }
 
 /** "14:02:11.204" */
+/** The last part of a path: "Nucleo 2026-10-25 14-02-11.trec". */
+export function fileName(path: string): string {
+  return path.split(/[\\/]/).pop() ?? path;
+}
+
+/** A recording's file name without its ending, as the name of the tab that plays it. */
+export function recordingName(path: string): string {
+  return fileName(path).replace(/\.trec$/i, "");
+}
+
 function clock(at: number): string {
   const time = new Date(at);
   const two = (n: number) => String(n).padStart(2, "0");

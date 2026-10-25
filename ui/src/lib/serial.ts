@@ -47,7 +47,8 @@ export type TerminalOptions = {
   pause_ms: number;
 };
 
-export type SessionKind = "serial" | "rtt" | "swo" | "tcp";
+/** A tab's session: a device, or a recording played back. */
+export type SessionKind = "serial" | "rtt" | "swo" | "tcp" | "replay";
 
 /** What a tab shows: the terminal, every byte in hex, every line in a list, or the numbers in a chart. */
 export type View = "terminal" | "hex" | "lines" | "plot";
@@ -139,6 +140,14 @@ export type HexView = {
 
 export const DEFAULT_HEX_VIEW: HexView = { width: 16, end_byte: null };
 
+/** The recording a replay tab plays, and how fast. */
+export type ReplaySetup = { path: string; speed: number };
+
+export const DEFAULT_REPLAY: ReplaySetup = { path: "", speed: 1 };
+
+/** Where a recording being played is, in seconds. */
+export type PlayState = { position: number; length: number; playing: boolean; speed: number };
+
 /** A line sent from the send box, kept so ↑ brings it back. */
 export type SentLine = { text: string; hex?: boolean };
 
@@ -154,6 +163,7 @@ export type SessionSetup = {
   rtt?: RttConfig;
   swo?: SwoConfig;
   tcp?: TcpConfig;
+  replay?: ReplaySetup;
   terminal: TerminalOptions;
   view?: View;
   hex_view?: HexView;
@@ -191,6 +201,16 @@ export type SessionEvent =
   | ({ kind: "swo_state" } & SwoState)
   | ({ kind: "tcp_state" } & NetState)
   | { kind: "text_lines"; lines: LogLine[]; at: number }
+  | {
+      kind: "replayed";
+      pieces: { sent: boolean; bytes: number[] }[];
+      lines: LogLine[];
+      /** When each line came, in ms since 1970. */
+      times: number[];
+    }
+  | { kind: "restarted" }
+  | ({ kind: "replay_state" } & PlayState)
+  | { kind: "recording_stopped"; problem: string }
   | { kind: "overflow"; count: number }
   | { kind: "log_stopped"; problem: string };
 

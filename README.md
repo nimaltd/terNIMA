@@ -22,7 +22,8 @@ The name is "terminal" with my name, Nima, in it: ter-NIMA.
 - A full VT100 / xterm terminal with 256 and 24-bit color, so the Zephyr shell works as it should
 - Zephyr logs you can filter by level and module
 - Log, hex and plot views of the same data, side by side if you like
-- A live plotter and dashboard, Arduino Serial Plotter format included
+- A live plotter with XY, histogram, FFT and a scope trigger, Arduino Serial Plotter format included
+- Record a session and play it back later with its timing, faster or slower, from any point
 - Probe tools: watch variables live, decode HardFaults and crash addresses from your ELF
 - Remembers everything when you close it, finds your device again even if its COM number changed, and reconnects when you plug it back in
 
@@ -36,7 +37,7 @@ The name is "terminal" with my name, Nima, in it: ter-NIMA.
 | 1 | Serial |
 | 2 | RTT and network |
 | 3 | Log, hex and input |
-| 4 | Plotter and dashboard |
+| 4 | Plotter |
 | 5 | Probe tools |
 | 6 | Device and protocol tools |
 | 7 | 1.0 |

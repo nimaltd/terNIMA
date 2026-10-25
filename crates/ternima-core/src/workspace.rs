@@ -62,6 +62,25 @@ pub enum SessionKind {
     Swo,
     /// A TCP connection: a plain socket, Telnet, or an RTT server.
     Tcp,
+    /// A recording played back.
+    Replay,
+}
+
+/// The recording a replay tab plays, and how fast.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ReplaySetup {
+    pub path: String,
+    pub speed: f64,
+}
+
+impl Default for ReplaySetup {
+    fn default() -> Self {
+        Self {
+            path: String::new(),
+            speed: 1.0,
+        }
+    }
 }
 
 /// What a tab shows.
@@ -273,6 +292,8 @@ pub struct SessionSetup {
     pub swo: SwoConfig,
     #[serde(default, skip_serializing_if = "is_default")]
     pub tcp: TcpConfig,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub replay: ReplaySetup,
     #[serde(default)]
     pub terminal: TerminalOptions,
     #[serde(default, skip_serializing_if = "is_default")]
@@ -462,6 +483,7 @@ mod tests {
             rtt: RttConfig::default(),
             swo: SwoConfig::default(),
             tcp: TcpConfig::default(),
+            replay: ReplaySetup::default(),
             terminal: TerminalOptions::default(),
             view: View::Terminal,
             hex_view: HexView::default(),
@@ -486,6 +508,7 @@ mod tests {
             },
             swo: SwoConfig::default(),
             tcp: TcpConfig::default(),
+            replay: ReplaySetup::default(),
             terminal: TerminalOptions::default(),
             view: View::Terminal,
             hex_view: HexView::default(),
@@ -622,6 +645,28 @@ mod tests {
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains("mode = \"regex\""), "{text}");
         assert!(text.contains("chart = \"fft\""), "{text}");
+    }
+
+    #[test]
+    fn a_replay_tab_keeps_its_recording_and_speed() {
+        let dir = TempDir::new("workspace-replay");
+        let path = dir.file("workspace.toml");
+        let workspace = Workspace {
+            sessions: vec![SessionSetup {
+                name: "Nucleo 2026-10-25 14-02-11".into(),
+                kind: SessionKind::Replay,
+                replay: ReplaySetup {
+                    path: r"C:\logs\Nucleo 2026-10-25 14-02-11.trec".into(),
+                    speed: 10.0,
+                },
+                ..nucleo()
+            }],
+            ..Workspace::default()
+        };
+        workspace.save(&path).unwrap();
+        assert_eq!(Workspace::load(&path), workspace);
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("kind = \"replay\""), "{text}");
     }
 
     #[test]

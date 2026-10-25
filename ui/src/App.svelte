@@ -25,10 +25,10 @@
   import type { Command } from "./lib/palette";
   import { keys } from "./lib/shortcuts";
   import { defaultLogFolder, loadSettings, settings } from "./lib/settings.svelte";
-  import { activeTab, changed, loadWorkspace, showTab, tabs, view, type Tab } from "./lib/tabs.svelte";
+  import { activeTab, addTab, changed, loadWorkspace, recordingName, showTab, tabs, view, type Tab } from "./lib/tabs.svelte";
   import { activeTerminal } from "./lib/terminal-actions";
   import type { Protocol } from "./lib/net";
-  import type { SessionKind } from "./lib/serial";
+  import { DEFAULT_TERMINAL, type SessionKind } from "./lib/serial";
   import { appScheme } from "./lib/theme.svelte";
 
   type AppInfo = { version: string; os: string; arch: string };
@@ -66,6 +66,7 @@
     macros: () => (macrosOpen = true),
     highlights: () => (highlightsOpen = true),
     commandPalette: openPalette,
+    playRecording: () => void playRecording(null),
   });
 
   /** Opens the command palette with what can be done now: the menus, the tabs and the macros. */
@@ -80,7 +81,7 @@
       }),
     );
     const tab = activeTab();
-    if (tab?.connected && tab.kind !== "swo") {
+    if (tab?.connected && tab.takesInput) {
       settings.macros.forEach((macro, index) =>
         commands.push({
           label: `Send ${macro.name}`,
@@ -134,12 +135,50 @@
     await revealItemInDir(path).catch((error) => console.error(error));
   }
 
-  /** Opens the settings of the tab in front, in the dialog of its kind. */
+  /** Opens the settings of the tab in front, in the dialog of its kind; a replay tab picks another recording. */
   function sessionSettings() {
     const tab = activeTab();
     if (tab) {
+      openSettings(tab);
+    }
+  }
+
+  function openSettings(tab: Tab) {
+    if (tab.kind === "replay") {
+      void playRecording(tab);
+    } else {
       dialog = { kind: tab.kind, tab };
     }
+  }
+
+  /** Picks a recording, from the log folder where they are made, and plays it: in `tab`, or in a new tab. */
+  async function playRecording(tab: Tab | null) {
+    const path = await open({
+      title: "Play a recording",
+      multiple: false,
+      directory: false,
+      defaultPath: settings.log.folder || (await defaultLogFolder()),
+      filters: [
+        { name: "terNIMA recordings", extensions: ["trec"] },
+        { name: "All files", extensions: ["*"] },
+      ],
+    });
+    if (typeof path !== "string") {
+      focusTerminal();
+      return;
+    }
+    if (tab) {
+      tab.openFile(path);
+    } else {
+      addTab({
+        name: recordingName(path),
+        kind: "replay",
+        connected: false,
+        replay: { path, speed: 1 },
+        terminal: { ...DEFAULT_TERMINAL },
+      }).play();
+    }
+    focusTerminal();
   }
 
   onMount(() => {
@@ -267,7 +306,7 @@
 
 <div class="app">
   <MenuBar bind:this={menuBar} {menus} onclose={focusTerminal} />
-  <TabBar onnew={(kind, protocol) => (dialog = { kind, tab: null, protocol })} />
+  <TabBar onnew={(kind, protocol) => (kind === "replay" ? void playRecording(null) : (dialog = { kind, tab: null, protocol }))} />
 
   <main class="pane" class:dragging bind:this={pane}>
     {#if ready}
@@ -291,7 +330,7 @@
           onmousedown={() => focusPane(i)}
         >
           {#if onScreen(i)}
-            <Toolbar {tab} onsettings={() => (dialog = { kind: tab.kind, tab })} />
+            <Toolbar {tab} onsettings={() => openSettings(tab)} />
           {/if}
           <div class="layer">
             <!-- The terminal stays while another view is shown, so nothing it showed is lost. -->
@@ -317,7 +356,7 @@
               </div>
             {/if}
           </div>
-          {#if onScreen(i) && settings.send_box && tab.kind !== "swo"}
+          {#if onScreen(i) && settings.send_box && tab.takesInput}
             <SendBar {tab} onmacros={() => (macrosOpen = true)} />
           {/if}
         </div>
