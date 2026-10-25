@@ -91,18 +91,83 @@ pub enum ValueMode {
     Regex,
 }
 
+/// What the Plot view draws.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Chart {
+    /// The values over time.
+    #[default]
+    Time,
+    /// One series against the others.
+    Xy,
+    /// How often each value comes.
+    Histogram,
+    /// The frequencies in the values.
+    Fft,
+}
+
+/// How samples are weighted before the FFT.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FftWindow {
+    #[default]
+    Hann,
+    Hamming,
+    Blackman,
+    /// No weighting.
+    Rect,
+}
+
+/// Which way a value crosses the trigger's level.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Edge {
+    #[default]
+    Rising,
+    Falling,
+    Both,
+}
+
+/// A scope's trigger on the time chart: it shows the time around the last
+/// crossing of a level, the crossing in the middle.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Trigger {
+    pub on: bool,
+    /// The series it watches; empty for the first.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub series: String,
+    pub level: f64,
+    pub edge: Edge,
+    /// Stops at the first crossing, until it is armed again.
+    pub single: bool,
+}
+
 /// How the Plot view reads and shows numbers.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PlotView {
     pub mode: ValueMode,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub regex: String,
-    /// The seconds shown while it follows the newest values; 0 shows them all.
-    pub window_s: u32,
+    /// The time shown while it follows the newest values, in ms; 0 shows them all.
+    pub window_ms: u32,
     /// The series left out of the chart.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hidden: Vec<String>,
+    pub chart: Chart,
+    /// The series along the XY chart's x axis; empty for the first.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub x_series: String,
+    /// The histogram's bins; 0 picks them from the values.
+    pub bins: u32,
+    pub fft_window: FftWindow,
+    /// The FFT in dB rather than as amplitudes.
+    pub fft_db: bool,
+    /// Samples a second for the FFT; 0 measures it from when the lines came.
+    pub fft_rate: f64,
+    #[serde(skip_serializing_if = "is_default")]
+    pub trigger: Trigger,
 }
 
 impl Default for PlotView {
@@ -110,8 +175,15 @@ impl Default for PlotView {
         Self {
             mode: ValueMode::Auto,
             regex: String::new(),
-            window_s: 30,
+            window_ms: 30_000,
             hidden: Vec::new(),
+            chart: Chart::Time,
+            x_series: String::new(),
+            bins: 0,
+            fft_window: FftWindow::Hann,
+            fft_db: true,
+            fft_rate: 0.0,
+            trigger: Trigger::default(),
         }
     }
 }
@@ -180,7 +252,7 @@ pub const HISTORY_MAX: usize = 100;
 
 /// One tab: a session and how it is set up. Only the settings of its kind
 /// are written.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SessionSetup {
     pub name: String,
     #[serde(default)]
@@ -296,7 +368,7 @@ fn half() -> u8 {
 const SPLIT_MIN: u8 = 15;
 
 /// Everything in `workspace.toml`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Workspace {
     /// The tab in front, counted from 0. With a split view, it is one of the
@@ -529,8 +601,17 @@ mod tests {
                 plot_view: PlotView {
                     mode: ValueMode::Regex,
                     regex: r"tick (\d+)".into(),
-                    window_s: 10,
+                    window_ms: 500,
                     hidden: vec!["hum".into()],
+                    chart: Chart::Fft,
+                    fft_rate: 1000.0,
+                    trigger: Trigger {
+                        on: true,
+                        level: -1.5,
+                        edge: Edge::Falling,
+                        ..Trigger::default()
+                    },
+                    ..PlotView::default()
                 },
                 ..nucleo()
             }],
@@ -540,6 +621,7 @@ mod tests {
         assert_eq!(Workspace::load(&path), workspace);
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains("mode = \"regex\""), "{text}");
+        assert!(text.contains("chart = \"fft\""), "{text}");
     }
 
     #[test]

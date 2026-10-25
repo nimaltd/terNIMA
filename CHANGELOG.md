@@ -193,8 +193,27 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Lines view keeps, so it can show what came before it was opened; Clear
   starts it again. How it reads and what it hides are kept per tab in
   `workspace.toml`.
+- The Plot view draws four charts, picked next to Read: Time, XY,
+  Histogram and FFT. The others work on the time the time chart shows, or
+  between A and B, and keep up with the values a few times a second.
+  - XY: one series along x, the others against it as points.
+  - Histogram: the shown series' values counted in shared bins, Auto or
+    10 to 100; whole numbers get a bin each, centered on them.
+  - FFT: each shown series' amplitude spectrum, in dB or as amplitudes, a
+    sine of amplitude 1 being 0 dB, with a Hann, Hamming, Blackman or no
+    window. Lines are taken as evenly spaced at the measured rate, or at
+    one typed in. The table has each series' peak, found between bins.
+  - CSV... saves what the chart shows: values, bins or the spectrum.
+- A scope's trigger on the time chart: when a series crosses a level,
+  rising, falling or either way, the time around the crossing is shown
+  with the crossing in the middle, marked T. Single holds the first
+  crossing until Arm.
+- Spans of 100 ms to 2 s, besides 5 s to 5 min and all, and a standard
+  deviation for each series in the table.
 - Received lines are timed as their bytes are read, so the plot and the
   Lines view have the time they came, not when the window drew them.
+  Lines read at once are spread over the time since the read before, up
+  to 200 ms, so a fast stream draws as a curve rather than in steps.
 - UI unit tests, run by `npm test` and in CI.
 - "New line after" in the toolbar: data that comes after a pause of 50 ms
   to 2 s starts on a new line, in the terminal and in the hex view, for

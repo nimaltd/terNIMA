@@ -576,7 +576,7 @@ Done when you can find one module's errors in a busy Zephyr log in seconds.
 
 - [x] Value parsing: plain, named, Arduino, JSON, regex
 - [x] Time chart with zoom, pause, cursors and stats
-- [ ] XY chart, histogram, FFT, scope style trigger
+- [x] XY chart, histogram, FFT, scope style trigger
 - [x] CSV and PNG export
 - [ ] Values from binary frames and from raw RTT channels (int16, float...)
 - [ ] Dashboard widgets, with buttons and sliders that send commands

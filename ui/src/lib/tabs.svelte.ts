@@ -64,6 +64,8 @@ const RECENT_MAX = 256 * 1024;
 const RTT_FILE_RATE = 1000;
 /** The most lines a tab keeps for its Lines view; a tenth of them go when there are more. */
 const LINES_MAX = 100_000;
+/** The most time, in ms, that lines read at once are spread over. */
+const SPREAD_MS = 200;
 
 /** A line as the Lines view keeps it: numbered from the tab's first, with when it came. */
 export type StoredLine = LogLine & { n: number; at: number };
@@ -125,6 +127,8 @@ export class Tab {
   readonly bookmarks = new Set<number>();
   linesVersion = $state(0);
   private nextLine = 0;
+  /** When the last lines were read, in ms since 1970. */
+  private linesAt = 0;
   /** The lines sent from the send box, oldest first. */
   history: SentLine[] = $state([]);
   /** What is in the send box, kept while the tab is out of sight. */
@@ -164,7 +168,11 @@ export class Tab {
     this.view = setup.view ?? "terminal";
     this.hexView = { ...DEFAULT_HEX_VIEW, ...setup.hex_view };
     this.linesView = { ...DEFAULT_LINES_VIEW, ...setup.lines_view };
-    this.plotView = { ...DEFAULT_PLOT_VIEW, ...setup.plot_view };
+    this.plotView = {
+      ...DEFAULT_PLOT_VIEW,
+      ...setup.plot_view,
+      trigger: { ...DEFAULT_PLOT_VIEW.trigger, ...setup.plot_view?.trigger },
+    };
     this.history = setup.history ?? [];
   }
 
@@ -279,13 +287,17 @@ export class Tab {
 
   /**
    * Keeps lines for the Lines view and the plot, with when they were read;
-   * the oldest tenth goes when there are too many.
+   * the oldest tenth goes when there are too many. Lines read at once came
+   * one after another since the read before, so they are spread over that
+   * time, up to SPREAD_MS: a fast stream then draws as a curve, not steps.
    */
   private addLines(lines: LogLine[], at: number): void {
-    for (const line of lines) {
-      this.textLines.push({ ...line, n: this.nextLine++, at });
+    const step = this.linesAt > 0 ? Math.min(Math.max(0, at - this.linesAt), SPREAD_MS) / lines.length : 0;
+    this.linesAt = at;
+    lines.forEach((line, index) => {
+      this.textLines.push({ ...line, n: this.nextLine++, at: at - (lines.length - 1 - index) * step });
       this.count(line, 1);
-    }
+    });
     if (this.textLines.length > LINES_MAX) {
       const gone = this.textLines.splice(0, this.textLines.length - LINES_MAX + LINES_MAX / 10);
       for (const line of gone) {

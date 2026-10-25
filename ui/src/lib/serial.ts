@@ -77,18 +77,57 @@ export type LinesView = {
 
 export const DEFAULT_LINES_VIEW: LinesView = { hidden_levels: [], hidden_modules: [], others: true };
 
+/** What the Plot view draws: values over time, one against the others, how often each comes, or their frequencies. */
+export type Chart = "time" | "xy" | "histogram" | "fft";
+
+/** A scope's trigger on the time chart: the time around the last crossing of a level, the crossing in the middle. */
+export type Trigger = {
+  on: boolean;
+  /** The series it watches; empty for the first. */
+  series: string;
+  level: number;
+  edge: "rising" | "falling" | "both";
+  /** Stops at the first crossing, until it is armed again. */
+  single: boolean;
+};
+
 /** How the Plot view reads and shows numbers. */
 export type PlotView = {
   /** "auto" reads JSON, named values and plain numbers; "regex" uses `regex`. */
   mode: "auto" | "regex";
   regex: string;
-  /** The seconds shown while it follows the newest values; 0 shows them all. */
-  window_s: number;
+  /** The time shown while it follows the newest values, in ms; 0 shows them all. */
+  window_ms: number;
   /** The series left out of the chart. */
   hidden: string[];
+  chart: Chart;
+  /** The series along the XY chart's x axis; empty for the first. */
+  x_series: string;
+  /** The histogram's bins; 0 picks them from the values. */
+  bins: number;
+  fft_window: "hann" | "hamming" | "blackman" | "rect";
+  /** The FFT in dB rather than as amplitudes. */
+  fft_db: boolean;
+  /** Samples a second for the FFT; 0 measures it from when the lines came. */
+  fft_rate: number;
+  trigger: Trigger;
 };
 
-export const DEFAULT_PLOT_VIEW: PlotView = { mode: "auto", regex: "", window_s: 30, hidden: [] };
+export const DEFAULT_TRIGGER: Trigger = { on: false, series: "", level: 0, edge: "rising", single: false };
+
+export const DEFAULT_PLOT_VIEW: PlotView = {
+  mode: "auto",
+  regex: "",
+  window_ms: 30_000,
+  hidden: [],
+  chart: "time",
+  x_series: "",
+  bins: 0,
+  fft_window: "hann",
+  fft_db: true,
+  fft_rate: 0,
+  trigger: DEFAULT_TRIGGER,
+};
 
 /** How the hex view breaks its lines, besides the tab's pause. It only changes what is shown. */
 export type HexView = {
