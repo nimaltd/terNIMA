@@ -51,6 +51,8 @@ export type AppActions = {
   sendFile(): void;
   /** Opens the macros dialog. */
   macros(): void;
+  /** Opens the Lines view's highlight rules. */
+  highlights(): void;
 };
 
 const GITHUB = "https://github.com/nimaltd/ternima";
@@ -179,7 +181,7 @@ export function buildMenus(app: AppActions): Menu[] {
         {
           label: "Terminal",
           enabled: hasTab,
-          checked: () => hasTab() && activeTab()?.view !== "hex",
+          checked: () => activeTab()?.view === "terminal",
           run: () => activeTab()?.setView("terminal"),
         },
         {
@@ -192,8 +194,36 @@ export function buildMenus(app: AppActions): Menu[] {
             tab?.setView(tab.view === "hex" ? "terminal" : "hex");
           },
         },
-        { label: "Log", phase: 3 },
+        {
+          label: "Lines (Zephyr log)",
+          shortcut: keys("Ctrl+Shift+J", "Cmd+Shift+J"),
+          enabled: hasTab,
+          checked: () => activeTab()?.view === "lines",
+          run: () => {
+            const tab = activeTab();
+            tab?.setView(tab.view === "lines" ? "terminal" : "lines");
+          },
+        },
         { label: "Plot", phase: 4 },
+        null,
+        {
+          label: "Bookmark the line",
+          shortcut: keys("Ctrl+F2", "Cmd+F2"),
+          enabled: () => terminal()?.toggleBookmark !== undefined,
+          run: () => terminal()?.toggleBookmark?.(),
+        },
+        {
+          label: "Next bookmark",
+          shortcut: "F2",
+          enabled: () => terminal()?.nextBookmark !== undefined,
+          run: () => terminal()?.nextBookmark?.(),
+        },
+        {
+          label: "Previous bookmark",
+          shortcut: "Shift+F2",
+          enabled: () => terminal()?.previousBookmark !== undefined,
+          run: () => terminal()?.previousBookmark?.(),
+        },
         null,
         {
           label: "Send box",
@@ -317,6 +347,7 @@ export function buildMenus(app: AppActions): Menu[] {
           run: () => activeTab()?.cancelSend(),
         },
         { label: "Macros...", run: app.macros },
+        { label: "Highlight rules...", run: app.highlights },
         { label: "Plotter", phase: 4 },
         null,
         { label: "Calculators", phase: 6 },

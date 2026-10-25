@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::VERSION;
+use crate::ansi::EscapeFilter;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -36,21 +37,6 @@ pub struct LogSetup {
 /// Gives the time written at the start of lines.
 type Clock = Box<dyn Fn() -> String + Send>;
 
-/// Where an escape sequence that is being removed has got to.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum Escape {
-    #[default]
-    None,
-    /// After ESC.
-    Start,
-    /// Inside ESC [ ... until a final byte.
-    Csi,
-    /// Inside ESC ] ... until BEL or ESC \.
-    Osc,
-    /// After ESC inside an OSC sequence.
-    OscEnd,
-}
-
 /// One open log file.
 pub struct Logger {
     file: BufWriter<File>,
@@ -60,7 +46,7 @@ pub struct Logger {
     clock: Clock,
     /// Whether the next byte starts a line.
     line_start: bool,
-    escape: Escape,
+    escape: EscapeFilter,
     connected: bool,
     /// Whether the session has been connected before, to tell "again" apart.
     was_connected: bool,
@@ -93,7 +79,7 @@ impl Logger {
             timestamps: setup.timestamps,
             clock,
             line_start: true,
-            escape: Escape::None,
+            escape: EscapeFilter::default(),
             connected: false,
             was_connected: false,
         };
@@ -163,26 +149,11 @@ impl Logger {
     /// Turns received bytes into readable text: escape sequences, CR and other
     /// control characters out, the time in front of each line.
     fn readable(&mut self, bytes: &[u8]) -> Vec<u8> {
-        let mut out = Vec::with_capacity(bytes.len() + 32);
-        for &byte in bytes {
-            self.escape = match (self.escape, byte) {
-                (Escape::None, 0x1B) => Escape::Start,
-                (Escape::None, _) => {
-                    self.text_byte(byte, &mut out);
-                    Escape::None
-                }
-                (Escape::Start, b'[') => Escape::Csi,
-                (Escape::Start, b']') => Escape::Osc,
-                // A two byte sequence, such as ESC 7.
-                (Escape::Start, _) => Escape::None,
-                (Escape::Csi, 0x40..=0x7E) => Escape::None,
-                (Escape::Csi, _) => Escape::Csi,
-                (Escape::Osc, 0x07) => Escape::None,
-                (Escape::Osc, 0x1B) => Escape::OscEnd,
-                (Escape::Osc, _) => Escape::Osc,
-                (Escape::OscEnd, b'\\') => Escape::None,
-                (Escape::OscEnd, _) => Escape::Osc,
-            };
+        let mut text = Vec::with_capacity(bytes.len());
+        self.escape.filter(bytes, |byte| text.push(byte));
+        let mut out = Vec::with_capacity(text.len() + 32);
+        for byte in text {
+            self.text_byte(byte, &mut out);
         }
         out
     }

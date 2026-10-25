@@ -49,8 +49,33 @@ export type TerminalOptions = {
 
 export type SessionKind = "serial" | "rtt" | "swo" | "tcp";
 
-/** What a tab shows: the terminal, or every byte in hex. */
-export type View = "terminal" | "hex";
+/** What a tab shows: the terminal, every byte in hex, or every line in a list. */
+export type View = "terminal" | "hex" | "lines";
+
+/** A Zephyr log level. */
+export type Level = "err" | "wrn" | "inf" | "dbg";
+
+/** A received line, with a Zephyr log line read into its parts. */
+export type LogLine = {
+  /** The whole line, without colors and control characters. */
+  text: string;
+  /** The time as the log wrote it, such as "00:00:01.234,567". */
+  time: string | null;
+  level: Level | null;
+  module: string | null;
+  /** What follows the module; the whole text for a line that is not a log line. */
+  message: string;
+};
+
+/** What the Lines view leaves out. */
+export type LinesView = {
+  hidden_levels: Level[];
+  hidden_modules: string[];
+  /** Shows the lines that are not log lines, such as the shell's. */
+  others: boolean;
+};
+
+export const DEFAULT_LINES_VIEW: LinesView = { hidden_levels: [], hidden_modules: [], others: true };
 
 /** How the hex view breaks its lines, besides the tab's pause. It only changes what is shown. */
 export type HexView = {
@@ -80,6 +105,7 @@ export type SessionSetup = {
   terminal: TerminalOptions;
   view?: View;
   hex_view?: HexView;
+  lines_view?: LinesView;
   /** The lines sent from the send box, oldest first. */
   history?: SentLine[];
 };
@@ -111,6 +137,7 @@ export type SessionEvent =
   | { kind: "channels"; up: ChannelInfo[]; down: ChannelInfo[] }
   | ({ kind: "swo_state" } & SwoState)
   | ({ kind: "tcp_state" } & NetState)
+  | { kind: "text_lines"; lines: LogLine[] }
   | { kind: "overflow"; count: number }
   | { kind: "log_stopped"; problem: string };
 

@@ -556,8 +556,11 @@ Done when the Zephyr shell works over RTT on a DAPLink and on a J-Link.
 
 ### Phase 3: log, hex and input
 
-- [ ] Log view: timestamps, regex search, filters, highlight rules, bookmarks
-- [ ] Zephyr log parsing with level and module filters
+- [x] Log view (the Lines view): every line in a list of up to 100,000, with search (text or
+  regex, only the matching lines if wanted), highlight rules in six colors, and bookmarks
+- [x] Zephyr log parsing with level and module filters: time, level and module read from
+  `[time] <level> module: message`, colors taken out first, a LOG_HEXDUMP's indented lines
+  kept with their log line
 - [x] Hex view and sending hex: sent and received bytes, 8, 16 or 32 to a line, with a new
   line after a chosen byte
 - [x] A new line after a chosen pause, in the terminal and the hex view, but not in a

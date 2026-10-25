@@ -17,6 +17,7 @@ import {
 } from "./probe";
 import {
   DEFAULT_HEX_VIEW,
+  DEFAULT_LINES_VIEW,
   DEFAULT_SERIAL,
   DEFAULT_TERMINAL,
   closeAllSessions,
@@ -24,6 +25,8 @@ import {
   setWorkspace,
   summary,
   type HexView,
+  type LinesView,
+  type LogLine,
   type ModemLines,
   type PortId,
   type SerialConfig,
@@ -57,6 +60,11 @@ const HISTORY_MAX = 100;
 const RECENT_MAX = 256 * 1024;
 /** How fast a file goes into RTT: the firmware empties its small buffer when it gets to it. */
 const RTT_FILE_RATE = 1000;
+/** The most lines a tab keeps for its Lines view; a tenth of them go when there are more. */
+const LINES_MAX = 100_000;
+
+/** A line as the Lines view keeps it: numbered from the tab's first, with when it came. */
+export type StoredLine = LogLine & { n: number; at: number };
 
 let nextId = 1;
 
@@ -97,6 +105,20 @@ export class Tab {
   view: View = $state("terminal");
   /** How the hex view breaks its lines. */
   hexView: HexView = $state({ ...DEFAULT_HEX_VIEW });
+  /** What the Lines view leaves out. */
+  linesView: LinesView = $state({ ...DEFAULT_LINES_VIEW });
+  /**
+   * The lines received lately, oldest first, for the Lines view, with how
+   * many of each level and module there are. Plain values rather than
+   * $state, as there can be many: `linesVersion` changes when they do.
+   */
+  readonly textLines: StoredLine[] = [];
+  readonly levelCounts = new Map<string, number>();
+  readonly moduleCounts = new Map<string, number>();
+  /** The numbers of the lines marked with a bookmark. */
+  readonly bookmarks = new Set<number>();
+  linesVersion = $state(0);
+  private nextLine = 0;
   /** The lines sent from the send box, oldest first. */
   history: SentLine[] = $state([]);
   /** What is in the send box, kept while the tab is out of sight. */
@@ -135,6 +157,7 @@ export class Tab {
     this.log = setup.log ?? false;
     this.view = setup.view ?? "terminal";
     this.hexView = { ...DEFAULT_HEX_VIEW, ...setup.hex_view };
+    this.linesView = { ...DEFAULT_LINES_VIEW, ...setup.lines_view };
     this.history = setup.history ?? [];
   }
 
@@ -159,6 +182,7 @@ export class Tab {
       terminal: this.terminal,
       view: this.view,
       hex_view: this.hexView,
+      lines_view: this.linesView,
       history: this.history,
     };
     switch (this.kind) {
@@ -209,6 +233,59 @@ export class Tab {
     this.hexView = hexView;
     this.layOutHex();
     changed();
+  }
+
+  /** Changes what the Lines view leaves out. */
+  setLinesView(linesView: LinesView): void {
+    this.linesView = linesView;
+    changed();
+  }
+
+  /** Marks a line with a bookmark, or takes the bookmark off. */
+  toggleBookmark(n: number): void {
+    if (!this.bookmarks.delete(n)) {
+      this.bookmarks.add(n);
+    }
+    this.linesVersion++;
+  }
+
+  /** Forgets the lines kept for the Lines view, as Clear does for the terminal. */
+  clearLines(): void {
+    this.textLines.length = 0;
+    this.levelCounts.clear();
+    this.moduleCounts.clear();
+    this.bookmarks.clear();
+    this.linesVersion++;
+  }
+
+  /** Keeps lines for the Lines view; the oldest tenth goes when there are too many. */
+  private addLines(lines: LogLine[]): void {
+    const at = Date.now();
+    for (const line of lines) {
+      this.textLines.push({ ...line, n: this.nextLine++, at });
+      this.count(line, 1);
+    }
+    if (this.textLines.length > LINES_MAX) {
+      const gone = this.textLines.splice(0, this.textLines.length - LINES_MAX + LINES_MAX / 10);
+      for (const line of gone) {
+        this.count(line, -1);
+        this.bookmarks.delete(line.n);
+      }
+    }
+    this.linesVersion++;
+  }
+
+  private count(line: LogLine, step: number): void {
+    const level = line.level ?? "other";
+    this.levelCounts.set(level, (this.levelCounts.get(level) ?? 0) + step);
+    if (line.module) {
+      const left = (this.moduleCounts.get(line.module) ?? 0) + step;
+      if (left > 0) {
+        this.moduleCounts.set(line.module, left);
+      } else {
+        this.moduleCounts.delete(line.module);
+      }
+    }
   }
 
   /** Sets the pause that starts a new line, in both views; 0 for never. */
@@ -598,6 +675,9 @@ export class Tab {
         return;
       case "channels":
         this.channels = { up: event.up, down: event.down };
+        return;
+      case "text_lines":
+        this.addLines(event.lines);
         return;
       case "state":
         if (event.state === "connected") {

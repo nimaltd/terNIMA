@@ -1,7 +1,7 @@
 <script lang="ts">
   import { address, protocolText } from "./net";
   import { channelText, hzText } from "./probe";
-  import { PAUSES, pauseText, summary, type LineEnding, type ModemLines } from "./serial";
+  import { PAUSES, pauseText, summary, type LineEnding, type ModemLines, type View } from "./serial";
   import { changed, type Tab } from "./tabs.svelte";
   import { activeTerminal } from "./terminal-actions";
 
@@ -12,6 +12,16 @@
     { key: "dsr", label: "DSR", title: "Data set ready" },
     { key: "dcd", label: "DCD", title: "Carrier detect" },
     { key: "ri", label: "RI", title: "Ring indicator" },
+  ];
+
+  const VIEWS: { view: View; label: string; title: string }[] = [
+    { view: "terminal", label: "Terminal", title: "The terminal, with colors, as the device draws it" },
+    { view: "hex", label: "Hex", title: "Every byte sent and received in hex (Ctrl+Shift+H)" },
+    {
+      view: "lines",
+      label: "Lines",
+      title: "Every line in a list: filter Zephyr logs by level and module, search, highlight, bookmark (Ctrl+Shift+J)",
+    },
   ];
 
   /** Does something, then gives the keyboard back to the terminal. */
@@ -167,14 +177,19 @@
     Log
   </button>
 
-  <button
-    class="btn small view"
-    class:on={tab.view === "hex"}
-    title="Show every byte sent and received in hex"
-    onclick={() => act(() => tab.setView(tab.view === "hex" ? "terminal" : "hex"))}
-  >
-    Hex
-  </button>
+  <div class="views" role="group" aria-label="View">
+    {#each VIEWS as { view, label, title } (view)}
+      <button
+        class="view"
+        class:on={tab.view === view}
+        aria-pressed={tab.view === view}
+        {title}
+        onclick={() => act(() => tab.setView(view))}
+      >
+        {label}
+      </button>
+    {/each}
+  </div>
 
   <label
     class="option"
@@ -297,10 +312,36 @@
     border-color: var(--bad);
   }
 
+  .views {
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  .view {
+    height: 24px;
+    padding: 0 9px;
+    font: inherit;
+    font-size: 12px;
+    color: var(--muted);
+    background: none;
+    border: 0;
+    cursor: default;
+  }
+
+  .view + .view {
+    border-left: 1px solid var(--border);
+  }
+
+  .view:hover {
+    color: var(--text);
+    background: var(--hover);
+  }
+
   .view.on {
     color: var(--text);
     background: var(--accent-soft);
-    border-color: var(--accent);
   }
 
   .leds {

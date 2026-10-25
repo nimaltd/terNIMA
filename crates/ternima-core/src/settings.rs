@@ -92,6 +92,33 @@ fn yes() -> bool {
     true
 }
 
+/// The colors a highlight rule can mark lines in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HighlightColor {
+    Red,
+    Orange,
+    #[default]
+    Yellow,
+    Green,
+    Blue,
+    Purple,
+}
+
+/// Lines with this text are marked in a color in the Lines view.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Highlight {
+    pub text: String,
+    /// Whether `text` is a regular expression.
+    #[serde(default)]
+    pub regex: bool,
+    /// Whether upper and lower case must match.
+    #[serde(default)]
+    pub case: bool,
+    #[serde(default)]
+    pub color: HighlightColor,
+}
+
 /// Everything in `settings.toml`. A value missing from the file takes its default.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -105,6 +132,9 @@ pub struct Settings {
     /// The macros every tab can send, in the order they are shown.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub macros: Vec<Macro>,
+    /// The Lines view's highlight rules; the first that matches a line marks it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub highlights: Vec<Highlight>,
 }
 
 impl Default for Settings {
@@ -116,6 +146,7 @@ impl Default for Settings {
             startup: StartupSettings::default(),
             log: LogSettings::default(),
             macros: Vec::new(),
+            highlights: Vec::new(),
         }
     }
 }
@@ -187,6 +218,12 @@ mod tests {
                     enter: false,
                 },
             ],
+            highlights: vec![Highlight {
+                text: "timeout|fail".into(),
+                regex: true,
+                case: false,
+                color: HighlightColor::Red,
+            }],
         };
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path), settings);

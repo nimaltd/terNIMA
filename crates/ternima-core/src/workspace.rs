@@ -6,6 +6,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::lines::Level;
 use crate::net::TcpConfig;
 use crate::rtt::RttConfig;
 use crate::serial::{PortId, SerialConfig};
@@ -72,6 +73,31 @@ pub enum View {
     Terminal,
     /// Every byte sent and received in hex, 16 to a line.
     Hex,
+    /// Every line in a list, with Zephyr's logs read into level and module
+    /// for filters, search, highlights and bookmarks.
+    Lines,
+}
+
+/// What the Lines view leaves out. Its search and bookmarks are not kept.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LinesView {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hidden_levels: Vec<Level>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hidden_modules: Vec<String>,
+    /// Shows the lines that are not log lines, such as the shell's.
+    pub others: bool,
+}
+
+impl Default for LinesView {
+    fn default() -> Self {
+        Self {
+            hidden_levels: Vec::new(),
+            hidden_modules: Vec::new(),
+            others: true,
+        }
+    }
 }
 
 /// How the hex view breaks its lines, besides the pause in [`TerminalOptions`].
@@ -143,6 +169,8 @@ pub struct SessionSetup {
     pub view: View,
     #[serde(default, skip_serializing_if = "is_default")]
     pub hex_view: HexView,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub lines_view: LinesView,
     /// The lines sent from the send box, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub history: Vec<SentLine>,
@@ -325,6 +353,7 @@ mod tests {
             terminal: TerminalOptions::default(),
             view: View::Terminal,
             hex_view: HexView::default(),
+            lines_view: LinesView::default(),
             history: Vec::new(),
         }
     }
@@ -347,6 +376,7 @@ mod tests {
             terminal: TerminalOptions::default(),
             view: View::Terminal,
             hex_view: HexView::default(),
+            lines_view: LinesView::default(),
             history: Vec::new(),
         }
     }
@@ -423,6 +453,28 @@ mod tests {
         assert!(text.contains("view = \"hex\""), "{text}");
         assert!(text.contains("end_byte = 126"), "{text}");
         assert!(text.contains("pause_ms = 50"), "{text}");
+    }
+
+    #[test]
+    fn lines_view_filters_are_kept() {
+        let dir = TempDir::new("workspace-lines");
+        let path = dir.file("workspace.toml");
+        let workspace = Workspace {
+            sessions: vec![SessionSetup {
+                view: View::Lines,
+                lines_view: LinesView {
+                    hidden_levels: vec![Level::Dbg],
+                    hidden_modules: vec!["net_if".into()],
+                    others: false,
+                },
+                ..nucleo()
+            }],
+            ..Workspace::default()
+        };
+        workspace.save(&path).unwrap();
+        assert_eq!(Workspace::load(&path), workspace);
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("hidden_levels = [\"dbg\"]"), "{text}");
     }
 
     #[test]

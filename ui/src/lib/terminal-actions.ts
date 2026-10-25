@@ -14,6 +14,10 @@ export interface TerminalActions {
   /** Goes to the next or the previous match of the last search. */
   findNext(): void;
   findPrevious(): void;
+  /** Bookmarks, which only the Lines view has. */
+  toggleBookmark?(): void;
+  nextBookmark?(): void;
+  previousBookmark?(): void;
 }
 
 let active: TerminalActions | null = null;

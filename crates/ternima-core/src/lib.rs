@@ -3,9 +3,11 @@
 //! Transports, sessions, config and parsers live here, apart from the window, so
 //! they can be tested on their own.
 
+mod ansi;
 mod banner;
 pub mod detect;
 mod hex;
+pub mod lines;
 pub mod logfile;
 pub mod net;
 pub mod probe;

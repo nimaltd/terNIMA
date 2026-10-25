@@ -160,6 +160,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   A line holds 8, 16 or 32 bytes, and a new one starts when the direction
   changes or after a chosen byte such as `0A`. The terminal keeps
   everything while the hex view is shown.
+- A Lines view (View > Lines, Ctrl+Shift+J, or Terminal · Hex · Lines in
+  the toolbar): every received line in a list, with Zephyr's log lines read
+  into time, level and module. Level chips and a module list with counts
+  show or hide lines, a search marks matches or keeps only them, highlight
+  rules (Tools > Highlight rules) color the lines that match, and bookmarks
+  (Ctrl+F2, then F2 and Shift+F2) mark lines to come back to. The list
+  keeps up with the newest line until scrolled up, where a "Latest ↓"
+  button takes it back. It holds 100,000 lines, its counts keep their
+  width as they grow, and
+  Copy, Select all, Find and Save output as work on it. Its filters are
+  kept per tab in `workspace.toml`, and the rules in `settings.toml`.
 - "New line after" in the toolbar: data that comes after a pause of 50 ms
   to 2 s starts on a new line, in the terminal and in the hex view, for
   devices that send messages without line endings. Not after what was just

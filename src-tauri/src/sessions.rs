@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Manager, State};
+use ternima_core::lines::{self, LineSplitter};
 use ternima_core::logfile::{LogSetup, Logger};
 use ternima_core::send::{self, Pace, Stopped};
 use ternima_core::{net, probe, rtt, serial, swo};
@@ -109,6 +110,10 @@ pub enum SessionEvent {
     },
     SwoState(swo::SwoState),
     TcpState(net::NetState),
+    /// The lines of text the last bytes finished, for the Lines view.
+    TextLines {
+        lines: Vec<lines::Line>,
+    },
     /// The chip's trace FIFO overflowed this many times since the last report.
     Overflow {
         count: u32,
@@ -201,6 +206,14 @@ fn write_log(
     }
 }
 
+/// Sends the lines that received bytes finished, for the Lines view.
+fn send_lines(splitter: &mut LineSplitter, events: &Channel<SessionEvent>, bytes: &[u8]) {
+    let lines = splitter.feed(bytes);
+    if !lines.is_empty() {
+        let _ = events.send(SessionEvent::TextLines { lines });
+    }
+}
+
 fn log_data(log: &SharedLog, events: &Channel<SessionEvent>, bytes: &[u8]) {
     write_log(log, events, |state| match &mut state.logger {
         Some(logger) => logger.data(bytes),
@@ -276,12 +289,14 @@ pub fn open_session(
 ) -> LogStatus {
     let (shared, status) = new_log(&app, log);
     let log = shared.clone();
+    let mut splitter = LineSplitter::default();
     let session =
         serial::Session::start(Arc::new(serial::SystemPorts), port, config, move |event| {
             // A send only fails when the window is gone, and then nobody is listening.
             let _ = match event {
                 serial::Event::Data(bytes) => {
                     log_data(&log, &events, &bytes);
+                    send_lines(&mut splitter, &events, &bytes);
                     data.send(InvokeResponseBody::Raw(bytes))
                 }
                 serial::Event::State(state) => {
@@ -312,10 +327,12 @@ pub fn open_rtt_session(
 ) -> LogStatus {
     let (shared, status) = new_log(&app, log);
     let log = shared.clone();
+    let mut splitter = LineSplitter::default();
     let session = rtt::Session::start(Arc::new(rtt::ProbeRs), config, move |event| {
         let _ = match event {
             rtt::Event::Data(bytes) => {
                 log_data(&log, &events, &bytes);
+                send_lines(&mut splitter, &events, &bytes);
                 data.send(InvokeResponseBody::Raw(bytes))
             }
             rtt::Event::State(state) => {
@@ -348,10 +365,12 @@ pub fn open_swo_session(
 ) -> LogStatus {
     let (shared, status) = new_log(&app, log);
     let log = shared.clone();
+    let mut splitter = LineSplitter::default();
     let session = swo::Session::start(Arc::new(swo::ProbeRs), config, move |event| {
         let _ = match event {
             swo::Event::Data(bytes) => {
                 log_data(&log, &events, &bytes);
+                send_lines(&mut splitter, &events, &bytes);
                 data.send(InvokeResponseBody::Raw(bytes))
             }
             swo::Event::State(state) => {
@@ -385,10 +404,12 @@ pub fn open_tcp_session(
 ) -> LogStatus {
     let (shared, status) = new_log(&app, log);
     let log = shared.clone();
+    let mut splitter = LineSplitter::default();
     let session = net::Session::start(config, move |event| {
         let _ = match event {
             net::Event::Data(bytes) => {
                 log_data(&log, &events, &bytes);
+                send_lines(&mut splitter, &events, &bytes);
                 data.send(InvokeResponseBody::Raw(bytes))
             }
             net::Event::State(state) => {

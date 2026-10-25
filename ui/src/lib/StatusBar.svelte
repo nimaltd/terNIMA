@@ -28,8 +28,8 @@
       <span class="mono">{elapsed(now - tab.connectedAt)}</span>
     {/if}
     <span class="divider"></span>
-    <span title="Bytes received">RX {bytes(tab.rx)}</span>
-    <span title="Bytes sent">TX {bytes(tab.tx)}</span>
+    <span class="number" title="Bytes received">RX {bytes(tab.rx)}</span>
+    <span class="number" title="Bytes sent">TX {bytes(tab.tx)}</span>
     {#if tab.sending}
       {@const sending = tab.sending}
       <span class="divider"></span>
@@ -78,6 +78,12 @@
   .state {
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  /* Byte counts keep their width as they grow, so nothing after them moves. */
+  .number {
+    min-width: 10ch;
+    font-variant-numeric: tabular-nums;
   }
 
   .state.connected {

@@ -35,6 +35,20 @@ export type Macro = {
   enter: boolean;
 };
 
+export type HighlightColor = "red" | "orange" | "yellow" | "green" | "blue" | "purple";
+
+export const HIGHLIGHT_COLORS: HighlightColor[] = ["red", "orange", "yellow", "green", "blue", "purple"];
+
+/** Lines with this text are marked in a color in the Lines view. */
+export type Highlight = {
+  text: string;
+  /** Whether `text` is a regular expression. */
+  regex: boolean;
+  /** Whether upper and lower case must match. */
+  case: boolean;
+  color: HighlightColor;
+};
+
 /** The same fields as `Settings` in ternima-core's settings.rs. */
 export type Settings = {
   theme: ThemeChoice;
@@ -44,6 +58,8 @@ export type Settings = {
   startup: StartupSettings;
   log: LogSettings;
   macros: Macro[];
+  /** The Lines view's highlight rules; the first that matches a line marks it. */
+  highlights: Highlight[];
 };
 
 /** Terminal text size limits, the same as in settings.rs. */
@@ -59,6 +75,7 @@ export const settings: Settings = $state({
   startup: { restore_tabs: true, reconnect: true, restore_window: true },
   log: { new_tabs: false, folder: "", format: "text", timestamps: true },
   macros: [],
+  highlights: [],
 });
 
 /** Reads the settings from settings.toml, through the Rust side. */

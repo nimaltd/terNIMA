@@ -6,6 +6,8 @@
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import About from "./lib/About.svelte";
   import HexBar from "./lib/HexBar.svelte";
+  import HighlightsDialog from "./lib/HighlightsDialog.svelte";
+  import LinesView from "./lib/LinesView.svelte";
   import MacrosDialog from "./lib/MacrosDialog.svelte";
   import MenuBar from "./lib/MenuBar.svelte";
   import ProbeDialog from "./lib/ProbeDialog.svelte";
@@ -32,6 +34,7 @@
   let aboutOpen = $state(false);
   let settingsOpen = $state(false);
   let macrosOpen = $state(false);
+  let highlightsOpen = $state(false);
   /**
    * The open session dialog, if any: for a new session, or for a tab's
    * settings. A new TCP session can start with a protocol picked.
@@ -55,6 +58,7 @@
     openLogFolder,
     sendFile,
     macros: () => (macrosOpen = true),
+    highlights: () => (highlightsOpen = true),
   });
 
   /** Picks a file and sends it through the tab in front. */
@@ -128,7 +132,7 @@
   });
 
   function onkeydown(event: KeyboardEvent) {
-    if (aboutOpen || settingsOpen || macrosOpen || dialog) {
+    if (aboutOpen || settingsOpen || macrosOpen || highlightsOpen || dialog) {
       return;
     }
     const item = itemForKey(menus, event);
@@ -258,10 +262,15 @@
             <Toolbar {tab} onsettings={() => (dialog = { kind: tab.kind, tab })} />
           {/if}
           <div class="layer">
-            <!-- The terminal stays while the hex view is shown, so nothing it showed is lost. -->
-            <div class="view" class:hidden={tab.view === "hex"}>
-              <Terminal {tab} active={i === view.active && tab.view !== "hex"} {isAppKey} />
+            <!-- The terminal stays while another view is shown, so nothing it showed is lost. -->
+            <div class="view" class:hidden={tab.view !== "terminal"}>
+              <Terminal {tab} active={i === view.active && tab.view === "terminal"} {isAppKey} />
             </div>
+            {#if tab.view === "lines" && onScreen(i)}
+              <div class="view">
+                <LinesView {tab} active={i === view.active} onhighlights={() => (highlightsOpen = true)} />
+              </div>
+            {/if}
             {#if tab.view === "hex" && onScreen(i)}
               <div class="view hexview">
                 <HexBar {tab} />
@@ -315,6 +324,15 @@
   <SettingsDialog
     onclose={() => {
       settingsOpen = false;
+      focusTerminal();
+    }}
+  />
+{/if}
+
+{#if highlightsOpen}
+  <HighlightsDialog
+    onclose={() => {
+      highlightsOpen = false;
       focusTerminal();
     }}
   />
