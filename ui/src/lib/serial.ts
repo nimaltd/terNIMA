@@ -49,8 +49,8 @@ export type TerminalOptions = {
 
 export type SessionKind = "serial" | "rtt" | "swo" | "tcp";
 
-/** What a tab shows: the terminal, every byte in hex, or every line in a list. */
-export type View = "terminal" | "hex" | "lines";
+/** What a tab shows: the terminal, every byte in hex, every line in a list, or the numbers in a chart. */
+export type View = "terminal" | "hex" | "lines" | "plot";
 
 /** A Zephyr log level. */
 export type Level = "err" | "wrn" | "inf" | "dbg";
@@ -76,6 +76,19 @@ export type LinesView = {
 };
 
 export const DEFAULT_LINES_VIEW: LinesView = { hidden_levels: [], hidden_modules: [], others: true };
+
+/** How the Plot view reads and shows numbers. */
+export type PlotView = {
+  /** "auto" reads JSON, named values and plain numbers; "regex" uses `regex`. */
+  mode: "auto" | "regex";
+  regex: string;
+  /** The seconds shown while it follows the newest values; 0 shows them all. */
+  window_s: number;
+  /** The series left out of the chart. */
+  hidden: string[];
+};
+
+export const DEFAULT_PLOT_VIEW: PlotView = { mode: "auto", regex: "", window_s: 30, hidden: [] };
 
 /** How the hex view breaks its lines, besides the tab's pause. It only changes what is shown. */
 export type HexView = {
@@ -106,6 +119,7 @@ export type SessionSetup = {
   view?: View;
   hex_view?: HexView;
   lines_view?: LinesView;
+  plot_view?: PlotView;
   /** The lines sent from the send box, oldest first. */
   history?: SentLine[];
 };
@@ -137,7 +151,7 @@ export type SessionEvent =
   | { kind: "channels"; up: ChannelInfo[]; down: ChannelInfo[] }
   | ({ kind: "swo_state" } & SwoState)
   | ({ kind: "tcp_state" } & NetState)
-  | { kind: "text_lines"; lines: LogLine[] }
+  | { kind: "text_lines"; lines: LogLine[]; at: number }
   | { kind: "overflow"; count: number }
   | { kind: "log_stopped"; problem: string };
 

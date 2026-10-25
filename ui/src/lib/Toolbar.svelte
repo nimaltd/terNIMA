@@ -22,6 +22,11 @@
       label: "Lines",
       title: "Every line in a list: filter Zephyr logs by level and module, search, highlight, bookmark (Ctrl+Shift+J)",
     },
+    {
+      view: "plot",
+      label: "Plot",
+      title: "The numbers in the lines, drawn over time, with cursors, stats and export (Ctrl+Shift+G)",
+    },
   ];
 
   /** Does something, then gives the keyboard back to the terminal. */
@@ -242,16 +247,24 @@
 </div>
 
 <style>
+  /* Where there is no room for all of it, it takes a second row on the right rather than hide some. */
   .toolbar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 10px;
-    height: 40px;
-    padding: 0 10px;
+    justify-content: flex-end;
+    gap: 6px 10px;
+    /* 40px tall on one row: the padding adds to this. */
+    min-height: 30px;
+    padding: 5px 10px;
     overflow: hidden;
     white-space: nowrap;
     background: var(--bg);
     border-bottom: 1px solid var(--border);
+  }
+
+  .toolbar > * {
+    flex-shrink: 0;
   }
 
   .target {

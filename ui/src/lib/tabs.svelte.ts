@@ -18,6 +18,7 @@ import {
 import {
   DEFAULT_HEX_VIEW,
   DEFAULT_LINES_VIEW,
+  DEFAULT_PLOT_VIEW,
   DEFAULT_SERIAL,
   DEFAULT_TERMINAL,
   closeAllSessions,
@@ -26,6 +27,7 @@ import {
   summary,
   type HexView,
   type LinesView,
+  type PlotView,
   type LogLine,
   type ModemLines,
   type PortId,
@@ -101,12 +103,16 @@ export class Tab {
   log = $state(false);
   /** The log file being written, while the session runs with its log on. */
   logPath: string | null = $state(null);
-  /** What the tab shows: the terminal, or every byte in hex. */
+  /** What the tab shows: the terminal, every byte in hex, every line, or a chart of the numbers. */
   view: View = $state("terminal");
   /** How the hex view breaks its lines. */
   hexView: HexView = $state({ ...DEFAULT_HEX_VIEW });
   /** What the Lines view leaves out. */
   linesView: LinesView = $state({ ...DEFAULT_LINES_VIEW });
+  /** How the Plot view reads and shows numbers. */
+  plotView: PlotView = $state({ ...DEFAULT_PLOT_VIEW });
+  /** The number of the first line the plot reads: Clear in the Plot view moves it on. */
+  plotFrom = $state(0);
   /**
    * The lines received lately, oldest first, for the Lines view, with how
    * many of each level and module there are. Plain values rather than
@@ -158,6 +164,7 @@ export class Tab {
     this.view = setup.view ?? "terminal";
     this.hexView = { ...DEFAULT_HEX_VIEW, ...setup.hex_view };
     this.linesView = { ...DEFAULT_LINES_VIEW, ...setup.lines_view };
+    this.plotView = { ...DEFAULT_PLOT_VIEW, ...setup.plot_view };
     this.history = setup.history ?? [];
   }
 
@@ -183,6 +190,7 @@ export class Tab {
       view: this.view,
       hex_view: this.hexView,
       lines_view: this.linesView,
+      plot_view: this.plotView,
       history: this.history,
     };
     switch (this.kind) {
@@ -241,6 +249,17 @@ export class Tab {
     changed();
   }
 
+  /** Changes how the Plot view reads and shows numbers. */
+  setPlotView(plotView: PlotView): void {
+    this.plotView = plotView;
+    changed();
+  }
+
+  /** Starts the plot again from the next line, leaving the lines kept as they are. */
+  clearPlot(): void {
+    this.plotFrom = this.nextLine;
+  }
+
   /** Marks a line with a bookmark, or takes the bookmark off. */
   toggleBookmark(n: number): void {
     if (!this.bookmarks.delete(n)) {
@@ -258,9 +277,11 @@ export class Tab {
     this.linesVersion++;
   }
 
-  /** Keeps lines for the Lines view; the oldest tenth goes when there are too many. */
-  private addLines(lines: LogLine[]): void {
-    const at = Date.now();
+  /**
+   * Keeps lines for the Lines view and the plot, with when they were read;
+   * the oldest tenth goes when there are too many.
+   */
+  private addLines(lines: LogLine[], at: number): void {
     for (const line of lines) {
       this.textLines.push({ ...line, n: this.nextLine++, at });
       this.count(line, 1);
@@ -677,7 +698,7 @@ export class Tab {
         this.channels = { up: event.up, down: event.down };
         return;
       case "text_lines":
-        this.addLines(event.lines);
+        this.addLines(event.lines, event.at);
         return;
       case "state":
         if (event.state === "connected") {

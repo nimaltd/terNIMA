@@ -18,6 +18,9 @@ export interface TerminalActions {
   toggleBookmark?(): void;
   nextBookmark?(): void;
   previousBookmark?(): void;
+  /** Saving the values or the chart, which only the Plot view has. */
+  exportCsv?(): void;
+  exportPng?(): void;
 }
 
 let active: TerminalActions | null = null;

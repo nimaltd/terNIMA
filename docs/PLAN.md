@@ -574,10 +574,11 @@ Done when you can find one module's errors in a busy Zephyr log in seconds.
 
 ### Phase 4: plotter and dashboard
 
-- [ ] Value parsing: plain, named, Arduino, JSON, regex
-- [ ] Time chart with zoom, pause, cursors and stats
+- [x] Value parsing: plain, named, Arduino, JSON, regex
+- [x] Time chart with zoom, pause, cursors and stats
 - [ ] XY chart, histogram, FFT, scope style trigger
-- [ ] CSV and PNG export
+- [x] CSV and PNG export
+- [ ] Values from binary frames and from raw RTT channels (int16, float...)
 - [ ] Dashboard widgets, with buttons and sliders that send commands
 - [ ] Record and replay
 

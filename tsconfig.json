@@ -12,5 +12,7 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["ui/src/**/*.ts", "ui/src/**/*.svelte", "vite.config.ts"]
+  "include": ["ui/src/**/*.ts", "ui/src/**/*.svelte", "vite.config.ts"],
+  // Node runs the tests as they are, with its own types.
+  "exclude": ["ui/src/**/*.test.ts"]
 }

@@ -127,6 +127,16 @@ export function buildMenus(app: AppActions): Menu[] {
           enabled: hasTerminal,
           run: app.saveOutput,
         },
+        {
+          label: "Export the plot as CSV...",
+          enabled: () => terminal()?.exportCsv !== undefined,
+          run: () => terminal()?.exportCsv?.(),
+        },
+        {
+          label: "Export the plot as PNG...",
+          enabled: () => terminal()?.exportPng !== undefined,
+          run: () => terminal()?.exportPng?.(),
+        },
         null,
         { label: "Settings...", shortcut: keys("Ctrl+,", "Cmd+,"), run: app.settings },
         null,
@@ -213,7 +223,16 @@ export function buildMenus(app: AppActions): Menu[] {
             tab?.setView(tab.view === "lines" ? "terminal" : "lines");
           },
         },
-        { label: "Plot", phase: 4 },
+        {
+          label: "Plot",
+          shortcut: keys("Ctrl+Shift+G", "Cmd+Shift+G"),
+          enabled: hasTab,
+          checked: () => activeTab()?.view === "plot",
+          run: () => {
+            const tab = activeTab();
+            tab?.setView(tab.view === "plot" ? "terminal" : "plot");
+          },
+        },
         null,
         {
           label: "Bookmark the line",
@@ -357,7 +376,6 @@ export function buildMenus(app: AppActions): Menu[] {
         },
         { label: "Macros...", run: app.macros },
         { label: "Highlight rules...", run: app.highlights },
-        { label: "Plotter", phase: 4 },
         null,
         { label: "Calculators", phase: 6 },
       ],

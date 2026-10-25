@@ -176,6 +176,26 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   to, or a macro to send, such as "sf" for Send file. The matched letters
   are marked, a check shows what is on, and the commands used lately come
   first when nothing is typed.
+- A Plot view (View > Plot, Ctrl+Shift+G, or Plot in the toolbar): the
+  numbers in the received lines, drawn over time. It reads `temp=21.5
+  hum=40`, the Arduino Serial Plotter's `temp:21.5,hum:40`, plain
+  `21.5,40` or `21.5 40`, and JSON lines such as `{"temp": 21.5}`, also
+  inside Zephyr log lines; or, for any other line, a regex with a capture
+  group for each value. It follows the newest values over 5 s to 5 min, or
+  shows them all. Drag or the wheel zooms, Shift+wheel moves, Space pauses
+  and a double-click follows again. Clicks place the cursors A and B,
+  which show the time between them as a period and a frequency, and each
+  series' value at A and B. A table under the chart shows each series'
+  value under the mouse, and its min, max and mean between A and B or in
+  view; its boxes show or hide a series. CSV... saves every value with its
+  time, and PNG... the chart as shown, with the series' names. Up to 24
+  series, in colors that color blind eyes tell apart too. It keeps what the
+  Lines view keeps, so it can show what came before it was opened; Clear
+  starts it again. How it reads and what it hides are kept per tab in
+  `workspace.toml`.
+- Received lines are timed as their bytes are read, so the plot and the
+  Lines view have the time they came, not when the window drew them.
+- UI unit tests, run by `npm test` and in CI.
 - "New line after" in the toolbar: data that comes after a pause of 50 ms
   to 2 s starts on a new line, in the terminal and in the hex view, for
   devices that send messages without line endings. Not after what was just
@@ -188,6 +208,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- The toolbar no longer hides some of its views when the window is
+  narrow, as it did with Lines on a serial tab: what does not fit goes to
+  a second row on the right.
 - A serial port no longer seems unplugged when a long write takes more
   than its short timeout, as on Windows: a long paste or a file went out
   as one piece and the port was opened again. A port that takes no bytes

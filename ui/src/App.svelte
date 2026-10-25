@@ -9,6 +9,7 @@
   import HexBar from "./lib/HexBar.svelte";
   import HighlightsDialog from "./lib/HighlightsDialog.svelte";
   import LinesView from "./lib/LinesView.svelte";
+  import PlotView from "./lib/PlotView.svelte";
   import MacrosDialog from "./lib/MacrosDialog.svelte";
   import MenuBar from "./lib/MenuBar.svelte";
   import ProbeDialog from "./lib/ProbeDialog.svelte";
@@ -300,6 +301,11 @@
             {#if tab.view === "lines" && onScreen(i)}
               <div class="view">
                 <LinesView {tab} active={i === view.active} onhighlights={() => (highlightsOpen = true)} />
+              </div>
+            {/if}
+            {#if tab.view === "plot" && onScreen(i)}
+              <div class="view">
+                <PlotView {tab} active={i === view.active} />
               </div>
             {/if}
             {#if tab.view === "hex" && onScreen(i)}

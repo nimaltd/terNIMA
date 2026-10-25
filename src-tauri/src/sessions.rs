@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use tauri::ipc::{Channel, InvokeResponseBody};
@@ -110,9 +110,11 @@ pub enum SessionEvent {
     },
     SwoState(swo::SwoState),
     TcpState(net::NetState),
-    /// The lines of text the last bytes finished, for the Lines view.
+    /// The lines of text the last bytes finished, for the Lines view and the
+    /// plot, with when those bytes were read: ms since 1970.
     TextLines {
         lines: Vec<lines::Line>,
+        at: f64,
     },
     /// The chip's trace FIFO overflowed this many times since the last report.
     Overflow {
@@ -206,11 +208,15 @@ fn write_log(
     }
 }
 
-/// Sends the lines that received bytes finished, for the Lines view.
+/// Sends the lines that received bytes finished, for the Lines view and the
+/// plot. They are timed here, as the bytes are read, not when the UI gets them.
 fn send_lines(splitter: &mut LineSplitter, events: &Channel<SessionEvent>, bytes: &[u8]) {
     let lines = splitter.feed(bytes);
     if !lines.is_empty() {
-        let _ = events.send(SessionEvent::TextLines { lines });
+        let at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0.0, |since| since.as_secs_f64() * 1000.0);
+        let _ = events.send(SessionEvent::TextLines { lines, at });
     }
 }
 
@@ -450,6 +456,12 @@ pub fn set_log(
 #[tauri::command(async)]
 pub fn save_text(path: String, text: String) -> Result<(), String> {
     std::fs::write(&path, text).map_err(|error| format!("Could not save {path}: {error}"))
+}
+
+/// Writes bytes to a file the user chose, such as a chart as a PNG.
+#[tauri::command(async)]
+pub fn save_bytes(path: String, data: Vec<u8>) -> Result<(), String> {
+    std::fs::write(&path, data).map_err(|error| format!("Could not save {path}: {error}"))
 }
 
 #[tauri::command(async)]

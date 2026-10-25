@@ -165,6 +165,7 @@ fn main() {
             sessions::set_log,
             sessions::default_log_folder,
             sessions::save_text,
+            sessions::save_bytes,
         ])
         .run(tauri::generate_context!())
         .expect("ternima could not start");

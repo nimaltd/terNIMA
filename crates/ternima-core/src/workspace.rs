@@ -76,6 +76,44 @@ pub enum View {
     /// Every line in a list, with Zephyr's logs read into level and module
     /// for filters, search, highlights and bookmarks.
     Lines,
+    /// The numbers in the lines, drawn over time.
+    Plot,
+}
+
+/// How the plot reads numbers from lines.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ValueMode {
+    /// JSON, then named values such as `temp=21.5`, then plain numbers.
+    #[default]
+    Auto,
+    /// The user's regex, one value per capture group.
+    Regex,
+}
+
+/// How the Plot view reads and shows numbers.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PlotView {
+    pub mode: ValueMode,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub regex: String,
+    /// The seconds shown while it follows the newest values; 0 shows them all.
+    pub window_s: u32,
+    /// The series left out of the chart.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hidden: Vec<String>,
+}
+
+impl Default for PlotView {
+    fn default() -> Self {
+        Self {
+            mode: ValueMode::Auto,
+            regex: String::new(),
+            window_s: 30,
+            hidden: Vec::new(),
+        }
+    }
 }
 
 /// What the Lines view leaves out. Its search and bookmarks are not kept.
@@ -171,6 +209,8 @@ pub struct SessionSetup {
     pub hex_view: HexView,
     #[serde(default, skip_serializing_if = "is_default")]
     pub lines_view: LinesView,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub plot_view: PlotView,
     /// The lines sent from the send box, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub history: Vec<SentLine>,
@@ -354,6 +394,7 @@ mod tests {
             view: View::Terminal,
             hex_view: HexView::default(),
             lines_view: LinesView::default(),
+            plot_view: PlotView::default(),
             history: Vec::new(),
         }
     }
@@ -377,6 +418,7 @@ mod tests {
             view: View::Terminal,
             hex_view: HexView::default(),
             lines_view: LinesView::default(),
+            plot_view: PlotView::default(),
             history: Vec::new(),
         }
     }
@@ -475,6 +517,29 @@ mod tests {
         assert_eq!(Workspace::load(&path), workspace);
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains("hidden_levels = [\"dbg\"]"), "{text}");
+    }
+
+    #[test]
+    fn plot_settings_are_kept() {
+        let dir = TempDir::new("workspace-plot");
+        let path = dir.file("workspace.toml");
+        let workspace = Workspace {
+            sessions: vec![SessionSetup {
+                view: View::Plot,
+                plot_view: PlotView {
+                    mode: ValueMode::Regex,
+                    regex: r"tick (\d+)".into(),
+                    window_s: 10,
+                    hidden: vec!["hum".into()],
+                },
+                ..nucleo()
+            }],
+            ..Workspace::default()
+        };
+        workspace.save(&path).unwrap();
+        assert_eq!(Workspace::load(&path), workspace);
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("mode = \"regex\""), "{text}");
     }
 
     #[test]

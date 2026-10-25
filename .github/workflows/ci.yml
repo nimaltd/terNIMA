@@ -48,6 +48,9 @@ jobs:
       - name: UI type check
         run: npm run check
 
+      - name: UI tests
+        run: npm test
+
       # Tauri builds the UI into the app, so it has to exist before cargo runs.
       - name: UI build
         run: npm run build
