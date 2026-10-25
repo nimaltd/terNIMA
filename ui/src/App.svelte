@@ -2,21 +2,26 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { save } from "@tauri-apps/plugin-dialog";
+  import { open, save } from "@tauri-apps/plugin-dialog";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import About from "./lib/About.svelte";
+  import HexBar from "./lib/HexBar.svelte";
+  import MacrosDialog from "./lib/MacrosDialog.svelte";
   import MenuBar from "./lib/MenuBar.svelte";
   import ProbeDialog from "./lib/ProbeDialog.svelte";
+  import SendBar from "./lib/SendBar.svelte";
   import SessionDialog from "./lib/SessionDialog.svelte";
   import SettingsDialog from "./lib/SettingsDialog.svelte";
   import StatusBar from "./lib/StatusBar.svelte";
   import TabBar from "./lib/TabBar.svelte";
+  import TcpDialog from "./lib/TcpDialog.svelte";
   import Terminal from "./lib/Terminal.svelte";
   import Toolbar from "./lib/Toolbar.svelte";
-  import { buildMenus, isEnabled, itemForKey, menuForAltKey } from "./lib/menus";
+  import { buildMenus, isEnabled, itemForKey, macroForKey, menuForAltKey } from "./lib/menus";
   import { defaultLogFolder, loadSettings, settings } from "./lib/settings.svelte";
   import { activeTab, changed, loadWorkspace, showTab, tabs, view, type Tab } from "./lib/tabs.svelte";
   import { activeTerminal } from "./lib/terminal-actions";
+  import type { Protocol } from "./lib/net";
   import type { SessionKind } from "./lib/serial";
   import { appScheme } from "./lib/theme.svelte";
 
@@ -26,8 +31,12 @@
   let ready = $state(false);
   let aboutOpen = $state(false);
   let settingsOpen = $state(false);
-  /** The open session dialog, if any: for a new session, or for a tab's settings. */
-  let dialog: { kind: SessionKind; tab: Tab | null } | null = $state(null);
+  let macrosOpen = $state(false);
+  /**
+   * The open session dialog, if any: for a new session, or for a tab's
+   * settings. A new TCP session can start with a protocol picked.
+   */
+  let dialog: { kind: SessionKind; tab: Tab | null; protocol?: Protocol } | null = $state(null);
   let menuBar: MenuBar;
   let pane: HTMLElement;
   /** Whether the line between the two panes of a split view is being dragged. */
@@ -39,11 +48,27 @@
     newSession: () => (dialog = { kind: "serial", tab: null }),
     newRttSession: () => (dialog = { kind: "rtt", tab: null }),
     newSwoSession: () => (dialog = { kind: "swo", tab: null }),
+    newTcpSession: () => (dialog = { kind: "tcp", tab: null }),
     sessionSettings,
     settings: () => (settingsOpen = true),
     saveOutput,
     openLogFolder,
+    sendFile,
+    macros: () => (macrosOpen = true),
   });
+
+  /** Picks a file and sends it through the tab in front. */
+  async function sendFile() {
+    const tab = activeTab();
+    if (!tab) {
+      return;
+    }
+    const path = await open({ title: "Send a file", multiple: false, directory: false });
+    if (typeof path === "string") {
+      await tab.sendFile(path);
+    }
+    focusTerminal();
+  }
 
   /** Saves what the terminal in front shows, scrollback and all, to a file the user picks. */
   async function saveOutput() {
@@ -103,7 +128,7 @@
   });
 
   function onkeydown(event: KeyboardEvent) {
-    if (aboutOpen || settingsOpen || dialog) {
+    if (aboutOpen || settingsOpen || macrosOpen || dialog) {
       return;
     }
     const item = itemForKey(menus, event);
@@ -111,6 +136,15 @@
       event.preventDefault();
       if (isEnabled(item)) {
         item.run?.();
+      }
+      return;
+    }
+    const macro = macroForKey(event);
+    if (macro !== null) {
+      event.preventDefault();
+      const chosen = settings.macros[macro];
+      if (chosen) {
+        void activeTab()?.sendMacro(chosen);
       }
       return;
     }
@@ -123,7 +157,11 @@
 
   /** Keys the app uses itself, which the terminal must not send to the device. */
   function isAppKey(event: KeyboardEvent): boolean {
-    return itemForKey(menus, event) !== null || menuForAltKey(menus, event) !== null;
+    return (
+      itemForKey(menus, event) !== null ||
+      macroForKey(event) !== null ||
+      menuForAltKey(menus, event) !== null
+    );
   }
 
   function focusTerminal() {
@@ -193,7 +231,7 @@
 
 <div class="app">
   <MenuBar bind:this={menuBar} {menus} onclose={focusTerminal} />
-  <TabBar onnew={(kind) => (dialog = { kind, tab: null })} />
+  <TabBar onnew={(kind, protocol) => (dialog = { kind, tab: null, protocol })} />
 
   <main class="pane" class:dragging bind:this={pane}>
     {#if ready}
@@ -220,8 +258,22 @@
             <Toolbar {tab} onsettings={() => (dialog = { kind: tab.kind, tab })} />
           {/if}
           <div class="layer">
-            <Terminal {tab} active={i === view.active} {isAppKey} />
+            <!-- The terminal stays while the hex view is shown, so nothing it showed is lost. -->
+            <div class="view" class:hidden={tab.view === "hex"}>
+              <Terminal {tab} active={i === view.active && tab.view !== "hex"} {isAppKey} />
+            </div>
+            {#if tab.view === "hex" && onScreen(i)}
+              <div class="view hexview">
+                <HexBar {tab} />
+                <div class="hexterm">
+                  <Terminal {tab} hex active={i === view.active} {isAppKey} />
+                </div>
+              </div>
+            {/if}
           </div>
+          {#if onScreen(i) && settings.send_box && tab.kind !== "swo"}
+            <SendBar {tab} onmacros={() => (macrosOpen = true)} />
+          {/if}
         </div>
       {/each}
       {#if view.split}
@@ -253,6 +305,8 @@
 
 {#if dialog?.kind === "rtt" || dialog?.kind === "swo"}
   <ProbeDialog kind={dialog.kind} tab={dialog.tab} onclose={closeDialog} />
+{:else if dialog?.kind === "tcp"}
+  <TcpDialog tab={dialog.tab} protocol={dialog.protocol} onclose={closeDialog} />
 {:else if dialog}
   <SessionDialog tab={dialog.tab} onclose={closeDialog} />
 {/if}
@@ -261,6 +315,15 @@
   <SettingsDialog
     onclose={() => {
       settingsOpen = false;
+      focusTerminal();
+    }}
+  />
+{/if}
+
+{#if macrosOpen}
+  <MacrosDialog
+    onclose={() => {
+      macrosOpen = false;
       focusTerminal();
     }}
   />
@@ -329,6 +392,24 @@
     flex: 1;
     min-height: 0;
     padding: 8px 4px 4px 12px;
+  }
+
+  .view {
+    height: 100%;
+  }
+
+  .view.hidden {
+    display: none;
+  }
+
+  .hexview {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .hexterm {
+    flex: 1;
+    min-height: 0;
   }
 
   .divider {

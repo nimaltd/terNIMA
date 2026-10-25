@@ -11,16 +11,19 @@
   import { WebglAddon } from "@xterm/addon-webgl";
   import { settings } from "./settings.svelte";
   import type { Tab } from "./tabs.svelte";
-  import { setActiveTerminal, type TerminalActions } from "./terminal-actions";
+  import { clearActiveTerminal, setActiveTerminal, type TerminalActions } from "./terminal-actions";
   import { appScheme, searchColors, terminalThemes } from "./theme.svelte";
 
   let {
     tab = null,
+    hex = false,
     active,
     isAppKey,
   }: {
     /** The session this terminal shows, or null for the welcome tab. */
     tab?: Tab | null;
+    /** Shows the session's bytes in hex instead of as a terminal would. */
+    hex?: boolean;
     /** Whether this terminal is the one on screen. */
     active: boolean;
     /** Says which keys belong to the app, so they are not sent to the device. */
@@ -194,7 +197,8 @@
     }
   });
   $effect(() => {
-    term.options.convertEol = tab?.terminal.lf_is_newline ?? false;
+    // The hex view writes its own line ends.
+    term.options.convertEol = !hex && (tab?.terminal.lf_is_newline ?? false);
   });
   // The terminal on screen is the one the menus act on, and has the keyboard.
   $effect(() => {
@@ -229,7 +233,9 @@
       resize.observe(container);
       opened = true;
 
-      if (tab) {
+      if (tab && hex) {
+        tab.attachHex(term);
+      } else if (tab) {
         tab.attach(term);
       } else {
         // The logo's colors are picked for the theme in use when the tab opens.
@@ -241,10 +247,12 @@
 
     return () => {
       closed = true;
-      tab?.attach(null);
-      if (active) {
-        setActiveTerminal(null);
+      if (hex) {
+        tab?.attachHex(null);
+      } else {
+        tab?.attach(null);
       }
+      clearActiveTerminal(actions);
       resize.disconnect();
       term.dispose();
     };

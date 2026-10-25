@@ -312,9 +312,6 @@ small chart. Buttons and sliders send commands back, such as `pwm {value}\r\n`.
 
 probe-rs gives us more than RTT. With the same probe, ternima can also:
 
-- **Flash** an ELF, HEX or BIN file, reset the target and reconnect RTT, with one
-  button or one key. Remembers the file per session. Optionally flashes again
-  whenever the file changes, so a build in your IDE goes straight to the board
 - **Watch variables live** while the target runs, without changing the firmware:
   pick global variables by name from the ELF, ternima reads them through the probe
   many times a second and shows or plots them, like STM32CubeMonitor or J-Scope
@@ -352,10 +349,7 @@ This works over plain serial too, no probe needed.
   testing parsers and plots without hardware
 - **External tool buttons:** run a command such as `west flash` or `make flash`.
   ternima lets go of the port or probe while it runs, then reconnects
-- **ESP32:** flash with espflash, reset into the bootloader with DTR and RTS, decode
-  backtraces
-- **STM32:** flash through the built in UART bootloader (AN3155), with BOOT0 and reset
-  driven by DTR and RTS
+- **ESP32:** reset with DTR and RTS the way its boards wire them, and decode backtraces
 - **AT commands:** a command list and response highlighting for ESP-AT and cellular
   modems
 
@@ -409,7 +403,7 @@ keyboard and send box -> session task -> transport -> device
 | Need | Library |
 |---|---|
 | Serial ports | `serialport` |
-| Probes, RTT, flashing, memory | `probe-rs` |
+| Probes, RTT, memory | `probe-rs` |
 | ELF and debug info | `object`, `gimli`, `addr2line` |
 | Config | `serde`, `toml` |
 | Async | `tokio` (comes with Tauri) |
@@ -545,8 +539,12 @@ Done when it replaces PuTTY or Tera Term for everyday UART work.
 - [x] Finding the chip by itself: an STM32's DBGMCU ID register gives its family (the H503
   answers DEV_ID 0x474), and probe-rs's own detection covers the chips it can tell apart.
   The Detect button, and the dialog by itself when the chip is empty
-- [ ] RTT over TCP (J-Link on 19021, OpenOCD)
-- [ ] Plain TCP and Telnet sessions
+- [x] RTT over TCP: J-Link's RTT server on 19021, with its channel asked for in the
+  first 100 ms, and OpenOCD's `rtt server`. Tried against a stand-in J-Link server;
+  not yet against real J-Link software or OpenOCD
+- [x] Plain TCP and Telnet sessions, waiting for the other end and connecting again when
+  it comes back. Telnet answers the option talk (echo and no go ahead yes, the rest no)
+  and keeps it out of the terminal
 - [x] Split view: two tabs side by side or one above the other, with a line to drag between
   them, kept in `workspace.toml`
 - [x] Find in the terminal output: next and previous, match case, whole word, regex, and a
@@ -560,8 +558,13 @@ Done when the Zephyr shell works over RTT on a DAPLink and on a J-Link.
 
 - [ ] Log view: timestamps, regex search, filters, highlight rules, bookmarks
 - [ ] Zephyr log parsing with level and module filters
-- [ ] Hex view and sending hex
-- [ ] Send box with history, macros, sending a file
+- [x] Hex view and sending hex: sent and received bytes, 8, 16 or 32 to a line, with a new
+  line after a chosen byte
+- [x] A new line after a chosen pause, in the terminal and the hex view, but not in a
+  shell's echo
+- [ ] Pauses measured where the bytes are read, for 1 to 2 ms instead of 50 ms at least
+- [x] Send box with history, macros (Alt+1 to Alt+9), escapes such as `\r` and `\x1b`,
+  and sending a file paced for the link, with progress and Stop
 - [ ] Command palette
 
 Done when you can find one module's errors in a busy Zephyr log in seconds.
@@ -577,8 +580,6 @@ Done when you can find one module's errors in a busy Zephyr log in seconds.
 
 ### Phase 5: probe tools
 
-- [ ] Flash ELF, HEX or BIN, reset, reconnect; flash again when the file changes
-  (a first try is `cargo run -p ternima-core --example flash -- <chip> <file.elf>`)
 - [ ] Crash and address decoding from the ELF
 - [ ] Live variable watch and plot
 - [ ] HardFault decoder
@@ -594,7 +595,6 @@ Done when you can find one module's errors in a busy Zephyr log in seconds.
 - [ ] Send and expect tests
 - [ ] External tool buttons
 - [ ] MCUmgr / SMP; Zephyr dictionary logging; defmt
-- [ ] ESP32 and STM32 bootloader flashing
 - [ ] Calculators
 - [ ] SEGGER J-Link library
 

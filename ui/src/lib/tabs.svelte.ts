@@ -1,8 +1,10 @@
-// The open tabs, each with its session (serial, RTT or SWO) and its log, and
-// saving them to workspace.toml.
+// The open tabs, each with its session (serial, RTT, SWO or TCP) and its log,
+// and saving them to workspace.toml.
 
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { Terminal } from "@xterm/xterm";
+import { HexDump } from "./hexdump";
+import { DEFAULT_TCP, address, protocolText, type TcpConfig } from "./net";
 import {
   DEFAULT_RTT,
   DEFAULT_SWO,
@@ -14,23 +16,28 @@ import {
   type SwoConfig,
 } from "./probe";
 import {
+  DEFAULT_HEX_VIEW,
   DEFAULT_SERIAL,
   DEFAULT_TERMINAL,
   closeAllSessions,
   getWorkspace,
   setWorkspace,
   summary,
+  type HexView,
   type ModemLines,
   type PortId,
   type SerialConfig,
+  type SentLine,
   type SessionEvent,
   type SessionKind,
   type SessionSetup,
   type Split,
   type SplitDirection,
   type TerminalOptions,
+  type View,
 } from "./serial";
-import { settings } from "./settings.svelte";
+import { settings, type Macro } from "./settings.svelte";
+import { bytes as byteText } from "./state";
 
 /** Whether a log is being written, and where; or why it could not start. */
 type LogStatus = { path: string | null; problem: string | null };
@@ -38,8 +45,18 @@ type LogStatus = { path: string | null; problem: string | null };
 /** How a session's log file is written, for the Rust side. */
 type LogSetup = { folder: string; name: string; format: string; timestamps: boolean };
 
+/** How sending a file goes, from the Rust side. */
+type FileProgress = { sent: number; total: number; done: boolean; cancelled: boolean; problem: string | null };
+
 const encoder = new TextEncoder();
 const ENTER = { cr: "\r", lf: "\n", crlf: "\r\n" };
+
+/** The most sent lines a tab keeps, the same as HISTORY_MAX in workspace.rs. */
+const HISTORY_MAX = 100;
+/** About how many recent bytes a tab keeps, to fill its hex view when it opens. */
+const RECENT_MAX = 256 * 1024;
+/** How fast a file goes into RTT: the firmware empties its small buffer when it gets to it. */
+const RTT_FILE_RATE = 1000;
 
 let nextId = 1;
 
@@ -55,6 +72,7 @@ export class Tab {
   serial: SerialConfig = $state({ ...DEFAULT_SERIAL });
   rtt: RttConfig = $state({ ...DEFAULT_RTT });
   swo: SwoConfig = $state({ ...DEFAULT_SWO });
+  tcp: TcpConfig = $state({ ...DEFAULT_TCP });
   terminal: TerminalOptions = $state({ ...DEFAULT_TERMINAL });
   /** True while the session runs: connected, or ternima is waiting for the device. */
   running = $state(false);
@@ -75,8 +93,27 @@ export class Tab {
   log = $state(false);
   /** The log file being written, while the session runs with its log on. */
   logPath: string | null = $state(null);
+  /** What the tab shows: the terminal, or every byte in hex. */
+  view: View = $state("terminal");
+  /** How the hex view breaks its lines. */
+  hexView: HexView = $state({ ...DEFAULT_HEX_VIEW });
+  /** The lines sent from the send box, oldest first. */
+  history: SentLine[] = $state([]);
+  /** What is in the send box, kept while the tab is out of sight. */
+  draft = $state({ text: "", hex: false, enter: true });
+  /** The file being sent, while one is. */
+  sending: { name: string; sent: number; total: number } | null = $state(null);
 
   private term: Terminal | null = null;
+  private hexTerm: Terminal | null = null;
+  private hexDump = new HexDump(DEFAULT_HEX_VIEW, 0);
+  /** When the last bytes came, and whether anything was sent since, for the pause's new line. */
+  private lastReceived = 0;
+  private sentSince = false;
+  private hexTimer: ReturnType<typeof setTimeout> | undefined;
+  /** What was received and sent lately, oldest first, to fill the hex view when it opens. */
+  private recent: { tx: boolean; at: number; bytes: Uint8Array }[] = [];
+  private recentBytes = 0;
   /** What arrived before the terminal was ready. */
   private early: (Uint8Array | string)[] = [];
   /** When the device went away, while waiting for it to come back. */
@@ -93,8 +130,12 @@ export class Tab {
     this.serial = { ...DEFAULT_SERIAL, ...setup.serial };
     this.rtt = { ...DEFAULT_RTT, ...setup.rtt };
     this.swo = { ...DEFAULT_SWO, ...setup.swo };
+    this.tcp = { ...DEFAULT_TCP, ...setup.tcp };
     this.terminal = { ...DEFAULT_TERMINAL, ...setup.terminal };
     this.log = setup.log ?? false;
+    this.view = setup.view ?? "terminal";
+    this.hexView = { ...DEFAULT_HEX_VIEW, ...setup.hex_view };
+    this.history = setup.history ?? [];
   }
 
   get connected(): boolean {
@@ -116,12 +157,17 @@ export class Tab {
       connected: this.running,
       log: this.log,
       terminal: this.terminal,
+      view: this.view,
+      hex_view: this.hexView,
+      history: this.history,
     };
     switch (this.kind) {
       case "rtt":
         return $state.snapshot({ ...common, rtt: this.rtt });
       case "swo":
         return $state.snapshot({ ...common, swo: this.swo });
+      case "tcp":
+        return $state.snapshot({ ...common, tcp: this.tcp });
       default:
         return $state.snapshot({ ...common, port: this.port, serial: this.serial });
     }
@@ -135,6 +181,50 @@ export class Tab {
         term.write(chunk);
       }
       this.early = [];
+    }
+  }
+
+  /** Called by the tab's hex view when it opens, which shows what came lately, and with null when it closes. */
+  attachHex(term: Terminal | null): void {
+    clearTimeout(this.hexTimer);
+    this.hexTerm = term;
+    if (term) {
+      this.hexDump = new HexDump(this.hexView, this.terminal.pause_ms);
+      let text = "";
+      for (const chunk of this.recent) {
+        text += this.hexDump.feed(chunk.tx, chunk.at, chunk.bytes);
+      }
+      term.write(text + this.hexDump.finish());
+    }
+  }
+
+  /** Shows the terminal or the hex view. */
+  setView(view: View): void {
+    this.view = view;
+    changed();
+  }
+
+  /** Changes how the hex view breaks its lines, and lays out what it shows again. */
+  setHexView(hexView: HexView): void {
+    this.hexView = hexView;
+    this.layOutHex();
+    changed();
+  }
+
+  /** Sets the pause that starts a new line, in both views; 0 for never. */
+  setPause(ms: number): void {
+    this.terminal.pause_ms = ms;
+    this.layOutHex();
+    changed();
+  }
+
+  /** Writes the hex view again from what came lately, with the settings as they are now. */
+  private layOutHex(): void {
+    const term = this.hexTerm;
+    if (term) {
+      // A full reset as an escape, so it comes after what is still waiting to be drawn.
+      term.write("\x1bc");
+      this.attachHex(term);
     }
   }
 
@@ -155,16 +245,24 @@ export class Tab {
 
     // The log starts with the session, so not a byte is missed.
     const common = { id: this.id, log: this.logSetup(), data, events };
-    const started =
-      this.kind === "rtt"
-        ? invoke<LogStatus>("open_rtt_session", { ...common, config: $state.snapshot(this.rtt) })
-        : this.kind === "swo"
-          ? invoke<LogStatus>("open_swo_session", { ...common, config: $state.snapshot(this.swo) })
-          : invoke<LogStatus>("open_session", {
-              ...common,
-              port: $state.snapshot(this.port),
-              config: $state.snapshot(this.serial),
-            });
+    let started: Promise<LogStatus>;
+    switch (this.kind) {
+      case "rtt":
+        started = invoke("open_rtt_session", { ...common, config: $state.snapshot(this.rtt) });
+        break;
+      case "swo":
+        started = invoke("open_swo_session", { ...common, config: $state.snapshot(this.swo) });
+        break;
+      case "tcp":
+        started = invoke("open_tcp_session", { ...common, config: $state.snapshot(this.tcp) });
+        break;
+      default:
+        started = invoke("open_session", {
+          ...common,
+          port: $state.snapshot(this.port),
+          config: $state.snapshot(this.serial),
+        });
+    }
     started
       .then((status) => this.onLogStatus(status))
       .catch((error) => this.note(`could not start: ${error}`));
@@ -259,6 +357,15 @@ export class Tab {
     changed();
   }
 
+  /** Changes where a TCP session connects; a running session connects again at once. */
+  reconfigureTcp(tcp: TcpConfig): void {
+    this.tcp = tcp;
+    if (this.running) {
+      void invoke("reconfigure_tcp_session", { id: this.id, config: $state.snapshot(tcp) });
+    }
+    changed();
+  }
+
   /** Moves the tab to another serial port. */
   changePort(port: PortId): void {
     const wasRunning = this.running;
@@ -282,11 +389,129 @@ export class Tab {
       }
       return;
     }
-    const bytes = encoder.encode(data.replace(/\r/g, ENTER[this.terminal.enter]));
-    void invoke("write_session", { id: this.id, data: Array.from(bytes) });
-    this.tx += bytes.length;
+    this.sendBytes(encoder.encode(data.replace(/\r/g, ENTER[this.terminal.enter])));
     if (this.terminal.local_echo) {
       this.write(data.replace(/\r/g, "\r\n").replace(/\x7f/g, "\b \b"));
+    }
+  }
+
+  /**
+   * Sends a line from the send box or a macro: hex digits, or text with
+   * escapes such as \r, then the tab's Enter if `enter` is set. Rejects with
+   * the reason when it cannot.
+   */
+  async sendLine(text: string, hex: boolean, enter: boolean): Promise<void> {
+    if (this.kind === "swo") {
+      throw "SWO only comes from the chip. Use RTT to send to it.";
+    }
+    if (!this.connected) {
+      throw "Not connected.";
+    }
+    const body = new Uint8Array(await invoke<number[]>("encode_input", { text, hex }));
+    const end = enter ? encoder.encode(ENTER[this.terminal.enter]) : new Uint8Array();
+    const bytes = new Uint8Array(body.length + end.length);
+    bytes.set(body);
+    bytes.set(end, body.length);
+    this.sendBytes(bytes);
+    if (this.terminal.local_echo && !hex) {
+      this.write(body);
+      if (enter) {
+        this.write("\r\n");
+      }
+    }
+  }
+
+  /** Sends a macro from its key, and says in the terminal why when it cannot. */
+  async sendMacro(macro: Macro): Promise<void> {
+    try {
+      await this.sendLine(macro.text, macro.hex, macro.enter);
+    } catch (problem) {
+      this.note(`${macro.name}: ${problem}`);
+    }
+  }
+
+  /** Keeps a line sent from the send box, so ↑ brings it back. */
+  remember(text: string, hex: boolean): void {
+    const last = this.history.at(-1);
+    if (last && last.text === text && (last.hex ?? false) === hex) {
+      return;
+    }
+    this.history.push(hex ? { text, hex } : { text });
+    if (this.history.length > HISTORY_MAX) {
+      this.history.splice(0, this.history.length - HISTORY_MAX);
+    }
+    changed();
+  }
+
+  /** Sends bytes to the device, and shows them in the hex view. */
+  private sendBytes(bytes: Uint8Array): void {
+    if (bytes.length === 0) {
+      return;
+    }
+    void invoke("write_session", { id: this.id, data: Array.from(bytes) });
+    this.tx += bytes.length;
+    this.sentSince = true;
+    this.record(true, bytes);
+  }
+
+  /** Sends a file, paced for the link, with its progress in `sending`. */
+  async sendFile(path: string): Promise<void> {
+    if (!this.connected || this.sending || this.kind === "swo") {
+      return;
+    }
+    const name = path.split(/[\\/]/).pop() ?? path;
+    const started = Date.now();
+    this.sending = { name, sent: 0, total: 0 };
+    this.note(`sending ${name}`);
+    const progress = new Channel<FileProgress>();
+    progress.onmessage = (report) => this.onFileProgress(name, started, report);
+    try {
+      await invoke("send_file", { id: this.id, path, bytesPerSecond: this.fileRate(), progress });
+    } catch (error) {
+      this.sending = null;
+      this.note(String(error));
+    }
+  }
+
+  /** Stops sending a file. */
+  cancelSend(): void {
+    if (this.sending) {
+      void invoke("cancel_send", { id: this.id });
+    }
+  }
+
+  /** How many bytes a second the link carries, for pacing a file; 0 for as fast as it takes them. */
+  private fileRate(): number {
+    switch (this.kind) {
+      case "serial": {
+        const { baud, data_bits, parity, stop_bits } = this.serial;
+        // A start bit, the data bits, the parity bit if any, and the stop bits.
+        const bits = 1 + data_bits + (parity === "none" ? 0 : 1) + stop_bits;
+        return Math.max(1, Math.floor(baud / bits));
+      }
+      case "rtt":
+        return RTT_FILE_RATE;
+      default:
+        return 0;
+    }
+  }
+
+  private onFileProgress(name: string, started: number, report: FileProgress): void {
+    if (!this.sending) {
+      return;
+    }
+    this.tx += report.sent - this.sending.sent;
+    this.sending = { name, sent: report.sent, total: report.total };
+    if (!report.done) {
+      return;
+    }
+    this.sending = null;
+    if (report.problem) {
+      this.note(report.problem);
+    } else if (report.cancelled) {
+      this.note(`stopped sending ${name} after ${byteText(report.sent)} of ${byteText(report.total)}`);
+    } else {
+      this.note(`sent ${name}, ${byteText(report.total)} in ${duration(Date.now() - started)}`);
     }
   }
 
@@ -319,7 +544,48 @@ export class Tab {
 
   private receive(bytes: Uint8Array): void {
     this.rx += bytes.length;
+    // After a pause, what comes starts on a new line, but not an echo of what
+    // was just typed or sent: an interactive shell keeps its lines whole.
+    const now = Date.now();
+    const pause = this.terminal.pause_ms;
+    if (
+      pause > 0 &&
+      now - this.lastReceived >= pause &&
+      !this.sentSince &&
+      this.term &&
+      this.term.buffer.active.cursorX !== 0
+    ) {
+      this.write("\r\n");
+    }
+    this.lastReceived = now;
+    this.sentSince = false;
     this.write(bytes);
+    this.record(false, bytes);
+  }
+
+  /** Keeps bytes for the hex view, and shows them there if it is open. */
+  private record(tx: boolean, bytes: Uint8Array): void {
+    const at = Date.now();
+    this.recent.push({ tx, at, bytes });
+    this.recentBytes += bytes.length;
+    // The oldest half goes at once, now and then, rather than a chunk at a time.
+    if (this.recentBytes > 2 * RECENT_MAX) {
+      let drop = 0;
+      while (this.recentBytes > RECENT_MAX && drop < this.recent.length - 1) {
+        this.recentBytes -= this.recent[drop].bytes.length;
+        drop++;
+      }
+      this.recent.splice(0, drop);
+    }
+    if (this.hexTerm) {
+      this.hexTerm.write(this.hexDump.feed(tx, at, bytes));
+      // A pause ends the line, so the next packet starts on its own.
+      clearTimeout(this.hexTimer);
+      const pause = this.terminal.pause_ms;
+      if (pause > 0) {
+        this.hexTimer = setTimeout(() => this.hexTerm?.write(this.hexDump.finish()), pause);
+      }
+    }
   }
 
   private onEvent(event: SessionEvent): void {
@@ -353,6 +619,13 @@ export class Tab {
       case "swo_state":
         if (event.state === "connected") {
           this.onConnected(event.chip, `${event.chip}, SWO at ${hzText(event.baud)}`);
+        } else {
+          this.onWaiting(event.problem);
+        }
+        return;
+      case "tcp_state":
+        if (event.state === "connected") {
+          this.onConnected(event.address, `${event.address}, ${protocolText(this.tcp)}`);
         } else {
           this.onWaiting(event.problem);
         }
@@ -395,12 +668,26 @@ export class Tab {
       if (!this.resetting) {
         this.note(`disconnected at ${clock(now)}`);
       }
+      // What is sent while waiting goes nowhere.
+      this.cancelSend();
     } else if (problem && problem !== before) {
       this.note(this.explain(problem));
     } else if (this.status === null && !problem) {
-      this.note(this.kind === "serial" ? `waiting for ${this.port.name}` : "waiting for the probe");
+      this.note(`waiting for ${this.awaited()}`);
     }
     this.status = { state: "waiting", problem };
+  }
+
+  /** What the tab waits for while it is not connected: "COM6", "localhost:19021". */
+  private awaited(): string {
+    switch (this.kind) {
+      case "serial":
+        return this.port.name;
+      case "tcp":
+        return address(this.tcp);
+      default:
+        return "the probe";
+    }
   }
 
   /** When the program that has the port is ternima itself, says which tab has it. */

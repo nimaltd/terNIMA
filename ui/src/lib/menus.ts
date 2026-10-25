@@ -37,6 +37,8 @@ export type AppActions = {
   newRttSession(): void;
   /** Opens the dialog for a new SWO session. */
   newSwoSession(): void;
+  /** Opens the dialog for a new TCP session: a socket, Telnet or an RTT server. */
+  newTcpSession(): void;
   /** Opens the settings dialog of the tab in front. */
   sessionSettings(): void;
   /** Opens the app's settings. */
@@ -45,6 +47,10 @@ export type AppActions = {
   saveOutput(): void;
   /** Shows the log file, or the log folder, in the OS's file manager. */
   openLogFolder(): void;
+  /** Picks a file and sends it through the tab in front. */
+  sendFile(): void;
+  /** Opens the macros dialog. */
+  macros(): void;
 };
 
 const GITHUB = "https://github.com/nimaltd/ternima";
@@ -83,6 +89,11 @@ export function buildMenus(app: AppActions): Menu[] {
           run: app.newRttSession,
         },
         { label: "New SWO session...", run: app.newSwoSession },
+        {
+          label: "New TCP session...",
+          shortcut: keys("Ctrl+Shift+T", "Cmd+Shift+T"),
+          run: app.newTcpSession,
+        },
         null,
         {
           label: "Close tab",
@@ -165,10 +176,30 @@ export function buildMenus(app: AppActions): Menu[] {
     {
       title: "View",
       items: [
-        { label: "Terminal", checked: () => true, run: () => {} },
+        {
+          label: "Terminal",
+          enabled: hasTab,
+          checked: () => hasTab() && activeTab()?.view !== "hex",
+          run: () => activeTab()?.setView("terminal"),
+        },
+        {
+          label: "Hex",
+          shortcut: keys("Ctrl+Shift+H", "Cmd+Shift+H"),
+          enabled: hasTab,
+          checked: () => activeTab()?.view === "hex",
+          run: () => {
+            const tab = activeTab();
+            tab?.setView(tab.view === "hex" ? "terminal" : "hex");
+          },
+        },
         { label: "Log", phase: 3 },
-        { label: "Hex", phase: 3 },
         { label: "Plot", phase: 4 },
+        null,
+        {
+          label: "Send box",
+          checked: () => settings.send_box,
+          run: () => updateSettings({ send_box: !settings.send_box }),
+        },
         null,
         {
           label: "Split right",
@@ -275,11 +306,19 @@ export function buildMenus(app: AppActions): Menu[] {
     {
       title: "Tools",
       items: [
-        { label: "Send file...", phase: 3 },
-        { label: "Macros...", phase: 3 },
+        {
+          label: "Send file...",
+          enabled: () => connected() && activeTab()?.kind !== "swo" && !activeTab()?.sending,
+          run: app.sendFile,
+        },
+        {
+          label: "Stop sending the file",
+          enabled: () => activeTab()?.sending != null,
+          run: () => activeTab()?.cancelSend(),
+        },
+        { label: "Macros...", run: app.macros },
         { label: "Plotter", phase: 4 },
         null,
-        { label: "Flash firmware...", phase: 5 },
         { label: "Calculators", phase: 6 },
       ],
     },
@@ -310,6 +349,16 @@ export function itemForKey(menus: Menu[], event: KeyboardEvent): Item | null {
       if (item?.shortcut && matches(item.shortcut, event)) {
         return item;
       }
+    }
+  }
+  return null;
+}
+
+/** The macro a key press sends, counted from 0: Alt+1 to Alt+9, or Cmd+1 to Cmd+9 on macOS. */
+export function macroForKey(event: KeyboardEvent): number | null {
+  for (let number = 1; number <= 9; number++) {
+    if (matches(keys(`Alt+${number}`, `Cmd+${number}`), event)) {
+      return number - 1;
     }
   }
   return null;

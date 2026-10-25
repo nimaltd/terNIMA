@@ -17,11 +17,13 @@ The name is "terminal" with my name, Nima, in it: ter-NIMA.
 - Serial ports with every option: any baud rate, data bits, parity, stop bits, flow control, DTR, RTS and break
 - SEGGER RTT through CMSIS-DAP, J-Link and ST-Link probes, with no vendor software needed
 - RTT over TCP while your IDE is debugging, from J-Link or OpenOCD
+- TCP and Telnet sessions, for devices and serial bridges on the network
+- A send box with history, macros on Alt+1 to Alt+9, hex sending, and sending a file
 - A full VT100 / xterm terminal with 256 and 24-bit color, so the Zephyr shell works as it should
 - Zephyr logs you can filter by level and module
 - Log, hex and plot views of the same data, side by side if you like
 - A live plotter and dashboard, Arduino Serial Plotter format included
-- Probe tools: flash firmware, watch variables live, decode HardFaults and crash addresses from your ELF
+- Probe tools: watch variables live, decode HardFaults and crash addresses from your ELF
 - Remembers everything when you close it, finds your device again even if its COM number changed, and reconnects when you plug it back in
 
 ---

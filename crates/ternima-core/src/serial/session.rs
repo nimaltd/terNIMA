@@ -291,11 +291,13 @@ impl Worker {
                 Err(TryRecvError::Disconnected) => return Some(Ended::Closed),
             };
             match command {
-                Command::Write(data) => {
-                    if link.write_all(&data).is_err() {
-                        return Some(Ended::Lost);
-                    }
-                }
+                Command::Write(data) => match link.write_all(&data) {
+                    Ok(()) => {}
+                    // The device takes nothing, as when flow control holds it:
+                    // the rest is dropped, and the port stays open.
+                    Err(error) if error.kind() == ErrorKind::TimedOut => {}
+                    Err(_) => return Some(Ended::Lost),
+                },
                 Command::Dtr(on) => {
                     self.config.dtr = on;
                     let _ = link.set_dtr(on);
@@ -404,6 +406,8 @@ mod tests {
         lines: Mutex<ModemLines>,
         dtr: Mutex<Option<bool>>,
         plugged: Mutex<bool>,
+        /// Writes take nothing, as when flow control holds the port.
+        stalled: Mutex<bool>,
     }
 
     /// Pretend ports, which tests plug in and pull out.
@@ -493,6 +497,9 @@ mod tests {
         }
 
         fn write_all(&mut self, data: &[u8]) -> io::Result<()> {
+            if *self.0.stalled.lock().unwrap() {
+                return Err(io::Error::new(ErrorKind::TimedOut, "stalled"));
+            }
             self.0.written.lock().unwrap().extend_from_slice(data);
             Ok(())
         }
@@ -591,6 +598,28 @@ mod tests {
         session.write(b"help\r".to_vec());
         thread::sleep(Duration::from_millis(50));
         assert_eq!(*device.written.lock().unwrap(), b"help\r");
+    }
+
+    #[test]
+    fn a_port_that_takes_nothing_stays_open() {
+        let system = Arc::new(FakeSystem::default());
+        let device = system.plug("COM6", "AAA");
+        let (session, events) = start(&system, system.id("COM6"));
+        connected(&events);
+
+        *device.stalled.lock().unwrap() = true;
+        session.write(b"lost in flow control".to_vec());
+        thread::sleep(Duration::from_millis(100));
+        assert!(
+            events
+                .try_iter()
+                .all(|event| !matches!(event, Event::State(SessionState::Waiting { .. })))
+        );
+
+        *device.stalled.lock().unwrap() = false;
+        session.write(b"ok".to_vec());
+        thread::sleep(Duration::from_millis(50));
+        assert_eq!(*device.written.lock().unwrap(), b"ok");
     }
 
     #[test]

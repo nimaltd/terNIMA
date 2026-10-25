@@ -6,6 +6,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::net::TcpConfig;
 use crate::rtt::RttConfig;
 use crate::serial::{PortId, SerialConfig};
 use crate::swo::SwoConfig;
@@ -33,6 +34,10 @@ pub struct TerminalOptions {
     pub local_echo: bool,
     /// Starts a new line on a received LF alone, for devices that send LF without CR.
     pub lf_is_newline: bool,
+    /// Starts a new line when data comes after a pause this long, in ms, so
+    /// each message starts on its own line; 0 never does. Only what is shown
+    /// changes, in the terminal and in the hex view.
+    pub pause_ms: u32,
 }
 
 impl Default for TerminalOptions {
@@ -41,6 +46,7 @@ impl Default for TerminalOptions {
             enter: LineEnding::Cr,
             local_echo: false,
             lf_is_newline: true,
+            pause_ms: 0,
         }
     }
 }
@@ -53,7 +59,60 @@ pub enum SessionKind {
     Serial,
     Rtt,
     Swo,
+    /// A TCP connection: a plain socket, Telnet, or an RTT server.
+    Tcp,
 }
+
+/// What a tab shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum View {
+    /// The terminal, with colors and the cursor moving as the device says.
+    #[default]
+    Terminal,
+    /// Every byte sent and received in hex, 16 to a line.
+    Hex,
+}
+
+/// How the hex view breaks its lines, besides the pause in [`TerminalOptions`].
+/// It only changes what is shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HexView {
+    /// Bytes on a full line: 8, 16 or 32.
+    pub width: u8,
+    /// A byte that ends its line, such as 0x0A for LF or a frame's end byte.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_byte: Option<u8>,
+}
+
+impl Default for HexView {
+    fn default() -> Self {
+        Self {
+            width: 16,
+            end_byte: None,
+        }
+    }
+}
+
+/// The line widths the hex view offers.
+const HEX_WIDTHS: [u8; 3] = [8, 16, 32];
+
+/// A line sent from the send box, kept so ↑ brings it back.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SentLine {
+    pub text: String,
+    /// Whether `text` is hex digits rather than text.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub hex: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
+/// The most sent lines each tab keeps.
+pub const HISTORY_MAX: usize = 100;
 
 /// One tab: a session and how it is set up. Only the settings of its kind
 /// are written.
@@ -76,8 +135,17 @@ pub struct SessionSetup {
     pub rtt: RttConfig,
     #[serde(default, skip_serializing_if = "is_default")]
     pub swo: SwoConfig,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub tcp: TcpConfig,
     #[serde(default)]
     pub terminal: TerminalOptions,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub view: View,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub hex_view: HexView,
+    /// The lines sent from the send box, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<SentLine>,
 }
 
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {
@@ -187,9 +255,17 @@ impl Workspace {
     }
 
     /// The same workspace with the tab in front pointing at a tab that exists,
-    /// a split view only of two tabs that exist, and without a window size too
-    /// small to be real.
+    /// a split view only of two tabs that exist, no more than [`HISTORY_MAX`]
+    /// sent lines a tab, hex lines of a width offered, and without a window
+    /// size too small to be real.
     pub fn checked(mut self) -> Self {
+        for session in &mut self.sessions {
+            let extra = session.history.len().saturating_sub(HISTORY_MAX);
+            session.history.drain(..extra);
+            if !HEX_WIDTHS.contains(&session.hex_view.width) {
+                session.hex_view.width = HexView::default().width;
+            }
+        }
         self.active = self.active.min(self.sessions.len().saturating_sub(1));
         let count = self.sessions.len();
         self.split = self
@@ -219,6 +295,7 @@ mod tests {
     use std::fs;
 
     use super::*;
+    use crate::net::Protocol;
     use crate::serial::UsbId;
     use crate::tomlfile::tests::TempDir;
 
@@ -244,7 +321,11 @@ mod tests {
             },
             rtt: RttConfig::default(),
             swo: SwoConfig::default(),
+            tcp: TcpConfig::default(),
             terminal: TerminalOptions::default(),
+            view: View::Terminal,
+            hex_view: HexView::default(),
+            history: Vec::new(),
         }
     }
 
@@ -262,7 +343,25 @@ mod tests {
                 ..RttConfig::default()
             },
             swo: SwoConfig::default(),
+            tcp: TcpConfig::default(),
             terminal: TerminalOptions::default(),
+            view: View::Terminal,
+            hex_view: HexView::default(),
+            history: Vec::new(),
+        }
+    }
+
+    fn jlink_tab() -> SessionSetup {
+        SessionSetup {
+            name: "J-Link RTT".into(),
+            kind: SessionKind::Tcp,
+            tcp: TcpConfig {
+                port: 19021,
+                protocol: Protocol::Jlink,
+                ..TcpConfig::default()
+            },
+            rtt: RttConfig::default(),
+            ..rtt_tab()
         }
     }
 
@@ -290,6 +389,100 @@ mod tests {
             "{text}"
         );
         assert!(!rtt.contains("baud"), "{text}");
+    }
+
+    #[test]
+    fn hex_view_and_sent_lines_are_kept() {
+        let dir = TempDir::new("workspace-history");
+        let path = dir.file("workspace.toml");
+        let line = |text: &str, hex| SentLine {
+            text: text.into(),
+            hex,
+        };
+        let workspace = Workspace {
+            active: 0,
+            window: None,
+            split: None,
+            sessions: vec![SessionSetup {
+                view: View::Hex,
+                hex_view: HexView {
+                    width: 32,
+                    end_byte: Some(0x7E),
+                },
+                terminal: TerminalOptions {
+                    pause_ms: 50,
+                    ..TerminalOptions::default()
+                },
+                history: vec![line("help", false), line("AA 55", true)],
+                ..nucleo()
+            }],
+        };
+        workspace.save(&path).unwrap();
+        assert_eq!(Workspace::load(&path), workspace);
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("view = \"hex\""), "{text}");
+        assert!(text.contains("end_byte = 126"), "{text}");
+        assert!(text.contains("pause_ms = 50"), "{text}");
+    }
+
+    #[test]
+    fn hex_lines_have_a_width_offered() {
+        let workspace = Workspace {
+            sessions: vec![SessionSetup {
+                hex_view: HexView {
+                    width: 13,
+                    ..HexView::default()
+                },
+                ..nucleo()
+            }],
+            ..Workspace::default()
+        }
+        .checked();
+        assert_eq!(workspace.sessions[0].hex_view.width, 16);
+    }
+
+    #[test]
+    fn only_the_newest_sent_lines_are_kept() {
+        let history: Vec<SentLine> = (0..HISTORY_MAX + 5)
+            .map(|n| SentLine {
+                text: n.to_string(),
+                hex: false,
+            })
+            .collect();
+        let workspace = Workspace {
+            sessions: vec![SessionSetup {
+                history,
+                ..nucleo()
+            }],
+            ..Workspace::default()
+        }
+        .checked();
+        let kept = &workspace.sessions[0].history;
+        assert_eq!(kept.len(), HISTORY_MAX);
+        assert_eq!(kept[0].text, "5");
+    }
+
+    #[test]
+    fn tcp_tabs_are_kept_with_their_protocol() {
+        let dir = TempDir::new("workspace-tcp");
+        let path = dir.file("workspace.toml");
+        let workspace = Workspace {
+            active: 0,
+            window: None,
+            split: None,
+            sessions: vec![jlink_tab()],
+        };
+        workspace.save(&path).unwrap();
+        assert_eq!(Workspace::load(&path), workspace);
+
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains("kind = \"tcp\"")
+                && text.contains("protocol = \"jlink\"")
+                && text.contains("port = 19021"),
+            "{text}"
+        );
+        assert!(!text.contains("chip"), "{text}");
     }
 
     #[test]

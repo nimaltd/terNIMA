@@ -126,3 +126,48 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Startup settings: whether ternima reopens the tabs from last time,
   connects the ones that were connected, and opens the window where it was.
   All three are on unless turned off in Settings.
+- TCP sessions (File > New TCP session, Ctrl+Shift+T, or the + button), to
+  a host and port: plain bytes both ways for a device or a serial bridge on
+  the network, or Telnet, whose option talk is answered and kept out of the
+  terminal. A session waits for the other end and connects again when it
+  comes back, with a marker line, the same as a serial port.
+- RTT through J-Link or OpenOCD, from the + button: ternima reads RTT from
+  the server J-Link's software (port 19021) or OpenOCD (`rtt server
+  start`) opens, so a debugger can keep the probe. J-Link is asked for
+  another RTT channel when one is chosen. When a debugger has the probe,
+  the RTT dialog's message points here.
+- `ternima-core` has a `net` module for these sessions, tested against
+  servers on the same machine.
+- A send box under each terminal (View > Send box): type a whole line and
+  send it at once, as text or as hex bytes such as `AA 55 01`. Text can
+  hold `\r`, `\n`, `\t`, `\e`, `\0` and `\xHH`. Enter sends the tab's line
+  ending after it. ↑ and ↓ bring back what was sent; each tab keeps its
+  last 100 lines in `workspace.toml`.
+- Macros (Tools > Macros): named commands, text or hex, shown as buttons
+  under the send box and sent with Alt+1 to Alt+9 (Cmd+1 to Cmd+9 on
+  macOS). They are kept in `settings.toml`.
+- Tools > Send file sends a file through the tab, in pieces paced for the
+  link (the baud rate for a serial port), with its progress and a Stop
+  button in the status bar.
+- A hex view (View > Hex, Ctrl+Shift+H, or the Hex button): every byte
+  sent (TX) and received (RX), with offsets and the bytes as characters.
+  A line holds 8, 16 or 32 bytes, and a new one starts when the direction
+  changes or after a chosen byte such as `0A`. The terminal keeps
+  everything while the hex view is shown.
+- "New line after" in the toolbar: data that comes after a pause of 50 ms
+  to 2 s starts on a new line, in the terminal and in the hex view, for
+  devices that send messages without line endings. Not after what was just
+  typed or sent, so a shell's echo stays on its line. Only the view
+  changes; logs keep the bytes as they came.
+
+### Removed
+
+- Flash programming is no longer planned, and its menu item is gone.
+
+### Fixed
+
+- A serial port no longer seems unplugged when a long write takes more
+  than its short timeout, as on Windows: a long paste or a file went out
+  as one piece and the port was opened again. A port that takes no bytes
+  at all for 2 s, as when flow control holds it, drops the rest and stays
+  open.

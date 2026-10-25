@@ -1,5 +1,6 @@
 // How a tab's state is shown: a colored dot and a few words.
 
+import { address, protocolText } from "./net";
 import { channelText, hexAddress, hzText } from "./probe";
 import type { Tab } from "./tabs.svelte";
 
@@ -16,15 +17,38 @@ export function stateText(tab: Tab): string {
     case "connected":
       if (tab.kind === "rtt") return rttText(tab);
       if (tab.kind === "swo") return swoText(tab);
+      if (tab.kind === "tcp") return `Connected to ${tab.target}, ${protocolText(tab.tcp)}`;
       return `Connected to ${tab.target}`;
     case "problem":
       return tab.problem ?? "";
     case "waiting":
-      return tab.kind === "serial"
-        ? `Waiting for ${tab.port.name}: plug it in and ternima connects by itself`
-        : "Waiting for the probe: plug it in and ternima connects by itself";
+      return waitingText(tab);
     case "stopped":
       return "Not connected";
+  }
+}
+
+/** What the tab waits for, and what brings it. */
+function waitingText(tab: Tab): string {
+  switch (tab.kind) {
+    case "serial":
+      return `Waiting for ${tab.port.name}: plug it in and ternima connects by itself`;
+    case "tcp":
+      return tcpWaitingText(tab);
+    default:
+      return "Waiting for the probe: plug it in and ternima connects by itself";
+  }
+}
+
+function tcpWaitingText(tab: Tab): string {
+  const at = address(tab.tcp);
+  switch (tab.tcp.protocol) {
+    case "jlink":
+      return `Waiting for J-Link's RTT server at ${at}: connect J-Link's software to the chip`;
+    case "openocd":
+      return `Waiting for OpenOCD's RTT server at ${at}: start it with rtt server start`;
+    default:
+      return `Waiting for ${at} to answer: ternima connects by itself`;
   }
 }
 

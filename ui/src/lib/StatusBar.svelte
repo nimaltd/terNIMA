@@ -30,6 +30,15 @@
     <span class="divider"></span>
     <span title="Bytes received">RX {bytes(tab.rx)}</span>
     <span title="Bytes sent">TX {bytes(tab.tx)}</span>
+    {#if tab.sending}
+      {@const sending = tab.sending}
+      <span class="divider"></span>
+      <span class="sending" title={`${bytes(sending.sent)} of ${bytes(sending.total)}`}>
+        Sending {sending.name}
+        {sending.total > 0 ? `${Math.floor((100 * sending.sent) / sending.total)}%` : ""}
+      </span>
+      <button class="stop" title="Stop sending the file" onclick={() => tab.cancelSend()}>Stop</button>
+    {/if}
     {#if tab.logPath}
       <span class="divider"></span>
       <button
@@ -98,6 +107,25 @@
 
   .log:hover {
     text-decoration: underline;
+  }
+
+  .sending {
+    color: var(--text);
+  }
+
+  .stop {
+    padding: 0 6px;
+    font: inherit;
+    color: var(--muted);
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: default;
+  }
+
+  .stop:hover {
+    color: var(--text);
+    background: var(--hover);
   }
 
   .spacer {

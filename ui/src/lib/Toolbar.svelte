@@ -1,6 +1,7 @@
 <script lang="ts">
+  import { address, protocolText } from "./net";
   import { channelText, hzText } from "./probe";
-  import { summary, type LineEnding, type ModemLines } from "./serial";
+  import { PAUSES, pauseText, summary, type LineEnding, type ModemLines } from "./serial";
   import { changed, type Tab } from "./tabs.svelte";
   import { activeTerminal } from "./terminal-actions";
 
@@ -108,6 +109,12 @@
     >
       Reset target
     </button>
+  {:else if tab.kind === "tcp"}
+    <button class="btn target" title="Connection settings" onclick={onsettings}>
+      <span class="mono">{address(tab.tcp)}</span>
+      <span class="muted">{protocolText(tab.tcp)}</span>
+      <span class="muted">▾</span>
+    </button>
   {:else}
     <button class="btn target" title="SWO settings" onclick={onsettings}>
       <span class="mono">{tab.swo.chip || "No chip"}</span>
@@ -159,6 +166,31 @@
     <span class="dot"></span>
     Log
   </button>
+
+  <button
+    class="btn small view"
+    class:on={tab.view === "hex"}
+    title="Show every byte sent and received in hex"
+    onclick={() => act(() => tab.setView(tab.view === "hex" ? "terminal" : "hex"))}
+  >
+    Hex
+  </button>
+
+  <label
+    class="option"
+    title="Starts a new line when data comes after a pause this long, so each message starts on its own line. Not after what you type, so a shell's echo stays on its line. Only the view changes."
+  >
+    New line after
+    <select
+      class="field"
+      value={String(tab.terminal.pause_ms)}
+      onchange={(event) => act(() => tab.setPause(Number(event.currentTarget.value)))}
+    >
+      {#each [...new Set([...PAUSES, tab.terminal.pause_ms])].sort((a, b) => a - b) as ms (ms)}
+        <option value={String(ms)}>{pauseText(ms)}</option>
+      {/each}
+    </select>
+  </label>
 
   {#if tab.kind === "swo"}
     <span class="muted" title="SWO only comes from the chip">Output only</span>
@@ -263,6 +295,12 @@
   .log.on .dot {
     background: var(--bad);
     border-color: var(--bad);
+  }
+
+  .view.on {
+    color: var(--text);
+    background: var(--accent-soft);
+    border-color: var(--accent);
   }
 
   .leds {

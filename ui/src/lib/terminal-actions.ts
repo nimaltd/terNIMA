@@ -18,9 +18,16 @@ export interface TerminalActions {
 
 let active: TerminalActions | null = null;
 
-/** Called by a terminal when it opens, and with `null` when it closes. */
+/** Called by a terminal when it comes on screen. */
 export function setActiveTerminal(terminal: TerminalActions | null): void {
   active = terminal;
+}
+
+/** Called by a terminal when it closes; another one may have taken over already. */
+export function clearActiveTerminal(terminal: TerminalActions): void {
+  if (active === terminal) {
+    active = null;
+  }
 }
 
 /** The terminal the menus act on, if there is one. */

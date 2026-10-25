@@ -99,7 +99,8 @@ fn find_and_open(id: Option<&ProbeId>, speed_khz: u32) -> Result<Probe, Option<S
 
     let mut probe = info.open().map_err(|error| {
         Some(format!(
-            "Could not open {}: {error}. If a debugger has it open, close that first.",
+            "Could not open {}: {error}. If a debugger has it open, close that first, \
+             or read RTT through the debugger's RTT server: + > RTT through J-Link or OpenOCD.",
             info.identifier
         ))
     })?;

@@ -2,6 +2,7 @@
 // the commands that reach them.
 
 import { invoke } from "@tauri-apps/api/core";
+import type { NetState, TcpConfig } from "./net";
 import type { ChannelInfo, RttConfig, RttState, SwoConfig, SwoState } from "./probe";
 
 export type UsbId = {
@@ -42,9 +43,27 @@ export type TerminalOptions = {
   enter: LineEnding;
   local_echo: boolean;
   lf_is_newline: boolean;
+  /** Starts a new line when data comes after a pause this long, in ms; 0 never does. */
+  pause_ms: number;
 };
 
-export type SessionKind = "serial" | "rtt" | "swo";
+export type SessionKind = "serial" | "rtt" | "swo" | "tcp";
+
+/** What a tab shows: the terminal, or every byte in hex. */
+export type View = "terminal" | "hex";
+
+/** How the hex view breaks its lines, besides the tab's pause. It only changes what is shown. */
+export type HexView = {
+  /** Bytes on a full line: 8, 16 or 32. */
+  width: number;
+  /** A byte that ends its line, such as 0x0A for LF, or null for none. */
+  end_byte?: number | null;
+};
+
+export const DEFAULT_HEX_VIEW: HexView = { width: 16, end_byte: null };
+
+/** A line sent from the send box, kept so ↑ brings it back. */
+export type SentLine = { text: string; hex?: boolean };
 
 /** One tab as workspace.toml keeps it. Only the settings of its kind are there. */
 export type SessionSetup = {
@@ -57,7 +76,12 @@ export type SessionSetup = {
   serial?: SerialConfig;
   rtt?: RttConfig;
   swo?: SwoConfig;
+  tcp?: TcpConfig;
   terminal: TerminalOptions;
+  view?: View;
+  hex_view?: HexView;
+  /** The lines sent from the send box, oldest first. */
+  history?: SentLine[];
 };
 
 export type SplitDirection = "right" | "down";
@@ -86,6 +110,7 @@ export type SessionEvent =
   | ({ kind: "rtt_state" } & RttState)
   | { kind: "channels"; up: ChannelInfo[]; down: ChannelInfo[] }
   | ({ kind: "swo_state" } & SwoState)
+  | ({ kind: "tcp_state" } & NetState)
   | { kind: "overflow"; count: number }
   | { kind: "log_stopped"; problem: string };
 
@@ -103,7 +128,22 @@ export const DEFAULT_TERMINAL: TerminalOptions = {
   enter: "cr",
   local_echo: false,
   lf_is_newline: true,
+  pause_ms: 0,
 };
+
+/**
+ * The pauses offered for starting a new line, in ms; 0 is never. Received
+ * bytes reach the UI in batches about every 16 ms, plus up to 10 ms of read
+ * wait, so in a steady stream batches come up to about 26 ms apart: a
+ * shorter pause would break lines in the middle of it.
+ */
+export const PAUSES = [0, 50, 100, 200, 500, 1000, 2000];
+
+/** "never", "50 ms", "1 s" */
+export function pauseText(ms: number): string {
+  if (ms === 0) return "never";
+  return ms >= 1000 ? `${ms / 1000} s` : `${ms} ms`;
+}
 
 /** Baud rates offered in lists. Any other number can be typed. */
 export const BAUD_RATES = [

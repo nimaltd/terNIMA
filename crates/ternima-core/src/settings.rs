@@ -75,14 +75,36 @@ impl Default for StartupSettings {
     }
 }
 
+/// A command kept for one click, or Alt with its number.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Macro {
+    pub name: String,
+    /// Text with escapes such as `\r`, or hex digits; see [`crate::send::encode`].
+    pub text: String,
+    #[serde(default)]
+    pub hex: bool,
+    /// Sends the tab's Enter after the text.
+    #[serde(default = "yes")]
+    pub enter: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
 /// Everything in `settings.toml`. A value missing from the file takes its default.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub theme: Theme,
     pub font_size: u8,
+    /// Shows a line under each terminal to type a whole command and send it at once.
+    pub send_box: bool,
     pub startup: StartupSettings,
     pub log: LogSettings,
+    /// The macros every tab can send, in the order they are shown.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub macros: Vec<Macro>,
 }
 
 impl Default for Settings {
@@ -90,8 +112,10 @@ impl Default for Settings {
         Self {
             theme: Theme::System,
             font_size: FONT_SIZE_DEFAULT,
+            send_box: true,
             startup: StartupSettings::default(),
             log: LogSettings::default(),
+            macros: Vec::new(),
         }
     }
 }
@@ -137,6 +161,7 @@ mod tests {
         let settings = Settings {
             theme: Theme::Light,
             font_size: 18,
+            send_box: false,
             startup: StartupSettings {
                 restore_tabs: true,
                 reconnect: false,
@@ -148,10 +173,39 @@ mod tests {
                 format: LogFormat::Raw,
                 timestamps: false,
             },
+            macros: vec![
+                Macro {
+                    name: "Reboot".into(),
+                    text: "kernel reboot cold".into(),
+                    hex: false,
+                    enter: true,
+                },
+                Macro {
+                    name: "Ping".into(),
+                    text: "AA 55 01".into(),
+                    hex: true,
+                    enter: false,
+                },
+            ],
         };
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path), settings);
         assert!(!path.with_extension("toml.tmp").exists());
+    }
+
+    #[test]
+    fn a_macro_sends_enter_unless_told_not_to() {
+        let settings: Settings =
+            toml::from_str("[[macros]]\nname = \"Help\"\ntext = \"help\"\n").unwrap();
+        assert_eq!(
+            settings.macros,
+            [Macro {
+                name: "Help".into(),
+                text: "help".into(),
+                hex: false,
+                enter: true,
+            }]
+        );
     }
 
     #[test]

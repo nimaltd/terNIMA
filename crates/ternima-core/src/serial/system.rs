@@ -1,7 +1,7 @@
 //! The operating system's serial ports, behind a trait so tests can use pretend ones.
 
-use std::io::{self, Read, Write};
-use std::time::Duration;
+use std::io::{self, ErrorKind, Read, Write};
+use std::time::{Duration, Instant};
 
 use super::config::{FlowControl, SerialConfig};
 use super::ports::{PortInfo, list_ports};
@@ -9,6 +9,10 @@ use super::session::ModemLines;
 
 /// How long one read waits for data before it gives up.
 const READ_WAIT: Duration = Duration::from_millis(10);
+
+/// How long a write goes on while the port takes no bytes at all, as when
+/// flow control holds it, before the rest is given up.
+const WRITE_STALL: Duration = Duration::from_secs(2);
 
 /// Lists ports and opens them.
 pub trait SerialSystem: Send + Sync + 'static {
@@ -21,6 +25,8 @@ pub trait SerialLink: Send {
     /// Reads what has arrived, waiting a short while. Gives `ErrorKind::TimedOut`
     /// when nothing came, and any other error when the port is gone.
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize>;
+    /// Writes everything. Gives `ErrorKind::TimedOut` when the port stopped
+    /// taking bytes, with the port still there, and any other error when it is gone.
     fn write_all(&mut self, data: &[u8]) -> io::Result<()>;
     fn set_dtr(&mut self, on: bool) -> io::Result<()>;
     fn set_rts(&mut self, on: bool) -> io::Result<()>;
@@ -57,8 +63,33 @@ impl SerialLink for SystemLink {
         self.0.read(buf)
     }
 
-    fn write_all(&mut self, data: &[u8]) -> io::Result<()> {
-        self.0.write_all(data)?;
+    fn write_all(&mut self, mut data: &[u8]) -> io::Result<()> {
+        // The port's short timeout is meant for reads, but on Windows it limits
+        // each write too: a write then takes only part, or nothing yet. So this
+        // goes on for as long as the port keeps taking bytes.
+        let mut taken = Instant::now();
+        while !data.is_empty() {
+            match self.0.write(data) {
+                Ok(0) => {}
+                Ok(count) => {
+                    data = &data[count..];
+                    taken = Instant::now();
+                    continue;
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        ErrorKind::TimedOut | ErrorKind::WouldBlock | ErrorKind::Interrupted
+                    ) => {}
+                Err(error) => return Err(error),
+            }
+            if taken.elapsed() >= WRITE_STALL {
+                return Err(io::Error::new(
+                    ErrorKind::TimedOut,
+                    "the port took no bytes for 2 s",
+                ));
+            }
+        }
         self.0.flush()
     }
 

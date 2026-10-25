@@ -25,12 +25,25 @@ export type StartupSettings = {
   restore_window: boolean;
 };
 
+/** A command kept for one click, or Alt with its number. */
+export type Macro = {
+  name: string;
+  /** Text with escapes such as \r, or hex digits. */
+  text: string;
+  hex: boolean;
+  /** Sends the tab's Enter after the text. */
+  enter: boolean;
+};
+
 /** The same fields as `Settings` in ternima-core's settings.rs. */
 export type Settings = {
   theme: ThemeChoice;
   font_size: number;
+  /** Shows a line under each terminal to type a whole command and send it at once. */
+  send_box: boolean;
   startup: StartupSettings;
   log: LogSettings;
+  macros: Macro[];
 };
 
 /** Terminal text size limits, the same as in settings.rs. */
@@ -42,8 +55,10 @@ export const FONT_SIZE_DEFAULT = 14;
 export const settings: Settings = $state({
   theme: "system",
   font_size: FONT_SIZE_DEFAULT,
+  send_box: true,
   startup: { restore_tabs: true, reconnect: true, restore_window: true },
   log: { new_tabs: false, folder: "", format: "text", timestamps: true },
+  macros: [],
 });
 
 /** Reads the settings from settings.toml, through the Rust side. */
