@@ -31,7 +31,7 @@
     onmousedown={(event) => event.stopPropagation()}
   >
     <img src={icon} alt="" width="80" height="80" />
-    <h1 id="about-title">ternima</h1>
+    <h1 id="about-title">ter<span class="nima">NIMA</span></h1>
     <p class="version">Version {version}</p>
     <p>A serial, RTT and Zephyr terminal for embedded developers.</p>
     <p class="muted">
@@ -70,6 +70,15 @@
     margin: 8px 0 2px;
     font-size: 20px;
     font-weight: 600;
+  }
+
+  /* The same orange as NIMA in the welcome logo. */
+  .nima {
+    color: #fb923c;
+  }
+
+  :global([data-theme="light"]) .nima {
+    color: #ea580c;
   }
 
   p {

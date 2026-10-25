@@ -126,7 +126,7 @@ export function buildMenus(app: AppActions): Menu[] {
         { label: "Settings...", shortcut: keys("Ctrl+,", "Cmd+,"), run: app.settings },
         null,
         isMac
-          ? { label: "Quit ternima", shortcut: "Cmd+Q", run: app.exit }
+          ? { label: "Quit terNIMA", shortcut: "Cmd+Q", run: app.exit }
           : { label: "Exit", run: app.exit },
       ],
     },
@@ -325,10 +325,10 @@ export function buildMenus(app: AppActions): Menu[] {
     {
       title: "Help",
       items: [
-        { label: "ternima on GitHub", run: () => void openUrl(GITHUB) },
+        { label: "terNIMA on GitHub", run: () => void openUrl(GITHUB) },
         { label: "Report a bug...", run: () => void openUrl(`${GITHUB}/issues/new`) },
         null,
-        { label: "About ternima", run: app.about },
+        { label: "About terNIMA", run: app.about },
       ],
     },
   ];

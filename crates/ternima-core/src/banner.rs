@@ -9,23 +9,37 @@ use serde::Deserialize;
 
 use crate::VERSION;
 
-/// "TERNIMA" in block letters with a shadow edge: one entry per letter, six rows each.
-///
-/// `█` is the face of a letter and the line characters are its shadow, drawn
-/// in a darker color so the letters stand out from the screen.
+// The logo is "terNIMA": a small "ter" in teal, then "NIMA" in big orange
+// block letters, both with a darker shadow, on six lines of text.
+
+/// "ter" as pixels, drawn with half blocks: two pixel rows make one line of
+/// text. 'X' is a pixel. Its shadow, a pixel down and to the right, is
+/// worked out as it is drawn.
+const TER: [&str; 6] = [
+    ".X.............",
+    ".X....XXX..X.XX",
+    "XXXX.X...X.XX..",
+    ".X...XXXXX.X...",
+    ".X...X.....X...",
+    "..XX..XXXX.X...",
+];
+
+/// The pixel row of the logo where "ter" starts, so it stands on the same
+/// line as "NIMA", whose letters end on the fifth line of text.
+const TER_TOP: usize = 4;
+
+/// The columns "ter" takes, its shadow and a space before "NIMA" included.
+const TER_WIDTH: usize = 17;
+
+/// "NIMA" in block letters with a shadow edge: one entry per letter, six rows
+/// each. `█` is the face of a letter and the line characters are its shadow.
 #[rustfmt::skip]
-const LOGO: [[&str; 6]; 7] = [
-    ["████████╗", "╚══██╔══╝", "   ██║   ", "   ██║   ", "   ██║   ", "   ╚═╝   "],
-    ["███████╗", "██╔════╝", "█████╗  ", "██╔══╝  ", "███████╗", "╚══════╝"],
-    ["██████╗ ", "██╔══██╗", "██████╔╝", "██╔══██╗", "██║  ██║", "╚═╝  ╚═╝"],
+const NIMA: [[&str; 6]; 4] = [
     ["███╗   ██╗", "████╗  ██║", "██╔██╗ ██║", "██║╚██╗██║", "██║ ╚████║", "╚═╝  ╚═══╝"],
     ["██╗", "██║", "██║", "██║", "██║", "╚═╝"],
     ["███╗   ███╗", "████╗ ████║", "██╔████╔██║", "██║╚██╔╝██║", "██║ ╚═╝ ██║", "╚═╝     ╚═╝"],
     [" █████╗ ", "██╔══██╗", "███████║", "██╔══██║", "██║  ██║", "╚═╝  ╚═╝"],
 ];
-
-/// The letters of "nima" at the end of "ternima", drawn in orange.
-const NIMA: std::ops::Range<usize> = 3..7;
 
 const RESET: &str = "\x1b[0m";
 const CYAN: &str = "\x1b[36m";
@@ -139,35 +153,94 @@ pub fn welcome_banner(background: Background) -> String {
     out
 }
 
-/// Writes the logo, with "nima" in orange and every shadow in a darker color.
+/// Writes the logo: the small "ter" in teal, "NIMA" in orange, and every
+/// shadow in a darker color.
 fn push_logo(out: &mut String, colors: &LogoColors) {
-    for row in 0..LOGO[0].len() {
+    for row in 0..NIMA[0].len() {
         out.push_str("  ");
-        // The color now set, so an escape is only written where it changes.
-        let mut current = None;
-        for (i, letter) in LOGO.iter().enumerate() {
-            let (face, shadow) = if NIMA.contains(&i) {
-                (colors.orange, colors.orange_shadow)
-            } else {
-                (colors.teal, colors.teal_shadow)
+        let mut pen = Pen::default();
+        for col in 0..TER_WIDTH {
+            let pixel = |at: usize| match ter_pixel(at, col) {
+                Pixel::Face => Some(colors.teal),
+                Pixel::Shadow => Some(colors.teal_shadow),
+                Pixel::Empty => None,
             };
+            match (pixel(2 * row), pixel(2 * row + 1)) {
+                (None, None) => pen.put(out, ' ', None, None),
+                (Some(top), None) => pen.put(out, '▀', Some(top), None),
+                (None, Some(bottom)) => pen.put(out, '▄', Some(bottom), None),
+                (Some(top), Some(bottom)) if top == bottom => pen.put(out, '█', Some(top), None),
+                // Two colors in one cell: the top half drawn, the bottom half as background.
+                (Some(top), Some(bottom)) => pen.put(out, '▀', Some(top), Some(bottom)),
+            }
+        }
+        for letter in &NIMA {
             for ch in letter[row].chars() {
                 let color = match ch {
                     ' ' => None,
-                    '█' => Some(face),
-                    _ => Some(shadow),
+                    '█' => Some(colors.orange),
+                    _ => Some(colors.orange_shadow),
                 };
-                if let Some((r, g, b)) = color
-                    && current != color
-                {
-                    let _ = write!(out, "\x1b[38;2;{r};{g};{b}m");
-                    current = color;
-                }
-                out.push(ch);
+                pen.put(out, ch, color, None);
             }
         }
         out.push_str(RESET);
         out.push_str("\r\n");
+    }
+}
+
+/// One pixel of the small "ter".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Pixel {
+    Empty,
+    Face,
+    Shadow,
+}
+
+/// The pixel of the small "ter" at a pixel row of the logo and a column.
+fn ter_pixel(row: usize, col: usize) -> Pixel {
+    let face = |row: usize, col: usize| {
+        row.checked_sub(TER_TOP)
+            .and_then(|row| TER.get(row))
+            .and_then(|line| line.as_bytes().get(col))
+            == Some(&b'X')
+    };
+    if face(row, col) {
+        Pixel::Face
+    } else if row > 0 && col > 0 && face(row - 1, col - 1) {
+        Pixel::Shadow
+    } else {
+        Pixel::Empty
+    }
+}
+
+/// Writes characters in colors, with an escape only where a color changes.
+#[derive(Default)]
+struct Pen {
+    fg: Option<Rgb>,
+    bg: Option<Rgb>,
+}
+
+impl Pen {
+    /// Writes `ch` in `fg` on `bg`; `None` keeps the color for a space, and
+    /// is the terminal's own background for `bg`.
+    fn put(&mut self, out: &mut String, ch: char, fg: Option<Rgb>, bg: Option<Rgb>) {
+        if let Some((r, g, b)) = fg
+            && self.fg != fg
+        {
+            let _ = write!(out, "\x1b[38;2;{r};{g};{b}m");
+            self.fg = fg;
+        }
+        if self.bg != bg {
+            match bg {
+                Some((r, g, b)) => {
+                    let _ = write!(out, "\x1b[48;2;{r};{g};{b}m");
+                }
+                None => out.push_str("\x1b[49m"),
+            }
+            self.bg = bg;
+        }
+        out.push(ch);
     }
 }
 
@@ -252,10 +325,34 @@ mod tests {
     #[test]
     fn logo_letters_keep_their_width_on_every_row() {
         // Counted in characters: the block letters are several bytes each.
-        for (i, letter) in LOGO.iter().enumerate() {
+        for (i, letter) in NIMA.iter().enumerate() {
             let width = letter[0].chars().count();
             for row in letter {
                 assert_eq!(row.chars().count(), width, "letter {i} is not square");
+            }
+        }
+    }
+
+    #[test]
+    fn small_ter_and_its_shadow_fit_beside_nima() {
+        let width = TER[0].len();
+        assert!(TER.iter().all(|line| line.len() == width));
+        // Its shadow takes one more column, and a space is left before NIMA.
+        assert!(width + 2 <= TER_WIDTH);
+        // It stands on NIMA's last line of letters, and its shadow on the line below.
+        assert_eq!(TER_TOP + TER.len(), 2 * (NIMA[0].len() - 1));
+        assert_eq!(ter_pixel(TER_TOP + 2, 0), Pixel::Face);
+        assert_eq!(ter_pixel(TER_TOP + 3, 1), Pixel::Face);
+        assert_eq!(ter_pixel(TER_TOP + 3, 4), Pixel::Shadow);
+        assert_eq!(ter_pixel(0, 0), Pixel::Empty);
+    }
+
+    #[test]
+    fn every_logo_line_ends_with_the_colors_reset() {
+        for background in BOTH {
+            let text = welcome_banner(background);
+            for line in text.split("\r\n").skip(1).take(NIMA[0].len()) {
+                assert!(line.ends_with(RESET), "{line:?}");
             }
         }
     }

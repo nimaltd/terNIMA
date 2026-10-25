@@ -91,7 +91,7 @@ fn stm32(dev_id: u16, core: &str) -> Detected {
             chip: None,
             candidates: Vec::new(),
             description: format!(
-                "an STM32 with DEV_ID {dev_id:#05x} ({core}) that ternima does not know yet"
+                "an STM32 with DEV_ID {dev_id:#05x} ({core}) that terNIMA does not know yet"
             ),
         };
     };

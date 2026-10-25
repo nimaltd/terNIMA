@@ -9,6 +9,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - The project is called ternima now. It started as ternimal, a name another
   project already had.
+- The welcome logo reads terNIMA: a small "ter" in teal and "NIMA" in big
+  orange block letters, each with its shadow.
+- The app shows its name as terNIMA: the window title, the About box, the
+  menus, the status bar and its messages. It installs as terNIMA on
+  Windows and macOS; on Linux, where package and program names are
+  lowercase, it stays ternima.
 
 ### Added
 

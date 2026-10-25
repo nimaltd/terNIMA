@@ -97,7 +97,7 @@ impl Logger {
             connected: false,
             was_connected: false,
         };
-        logger.marker(&format!("ternima {VERSION} log of {}", setup.name))?;
+        logger.marker(&format!("terNIMA {VERSION} log of {}", setup.name))?;
         Ok(logger)
     }
 
@@ -342,7 +342,7 @@ mod tests {
         let text = fs::read_to_string(log.path()).unwrap();
         assert_eq!(
             text,
-            format!("---- ternima {VERSION} log of H503 RTT ----\n")
+            format!("---- terNIMA {VERSION} log of H503 RTT ----\n")
         );
     }
 

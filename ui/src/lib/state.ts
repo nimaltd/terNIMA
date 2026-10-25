@@ -32,11 +32,11 @@ export function stateText(tab: Tab): string {
 function waitingText(tab: Tab): string {
   switch (tab.kind) {
     case "serial":
-      return `Waiting for ${tab.port.name}: plug it in and ternima connects by itself`;
+      return `Waiting for ${tab.port.name}: plug it in and terNIMA connects by itself`;
     case "tcp":
       return tcpWaitingText(tab);
     default:
-      return "Waiting for the probe: plug it in and ternima connects by itself";
+      return "Waiting for the probe: plug it in and terNIMA connects by itself";
   }
 }
 
@@ -48,7 +48,7 @@ function tcpWaitingText(tab: Tab): string {
     case "openocd":
       return `Waiting for OpenOCD's RTT server at ${at}: start it with rtt server start`;
     default:
-      return `Waiting for ${at} to answer: ternima connects by itself`;
+      return `Waiting for ${at} to answer: terNIMA connects by itself`;
   }
 }
 

@@ -67,7 +67,7 @@
   </div>
 
   <h2 class="dlg-section">Startup</h2>
-  <p class="dlg-hint">What ternima brings back from last time when it starts.</p>
+  <p class="dlg-hint">What terNIMA brings back from last time when it starts.</p>
   <div class="dlg-checks startup">
     <label class="dlg-check">
       <input type="checkbox" bind:checked={startup.restore_tabs} /> Reopen the tabs, with their settings and split view
