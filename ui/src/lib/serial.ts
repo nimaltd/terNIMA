@@ -121,6 +121,8 @@ export type PlotView = {
   trigger: Trigger;
   /** Keeps the help over the chart while values come too; it shows on its own while there are none. */
   help: boolean;
+  /** Marks each sample of the time chart with a dot, where there is room for it. */
+  dots: boolean;
 };
 
 export const DEFAULT_TRIGGER: Trigger = { on: false, series: "", level: 0, edge: "rising", single: false };
@@ -139,6 +141,7 @@ export const DEFAULT_PLOT_VIEW: PlotView = {
   fft_rate: 0,
   trigger: DEFAULT_TRIGGER,
   help: false,
+  dots: true,
 };
 
 /** How the hex view breaks its lines, besides the tab's pause. It only changes what is shown. */

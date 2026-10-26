@@ -318,6 +318,8 @@ pub struct PlotView {
     /// Keeps the help on what the chart is and what to send for it over the
     /// chart while values come too; it shows on its own while there are none.
     pub help: bool,
+    /// Marks each sample of the time chart with a dot, where there is room for it.
+    pub dots: bool,
 }
 
 impl Default for PlotView {
@@ -336,6 +338,7 @@ impl Default for PlotView {
             fft_rate: 0.0,
             trigger: Trigger::default(),
             help: false,
+            dots: true,
         }
     }
 }
@@ -773,6 +776,7 @@ mod tests {
                         ..Trigger::default()
                     },
                     help: true,
+                    dots: false,
                     ..PlotView::default()
                 },
                 ..nucleo()
@@ -786,6 +790,7 @@ mod tests {
         assert!(text.contains("chart = \"fft\""), "{text}");
         assert!(text.contains("hist_series = \"adc\""), "{text}");
         assert!(text.contains("help = true"), "{text}");
+        assert!(text.contains("dots = false"), "{text}");
     }
 
     #[test]

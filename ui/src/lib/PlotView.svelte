@@ -323,7 +323,7 @@
   let lastKind: Chart | null = null;
   $effect(() => {
     const view = tab.plotView;
-    void [view.chart, view.x_series, view.hist_series, view.bins, view.fft_window, view.fft_db, view.fft_rate, view.window_ms];
+    void [view.chart, view.x_series, view.hist_series, view.bins, view.fft_window, view.fft_db, view.fft_rate, view.window_ms, view.dots];
     void [trigger.on, trigger.series, trigger.level, trigger.edge, trigger.single];
     untrack(() => {
       if (view.chart !== lastKind) {
@@ -458,6 +458,7 @@
       view.chart === "xy" ? xIndex() : "",
       view.chart === "histogram" ? histIndex() : "",
       view.chart === "fft" ? view.fft_db : "",
+      view.chart === "time" ? view.dots : "",
     ].join("|");
   }
 
@@ -639,7 +640,8 @@
         return { ...base, width: 1.5, points: { show: false } };
       default:
         // A series that is not on every line is still one line.
-        return { ...base, width: 2, spanGaps: true };
+        // A dot on each sample where there is room for it, unless Dots is off.
+        return { ...base, width: 2, spanGaps: true, ...(tab.plotView.dots ? {} : { points: { show: false } }) };
     }
   }
 
@@ -977,6 +979,8 @@
         squares += step * (value - mean);
       }
       if (count === 0) return null;
+      // A mean that is only rounding off 0, as a whole sine's is, is 0.
+      if (Math.abs(mean) < 1e-9 * Math.max(Math.abs(min), Math.abs(max))) mean = 0;
       const deviation = Math.sqrt(squares / count);
       // The mean of the squares is the variance and the mean squared.
       return { min, max, mean, deviation, rms: Math.sqrt(deviation * deviation + mean * mean), count };
@@ -1084,6 +1088,12 @@
     const text = value.toFixed(decimals);
     // -0.00 is 0.00.
     return /^-0\.?0*$/.test(text) ? text.slice(1) : text;
+  }
+
+  /** A change, with its sign: +1.16 or −1.16. */
+  function signed(value: number, places: number): string {
+    const text = fixed(value, places);
+    return text.startsWith("-") ? `−${text.slice(1)}` : `+${text}`;
   }
 
   /** A number short enough for the table: six digits at most after the first. */
@@ -1461,6 +1471,10 @@
     {/if}
 
     {#if kind === "time"}
+      <label class="check" title="A dot on each sample, where there is room for it; off draws only the lines">
+        <input type="checkbox" checked={tab.plotView.dots} onchange={(event) => setPlotView({ dots: event.currentTarget.checked })} />
+        Dots
+      </label>
       <label class="check" title="Show the time around where a series crosses a level, as a scope does">
         <input type="checkbox" checked={trigger.on} onchange={(event) => toggleTrigger(event.currentTarget.checked)} />
         Trigger
@@ -1633,7 +1647,9 @@
       </span>
     </div>
     <div class="table" class:with-section={section !== null}>
-      <table>
+      <!-- On the time chart, the A and B table below has the same columns, so its values sit under these. -->
+      <table class:aligned={kind === "time"}>
+        {#if kind === "time"}<colgroup><col class="name-col" /><col class="value-col" /><col span="6" /></colgroup>{/if}
         <thead>
           <tr>
             <th class="name">Series</th>
@@ -1719,22 +1735,18 @@
             <span>Click again for B: the values between A and B come here.</span>
           {/if}
         </div>
-        <table>
+        <table class="aligned">
+          <colgroup><col class="name-col" /><col class="value-col" /><col span="6" /></colgroup>
           <thead>
             <tr>
               <th class="name">Series</th>
-              <th>At A</th>
-              {#if section.both}
-                <th>At B</th>
-                <th>B − A</th>
-                <th>Min</th>
-                <th>Max</th>
-                <th title="Max − Min">Pk-pk</th>
-                <th>Mean</th>
-                <th title="Root mean square: the square root of the squares' mean">RMS</th>
-                <th>Std dev</th>
-                <th>Points</th>
-              {/if}
+              <th title="The value at A, at B, and the change from A to B">{section.both ? "At A → At B (change)" : "At A"}</th>
+              <th>Min</th>
+              <th>Max</th>
+              <th title="Max − Min">Pk-pk</th>
+              <th>Mean</th>
+              <th title="Root mean square: the square root of the squares' mean">RMS</th>
+              <th>Std dev</th>
             </tr>
           </thead>
           <tbody>
@@ -1750,18 +1762,18 @@
                     <span class="mono">{row.name}</span>
                   </span>
                 </td>
-                <td>{fixed(row.a, row.decimals)}</td>
-                {#if section.both}
-                  <td>{fixed(row.b, row.decimals)}</td>
-                  <td>{row.a !== null && row.b !== null ? fixed(row.b - row.a, row.decimals) : ""}</td>
-                  <td>{fixed(row.stats?.min, row.decimals)}</td>
-                  <td>{fixed(row.stats?.max, row.decimals)}</td>
-                  <td>{row.stats ? fixed(row.stats.max - row.stats.min, row.decimals) : ""}</td>
-                  <td>{fixed(row.stats?.mean, row.decimals + 2)}</td>
-                  <td>{fixed(row.stats?.rms, row.decimals + 2)}</td>
-                  <td>{fixed(row.stats?.deviation, row.decimals + 2)}</td>
-                  <td>{row.stats?.count.toLocaleString() ?? ""}</td>
-                {/if}
+                <td>
+                  {fixed(row.a, row.decimals)}{#if section.both}
+                    {" → "}{fixed(row.b, row.decimals)}
+                    {#if row.a !== null && row.b !== null}<span class="change">({signed(row.b - row.a, row.decimals)})</span>{/if}
+                  {/if}
+                </td>
+                <td>{fixed(row.stats?.min, row.decimals)}</td>
+                <td>{fixed(row.stats?.max, row.decimals)}</td>
+                <td>{row.stats ? fixed(row.stats.max - row.stats.min, row.decimals) : ""}</td>
+                <td>{fixed(row.stats?.mean, row.decimals + 2)}</td>
+                <td>{fixed(row.stats?.rms, row.decimals + 2)}</td>
+                <td>{fixed(row.stats?.deviation, row.decimals + 2)}</td>
               </tr>
             {/each}
           </tbody>
@@ -2105,6 +2117,25 @@
     display: flex;
     gap: 6px;
     align-items: center;
+  }
+
+  /* The time chart's two tables share their columns: A and B's values sit under the ones of the time shown. */
+  table.aligned th.name,
+  table.aligned td.name {
+    width: auto;
+  }
+
+  table.aligned .name-col {
+    width: 16%;
+  }
+
+  table.aligned .value-col {
+    width: 24%;
+  }
+
+  .change {
+    margin-left: 4px;
+    color: var(--muted);
   }
 
   /* The A and B table's heading, under the table of the time shown. */

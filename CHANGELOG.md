@@ -275,9 +275,11 @@ yet; the README says how to open them.
 - RMS and peak to peak in the plot's table, which is for the time shown,
   its columns and each series' decimals kept as values come so the digits
   stay still. With A and B placed on the time chart, a second table under
-  it has the time between them: each series' value at A and at B, the
-  change, and its min, max, peak to peak, mean, RMS, deviation and points
-  there.
+  it, with the same columns so its values line up, has the time between
+  them and its points: each series' value at A and at B with the change,
+  and its min, max, peak to peak, mean, RMS and deviation there.
+- Dots in the time chart's bar: a dot on each sample where there is room
+  for it, or only the lines.
 - The histogram counts one series at a time, picked in Series or in the
   table, as series far apart, such as 2048 and 1 to 6, would share bins too
   wide for either.
