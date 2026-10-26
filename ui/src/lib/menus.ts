@@ -58,8 +58,6 @@ export type AppActions = {
   commandPalette(): void;
   /** Picks a recording and plays it in a new tab. */
   playRecording(): void;
-  /** Opens the frame layout of the tab in front. */
-  frameLayout(): void;
 };
 
 const GITHUB = "https://github.com/nimaltd/ternima";
@@ -252,19 +250,9 @@ export function buildMenus(app: AppActions): Menu[] {
           },
         },
         {
-          label: "Frames",
-          shortcut: keys("Ctrl+Shift+B", "Cmd+Shift+B"),
-          enabled: hasTab,
-          checked: () => activeTab()?.view === "frames",
-          run: () => {
-            const tab = activeTab();
-            tab?.setView(tab.view === "frames" ? "terminal" : "frames");
-          },
-        },
-        {
           label: "Modbus",
           shortcut: keys("Ctrl+Shift+M", "Cmd+Shift+M"),
-          enabled: hasTab,
+          enabled: isSerial,
           checked: () => activeTab()?.view === "modbus",
           run: () => {
             const tab = activeTab();
@@ -414,7 +402,6 @@ export function buildMenus(app: AppActions): Menu[] {
         },
         { label: "Macros...", run: app.macros },
         { label: "Highlight rules...", run: app.highlights },
-        { label: "Frame layout...", enabled: hasTab, run: app.frameLayout },
         null,
         { label: "Calculators", phase: 6 },
       ],

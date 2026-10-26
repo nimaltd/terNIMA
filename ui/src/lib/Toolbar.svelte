@@ -29,16 +29,14 @@
       title: "The numbers in the lines, drawn over time, with cursors, stats and export (Ctrl+Shift+G)",
     },
     {
-      view: "frames",
-      label: "Frames",
-      title: "The data split into frames: your own layout, COBS, SLIP or NMEA, each checked and its fields read (Ctrl+Shift+B)",
-    },
-    {
       view: "modbus",
       label: "Modbus",
-      title: "A Modbus RTU, ASCII or TCP master or slave on this connection (Ctrl+Shift+M)",
+      title: "A Modbus RTU or ASCII master or slave on this port, and every frame on the line (Ctrl+Shift+M)",
     },
   ];
+
+  /** Modbus is for serial tabs. */
+  const views = $derived(VIEWS.filter(({ view }) => view !== "modbus" || tab.kind === "serial"));
 
   /** How fast a recording can play, against how it was recorded. */
   const SPEEDS = [0.25, 0.5, 1, 2, 5, 10, 100];
@@ -273,7 +271,7 @@
   {/if}
 
   <div class="views" role="group" aria-label="View">
-    {#each VIEWS as { view, label, title } (view)}
+    {#each views as { view, label, title } (view)}
       <button
         class="view"
         class:on={tab.view === view}
@@ -286,53 +284,56 @@
     {/each}
   </div>
 
-  <label
-    class="option"
-    title="Starts a new line when data comes after a pause this long, so each message starts on its own line. Not after what you type, so a shell's echo stays on its line. Only the view changes."
-  >
-    New line after
-    <select
-      class="field"
-      value={String(tab.terminal.pause_ms)}
-      onchange={(event) => act(() => tab.setPause(Number(event.currentTarget.value)))}
+  <!-- The Modbus view frames what it sends itself: the terminal's settings are not for it. -->
+  {#if tab.view !== "modbus"}
+    <label
+      class="option"
+      title="Starts a new line when data comes after a pause this long, so each message starts on its own line. Not after what you type, so a shell's echo stays on its line. Only the view changes."
     >
-      {#each [...new Set([...PAUSES, tab.terminal.pause_ms])].sort((a, b) => a - b) as ms (ms)}
-        <option value={String(ms)}>{pauseText(ms)}</option>
-      {/each}
-    </select>
-  </label>
-
-  {#if tab.kind === "swo"}
-    <span class="muted" title="SWO only comes from the chip">Output only</span>
-  {:else if tab.kind !== "replay"}
-    <label class="option" title="What the Enter key sends">
-      Enter
+      New line after
       <select
         class="field"
-        value={tab.terminal.enter}
-        onchange={(event) =>
-          act(() => {
-            tab.terminal.enter = event.currentTarget.value as LineEnding;
-            changed();
-          })}
+        value={String(tab.terminal.pause_ms)}
+        onchange={(event) => act(() => tab.setPause(Number(event.currentTarget.value)))}
       >
-        <option value="cr">CR</option>
-        <option value="lf">LF</option>
-        <option value="crlf">CR LF</option>
+        {#each [...new Set([...PAUSES, tab.terminal.pause_ms])].sort((a, b) => a - b) as ms (ms)}
+          <option value={String(ms)}>{pauseText(ms)}</option>
+        {/each}
       </select>
     </label>
-    <label class="check" title="Show what you type, for devices that do not echo it">
-      <input
-        type="checkbox"
-        checked={tab.terminal.local_echo}
-        onchange={(event) =>
-          act(() => {
-            tab.terminal.local_echo = event.currentTarget.checked;
-            changed();
-          })}
-      />
-      Echo
-    </label>
+
+    {#if tab.kind === "swo"}
+      <span class="muted" title="SWO only comes from the chip">Output only</span>
+    {:else if tab.kind !== "replay"}
+      <label class="option" title="What the Enter key sends">
+        Enter
+        <select
+          class="field"
+          value={tab.terminal.enter}
+          onchange={(event) =>
+            act(() => {
+              tab.terminal.enter = event.currentTarget.value as LineEnding;
+              changed();
+            })}
+        >
+          <option value="cr">CR</option>
+          <option value="lf">LF</option>
+          <option value="crlf">CR LF</option>
+        </select>
+      </label>
+      <label class="check" title="Show what you type, for devices that do not echo it">
+        <input
+          type="checkbox"
+          checked={tab.terminal.local_echo}
+          onchange={(event) =>
+            act(() => {
+              tab.terminal.local_echo = event.currentTarget.checked;
+              changed();
+            })}
+        />
+        Echo
+      </label>
+    {/if}
   {/if}
 </div>
 

@@ -569,8 +569,8 @@ Done when you can find one module's errors in a busy Zephyr log in seconds.
 - [x] Time chart with zoom, pause, cursors and stats
 - [x] XY chart, histogram, FFT, scope style trigger
 - [x] CSV and PNG export
-- [x] Values from binary frames and from raw RTT channels: the Frames view's layout,
-  with a fixed size and no start or check for raw int16 or float samples
+- [ ] Values from binary frames and from raw RTT channels. A Frames view did this
+  before 1.0, and was taken out to keep 1.0 simple
 - [x] Record and replay
 
 ### Phase 5: probe tools
@@ -582,12 +582,14 @@ Done when you can find one module's errors in a busy Zephyr log in seconds.
 
 ### Phase 6: device and protocol tools
 
-- [x] Frame decoder: your own layout (start bytes, a length, fields and a check), COBS,
-  SLIP and NMEA, with a Frames view and the plot reading the fields
-- [x] Modbus RTU and ASCII in the frame decoder: requests and answers read off a bus
-- [ ] MAVLink in the frame decoder
-- [x] Modbus tester: RTU, ASCII and TCP, master and slave, with polling, a unit scan and
-  the plot reading what is polled
+- [ ] Frame decoder: your own layout (start bytes, a length, fields and a check), COBS,
+  SLIP, NMEA and MAVLink. It was built, then taken out before 1.0 to keep 1.0 simple
+- [x] Modbus tester on serial tabs: RTU and ASCII, master and slave, with polling, a unit
+  scan and the plot reading what is polled
+- [x] Modbus traffic: every frame on a serial line read and checked, each response under
+  its request with the time it took, filters, the bytes of a frame by part, and CSV;
+  the plot reads it too, so a bus terNIMA only listens to is plotted
+- [ ] Modbus TCP, as a client and as a server
 - [ ] Spy mode and bridge (TCP, RFC 2217, port to port)
 - [ ] Send and expect tests
 - [ ] External tool buttons

@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  BusReader,
   ModbusReader,
   answer,
   crc16,
@@ -26,7 +27,6 @@ test("checks and frames match the published examples", () => {
   const pdu = requestPdu(readTen);
   assert.equal(hex(frame("rtu", 1, pdu)), "01 03 00 00 00 0a c5 cd");
   assert.equal(new TextDecoder().decode(frame("ascii", 1, pdu)), ":01030000000AF2\r\n");
-  assert.equal(hex(frame("tcp", 1, pdu, 1)), "00 01 00 00 00 06 01 03 00 00 00 0a");
 });
 
 test("writes are built as the standard says", () => {
@@ -142,15 +142,179 @@ test("ASCII lines are read and their LRC checked", () => {
   assert.equal(messages[1].problem, "wrong LRC");
 });
 
-test("TCP messages are split by their header, with their transaction", () => {
-  const one = frame("tcp", 1, requestPdu(readTen), 7);
-  const two = frame("tcp", 2, Uint8Array.of(3, 2, 0, 5), 8);
-  const messages = new ModbusReader("tcp", "either").feed(Uint8Array.from([...one, ...two]), 0);
+test("bytes that make no message are given as one, when a reader keeps them", () => {
+  const bad = rtuResponse.slice();
+  bad[4] ^= 1;
+  const reader = new ModbusReader("rtu", "either", 50, true);
+  const messages = reader.feed(Uint8Array.from([...bad, ...rtuResponse]), 0);
   assert.deepEqual(
-    messages.map((message) => [message.transaction, message.unit, hex(message.pdu)]),
+    messages.map((message) => [message.ok, message.problem, hex(message.raw)]),
     [
-      [7, 1, "03 00 00 00 0a"],
-      [8, 2, "03 02 00 05"],
+      [false, "wrong CRC", hex(bad)],
+      [true, null, hex(rtuResponse)],
     ],
   );
+  // A pause ends a message cut short.
+  assert.deepEqual(reader.feed(rtuResponse.subarray(0, 4), 100), []);
+  const cut = reader.feed(rtuResponse, 200);
+  assert.deepEqual(
+    cut.map((message) => [message.ok, message.problem]),
+    [
+      [false, "cut short"],
+      [true, null],
+    ],
+  );
+});
+
+const request = frame("rtu", 1, requestPdu(readTen));
+const tenRegisters = frame("rtu", 1, Uint8Array.of(3, 20, ...Array.from({ length: 20 }, (_, index) => index)));
+
+test("the bus pairs each response with its request, and says how long it took", () => {
+  const bus = new BusReader("rtu");
+  const asked = bus.feed(request, 1000, true);
+  const answered = bus.feed(tenRegisters, 1042, false);
+  assert.equal(asked.length, 1);
+  assert.equal(asked[0].kind, "request");
+  assert.ok(asked[0].sent);
+  assert.deepEqual(asked[0].request, readTen);
+  assert.equal(answered.length, 1);
+  assert.equal(answered[0].kind, "response");
+  assert.equal(answered[0].ms, 42);
+  assert.deepEqual(answered[0].request, readTen);
+  assert.deepEqual(answered[0].response?.registers, [1, 0x203, 0x405, 0x607, 0x809, 0xa0b, 0xc0d, 0xe0f, 0x1011, 0x1213]);
+});
+
+test("the echo of what terNIMA sent, as RS-485 adapters give, is left out", () => {
+  const bus = new BusReader("rtu");
+  bus.feed(request, 1000, true);
+  assert.deepEqual(bus.feed(request, 1003, false), []);
+  const answered = bus.feed(tenRegisters, 1040, false);
+  assert.equal(answered[0].kind, "response");
+  // Known to echo, a single write comes back twice: the echo, then the answer.
+  const write = frame("rtu", 1, requestPdu({ unit: 1, fc: 6, address: 5, count: 1, values: [1234] }));
+  bus.feed(write, 2000, true);
+  assert.deepEqual(bus.feed(write, 2004, false), []);
+  assert.equal(bus.feed(write, 2030, false)[0].kind, "response");
+});
+
+test("without an echo, the answer to a single write, the same bytes, is its response", () => {
+  const bus = new BusReader("rtu");
+  const write = frame("rtu", 1, requestPdu({ unit: 1, fc: 6, address: 5, count: 1, values: [1234] }));
+  bus.feed(write, 0, true);
+  const answered = bus.feed(write, 30, false);
+  assert.equal(answered[0].kind, "response");
+  assert.equal(answered[0].ms, 30);
+});
+
+// The first 8 of these 9 bytes have a right CRC too: the 7th byte is the low byte of the CRC of the first 6.
+const tricky = Uint8Array.of(0x02, 0x04, 0x04, 0x01, 0xf3, 0x01, 0x25, 0xf9, 0x00);
+const readTwo = frame("rtu", 2, requestPdu({ unit: 2, fc: 4, address: 0, count: 2, values: [] }));
+
+test("a response whose first bytes make a request with a right CRC is read whole, even in pieces", () => {
+  for (const sent of [true, false]) {
+    const bus = new BusReader("rtu");
+    bus.feed(readTwo, 0, sent);
+    const frames = [...bus.feed(tricky.subarray(0, 8), 40, false), ...bus.feed(tricky.subarray(8), 42, false)];
+    // Its time is when its last byte came.
+    assert.deepEqual(
+      frames.map((frame) => [frame.kind, frame.ms]),
+      [["response", 42]],
+    );
+    assert.deepEqual(frames[0].response?.registers, [0x01f3, 0x0125]);
+  }
+});
+
+test("what one side left half way comes before what the other sends after a pause, at its own time", () => {
+  const bus = new BusReader("rtu");
+  bus.feed(request, 0, true);
+  const spoilt = tenRegisters.slice();
+  spoilt[spoilt.length - 1] ^= 0x5a;
+  assert.deepEqual(bus.feed(spoilt, 50, false), []);
+  const frames = bus.feed(request, 400, true);
+  assert.deepEqual(
+    frames.map((frame) => [frame.kind, frame.at, frame.problem]),
+    [
+      [null, 50, "wrong CRC"],
+      ["request", 400, null],
+    ],
+  );
+  // And once the line is quiet, without anything after it.
+  bus.feed(spoilt, 450, false);
+  assert.deepEqual(
+    bus.pause(600).map((frame) => [frame.at, frame.checked]),
+    [[450, false]],
+  );
+});
+
+test("a pause ends a request that was waited for as a longer response", () => {
+  // From address 0x0400, its third byte is the byte count of the response to the first: 9 bytes could be one.
+  const readHigh = frame("rtu", 2, requestPdu({ unit: 2, fc: 4, address: 0x400, count: 2, values: [] }));
+  const bus = new BusReader("rtu");
+  const first = bus.feed(readHigh, 0, false)[0];
+  // Nothing answered; the next request comes, and then a pause.
+  assert.deepEqual(bus.feed(readHigh, 300, false), []);
+  const frames = bus.feed(Uint8Array.of(0x00), 400, false);
+  assert.equal(frames[0].kind, "request");
+  assert.equal(frames[0].at, 300);
+  assert.ok(first.unanswered);
+});
+
+test("listening, a request nothing answers is marked, and an exception is a response", () => {
+  const bus = new BusReader("rtu");
+  const first = bus.feed(request, 0, false)[0];
+  const second = bus.feed(request, 500, false)[0];
+  assert.ok(first.unanswered);
+  assert.equal(second.kind, "request");
+  const exception = bus.feed(frame("rtu", 1, Uint8Array.of(0x83, 2)), 520, false)[0];
+  assert.equal(exception.kind, "response");
+  assert.equal(exception.fc, 3);
+  assert.equal(exception.problem, "exception 2: illegal data address");
+  assert.equal(exception.ms, 20);
+  assert.ok(!second.unanswered);
+});
+
+test("a single write and its echo are a request and its response", () => {
+  const bus = new BusReader("rtu");
+  const write = frame("rtu", 1, requestPdu({ unit: 1, fc: 6, address: 2, count: 1, values: [1234] }));
+  const frames = [...bus.feed(write, 0, false), ...bus.feed(write, 15, false), ...bus.feed(write, 500, false)];
+  assert.deepEqual(
+    frames.map((frame) => frame.kind),
+    ["request", "response", "request"],
+  );
+  assert.deepEqual(frames[1].response, { unit: 1, fc: 6, address: 2, value: 1234 });
+});
+
+test("a response whose request came before terNIMA listened is read without it", () => {
+  const frames = new BusReader("rtu").feed(rtuResponse, 0, false);
+  assert.equal(frames[0].kind, "response");
+  assert.equal(frames[0].request, null);
+  assert.deepEqual(frames[0].response?.registers, [1, 2]);
+});
+
+test("broken bytes on the bus are a frame that is not ok", () => {
+  const broken = tenRegisters.slice();
+  broken[6] ^= 0x40;
+  const frames = new BusReader("rtu").feed(Uint8Array.from([...broken, ...request]), 0, false);
+  assert.deepEqual(
+    frames.map((frame) => [frame.ok, frame.checked, frame.kind]),
+    [
+      [false, false, null],
+      [true, true, "request"],
+    ],
+  );
+});
+
+test("ASCII on the bus: lines, their LRC, and the response with its request", () => {
+  const bus = new BusReader("ascii");
+  const line = (text: string) => new TextEncoder().encode(text);
+  const asked = bus.feed(line(":01030000000AF2\r\n"), 0, false)[0];
+  const answer = frame("ascii", 1, Uint8Array.of(3, 4, 0, 1, 0, 2));
+  const answered = bus.feed(answer, 30, false)[0];
+  assert.equal(asked.kind, "request");
+  assert.equal(hex(asked.bytes), "01 03 00 00 00 0a f2");
+  assert.equal(answered.kind, "response");
+  assert.deepEqual(answered.response?.registers, [1, 2]);
+  const bad = bus.feed(line(":01030000000AF3\r\n"), 60, false)[0];
+  assert.ok(!bad.checked);
+  assert.equal(bad.problem, "wrong LRC");
 });

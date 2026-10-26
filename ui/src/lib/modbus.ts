@@ -1,11 +1,11 @@
-// Modbus: requests and responses for the common functions, framed for RTU
-// (with a CRC), ASCII (with an LRC) or TCP (with an MBAP header); a slave's
-// answers from its tables; and reading messages out of a stream, as a
-// master, a slave, or something listening on the bus.
+// Modbus on a serial line: requests and responses for the common functions,
+// framed for RTU (with a CRC) or ASCII (with an LRC); a slave's answers from
+// its tables; reading messages out of a stream, as a master or a slave; and
+// every frame on the line, each response with its request.
 //
 // It has no imports, so its tests run in Node as they are.
 
-export type ModbusMode = "rtu" | "ascii" | "tcp";
+export type ModbusMode = "rtu" | "ascii";
 export type FunctionCode = 1 | 2 | 3 | 4 | 5 | 6 | 15 | 16;
 
 export const FUNCTION_NAMES: Record<FunctionCode, string> = {
@@ -157,21 +157,15 @@ export function parseResponse(unit: number, pdu: Uint8Array, count = Infinity): 
   return { unit, fc, address, count: second };
 }
 
-/** A PDU framed to send: RTU with its CRC, ASCII as a line with its LRC, or TCP with its header. */
-export function frame(mode: ModbusMode, unit: number, pdu: Uint8Array, transaction = 0): Uint8Array {
+/** A PDU framed to send: RTU with its CRC, or ASCII as a line with its LRC. */
+export function frame(mode: ModbusMode, unit: number, pdu: Uint8Array): Uint8Array {
   const body = [unit, ...pdu];
-  switch (mode) {
-    case "ascii": {
-      const hex = [...body, lrc(body)].map((byte) => byte.toString(16).toUpperCase().padStart(2, "0")).join("");
-      return new TextEncoder().encode(`:${hex}\r\n`);
-    }
-    case "tcp":
-      return Uint8Array.from([...word(transaction), 0, 0, ...word(body.length), ...body]);
-    default: {
-      const crc = crc16(body);
-      return Uint8Array.from([...body, crc & 0xff, crc >> 8]);
-    }
+  if (mode === "ascii") {
+    const hex = [...body, lrc(body)].map((byte) => byte.toString(16).toUpperCase().padStart(2, "0")).join("");
+    return new TextEncoder().encode(`:${hex}\r\n`);
   }
+  const crc = crc16(body);
+  return Uint8Array.from([...body, crc & 0xff, crc >> 8]);
 }
 
 /** The tables a slave answers from: values from address `start` on. */
@@ -230,16 +224,18 @@ export function answer(pdu: Uint8Array, tables: Tables): Uint8Array {
   }
 }
 
-/** A Modbus message read from a stream, whole and checked. */
+/** A Modbus message read from a stream, whole and checked; or bytes that make none, when a reader keeps them. */
 export type Message = {
   unit: number;
   pdu: Uint8Array;
   /** The message as it came, framing included. */
   raw: Uint8Array;
-  /** TCP's transaction number. */
-  transaction: number;
+  /** Its bytes: the unit, the PDU and the check. ASCII's hex is read into bytes. */
+  bytes: Uint8Array;
   ok: boolean;
   problem: string | null;
+  /** When its last bytes came, in ms. */
+  at: number;
 };
 
 /** Which messages a reader looks for: a slave reads requests, a master responses, a listener both. */
@@ -268,44 +264,114 @@ function rtuLengths(bytes: Uint8Array, side: Side): number[] | null {
   return lengths;
 }
 
+/** How long the RTU response to a request is: a read's byte count and values, or a write's echo. */
+export function responseLength(request: Request): number {
+  switch (request.fc) {
+    case 1:
+    case 2:
+      return 5 + Math.ceil(request.count / 8);
+    case 3:
+    case 4:
+      return 5 + request.count * 2;
+    default:
+      return 8;
+  }
+}
+
+/** The most bytes that make no message kept together, before they are given as one. */
+const JUNK_MAX = 256;
+
 /** Splits a stream into Modbus messages. */
 export class ModbusReader {
   private buffer = new Uint8Array(0);
   private lastAt = 0;
+  /** When the bytes being read came. */
+  private now = 0;
   private readonly mode: ModbusMode;
   private readonly side: Side;
   private readonly gapMs: number;
+  private readonly keepBad: boolean;
+  /** RTU bytes that made no message, while they are kept, and why the first of them made none. */
+  private junk: number[] = [];
+  private junkProblem = "";
   /** Why the last RTU bytes made no message, such as a wrong CRC; null after a good one. */
   problem: string | null = null;
+  /**
+   * The length the next RTU message should have, such as that of the
+   * response to a request. A message of that length wins over a shorter one
+   * whose CRC happens to fit too, and is waited for until a pause.
+   */
+  expect: number | null = null;
+  /** Called with each message as it is found, in order; what it gives back is what `expect` becomes. */
+  onMessage: ((message: Message) => number | null) | null = null;
 
-  /** A pause longer than `gapMs` ends whatever RTU message was half way. */
-  constructor(mode: ModbusMode, side: Side, gapMs = 50) {
+  /**
+   * A pause longer than `gapMs` ends whatever RTU message was half way. With
+   * `keepBad`, RTU bytes that make no message are given too, as a message
+   * that is not ok, rather than left out.
+   */
+  constructor(mode: ModbusMode, side: Side, gapMs = 50, keepBad = false) {
     this.mode = mode;
     this.side = side;
     this.gapMs = gapMs;
+    this.keepBad = keepBad;
   }
 
   feed(bytes: Uint8Array, at = Date.now()): Message[] {
-    if (this.mode === "rtu" && this.buffer.length > 0 && at - this.lastAt > this.gapMs) {
-      this.buffer = new Uint8Array(0);
-    }
+    const out = this.pause(at);
     this.lastAt = at;
+    this.now = at;
     const joined = new Uint8Array(this.buffer.length + bytes.length);
     joined.set(this.buffer);
     joined.set(bytes, this.buffer.length);
     this.buffer = joined;
-    switch (this.mode) {
-      case "ascii":
-        return this.lines();
-      case "tcp":
-        return this.mbap();
-      default:
-        return this.rtu();
-    }
+    if (this.mode === "ascii") this.lines(out);
+    else this.rtu(out, false);
+    return out;
   }
 
-  private rtu(): Message[] {
+  /**
+   * Ends what was half way, once no byte has come for longer than a pause:
+   * a whole message in it is given, at the time its last byte came, and the
+   * rest was cut short. RTU only: ASCII lines end themselves.
+   */
+  pause(at: number): Message[] {
     const out: Message[] = [];
+    if (this.mode !== "rtu" || at - this.lastAt <= this.gapMs) return out;
+    this.now = this.lastAt;
+    if (this.buffer.length > 0) {
+      this.rtu(out, true);
+      this.skip(this.buffer, "cut short");
+      this.buffer = new Uint8Array(0);
+    }
+    this.giveJunk(out);
+    return out;
+  }
+
+  /** Gives a message found: in the list, and to `onMessage`. */
+  private give(out: Message[], message: Omit<Message, "at">): void {
+    const found = { ...message, at: this.now };
+    out.push(found);
+    if (this.onMessage) this.expect = this.onMessage(found);
+  }
+
+  /** Keeps bytes that make no message, to give them as one. */
+  private skip(bytes: Uint8Array, why: string): void {
+    if (!this.keepBad) return;
+    if (this.junk.length === 0) this.junkProblem = why;
+    for (const byte of bytes) this.junk.push(byte);
+  }
+
+  /** Gives the bytes kept that made no message, as one message that is not ok. */
+  private giveJunk(out: Message[]): void {
+    if (this.junk.length === 0) return;
+    const raw = Uint8Array.from(this.junk);
+    this.junk = [];
+    this.give(out, { unit: raw[0], pdu: new Uint8Array(0), raw, bytes: raw, ok: false, problem: this.junkProblem });
+  }
+
+  /** Reads the RTU messages kept; `ended` after a pause, when no more of them will come. */
+  private rtu(out: Message[], ended: boolean): void {
     let at = 0;
     while (this.buffer.length - at >= 4) {
       const rest = this.buffer.subarray(at);
@@ -313,13 +379,15 @@ export class ModbusReader {
       if (lengths === null) break;
       if (lengths.length === 0) {
         // Not a function this reader knows: look again from the next byte.
+        this.skip(rest.subarray(0, 1), "not a function terNIMA knows");
         at++;
         continue;
       }
-      const good = this.whole(at);
+      const good = this.whole(at, ended);
       if (good > 0) {
+        this.giveJunk(out);
         const raw = rest.slice(0, good);
-        out.push({ unit: raw[0], pdu: raw.slice(1, good - 2), raw, transaction: 0, ok: true, problem: null });
+        this.give(out, { unit: raw[0], pdu: raw.slice(1, good - 2), raw, bytes: raw, ok: true, problem: null });
         this.problem = null;
         at += good;
         continue;
@@ -328,32 +396,46 @@ export class ModbusReader {
         // It may still come whole; but noise can look like the start of a long
         // message, so a whole one further on wins.
         let next = at + 1;
-        while (next + 4 <= this.buffer.length && this.whole(next) === 0) next++;
+        while (next + 4 <= this.buffer.length && this.whole(next, true) === 0) next++;
         if (next + 4 > this.buffer.length) break;
         this.problem = "noise before a message";
+        this.skip(this.buffer.subarray(at, next), this.problem);
         at = next;
         continue;
       }
       // Long enough for every length it could have, and the CRC fits none:
       // noise, or a message spoilt on the way. Look again from the next byte.
       this.problem = "wrong CRC";
+      this.skip(rest.subarray(0, 1), this.problem);
       at++;
     }
     this.buffer = this.buffer.slice(at);
     // Nothing whole in this much is noise.
-    if (this.buffer.length > 512) this.buffer = this.buffer.slice(this.buffer.length - 256);
-    return out;
+    if (this.buffer.length > 512) {
+      this.skip(this.buffer.subarray(0, this.buffer.length - 256), "noise");
+      this.buffer = this.buffer.slice(this.buffer.length - 256);
+    }
+    if (this.junk.length > JUNK_MAX) this.giveJunk(out);
   }
 
-  /** The length of a whole RTU message with a right CRC at `at`, or 0. */
-  private whole(at: number): number {
+  /**
+   * The length of a whole RTU message with a right CRC at `at`, or 0. The
+   * length expected comes first: a response's first bytes can make a shorter
+   * request whose CRC fits, one time in 256, so until the pause that ends it,
+   * the rest of the expected one is waited for.
+   */
+  private whole(at: number, ended: boolean): number {
     const rest = this.buffer.subarray(at);
     const lengths = rtuLengths(rest, this.side) ?? [];
-    return lengths.find((length) => length <= rest.length && crc16(rest.subarray(0, length)) === 0) ?? 0;
+    const fits = (length: number) => length <= rest.length && crc16(rest.subarray(0, length)) === 0;
+    if (this.expect !== null && lengths.includes(this.expect)) {
+      if (fits(this.expect)) return this.expect;
+      if (!ended && this.expect > rest.length) return 0;
+    }
+    return lengths.find(fits) ?? 0;
   }
 
-  private lines(): Message[] {
-    const out: Message[] = [];
+  private lines(out: Message[]): void {
     let from = 0;
     for (let at = 0; at < this.buffer.length; at++) {
       if (this.buffer[at] !== 0x0a) continue;
@@ -361,44 +443,204 @@ export class ModbusReader {
       const raw = this.buffer.slice(from, at + 1);
       from = at + 1;
       const colon = line.indexOf(":");
-      if (colon < 0) continue;
+      if (colon < 0) {
+        if (this.keepBad && line !== "") {
+          this.give(out, { unit: 0, pdu: new Uint8Array(0), raw, bytes: new Uint8Array(0), ok: false, problem: "not a Modbus ASCII line" });
+        }
+        continue;
+      }
       const hex = line.slice(colon + 1);
       if (hex.length < 6 || hex.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(hex)) {
-        out.push({ unit: 0, pdu: new Uint8Array(0), raw, transaction: 0, ok: false, problem: "not hex" });
+        this.give(out, { unit: 0, pdu: new Uint8Array(0), raw, bytes: new Uint8Array(0), ok: false, problem: "not hex" });
         continue;
       }
       const bytes = Uint8Array.from(hex.match(/../g)!, (pair) => parseInt(pair, 16));
       const body = bytes.subarray(0, bytes.length - 1);
       const ok = lrc(body) === bytes[bytes.length - 1];
-      out.push({
-        unit: body[0],
-        pdu: body.slice(1),
-        raw,
-        transaction: 0,
-        ok,
-        problem: ok ? null : "wrong LRC",
-      });
+      this.give(out, { unit: body[0], pdu: body.slice(1), raw, bytes, ok, problem: ok ? null : "wrong LRC" });
     }
     this.buffer = this.buffer.slice(from);
-    return out;
+  }
+}
+
+/** A frame on the line, as the Traffic view lists it. */
+export type BusFrame = {
+  /** When it came or went, in ms since 1970. */
+  at: number;
+  /** Whether terNIMA sent it, rather than received it. */
+  sent: boolean;
+  /** As it was on the line. */
+  raw: Uint8Array;
+  /** Its bytes: the unit, the PDU and the check; ASCII's hex read into bytes. */
+  bytes: Uint8Array;
+  /** Whether its CRC or LRC is right. */
+  checked: boolean;
+  /** Whether it is whole, right, and a request or a response terNIMA can read. */
+  ok: boolean;
+  /** What is wrong with it, or the exception a slave answered. */
+  problem: string | null;
+  /** Null for a frame that is not ok. */
+  kind: "request" | "response" | null;
+  /** The unit and the function, without the exception bit; null for a frame that is not ok. */
+  unit: number | null;
+  fc: number | null;
+  /** What was asked: the request itself, or the one a response answers, if it was on the line. */
+  request: Request | null;
+  response: Response | null;
+  /** How long a response came after its request, in ms. */
+  ms: number | null;
+  /** A request that no response answered before the next request. */
+  unanswered: boolean;
+};
+
+/** How long after terNIMA sent a frame the same bytes coming back are its echo, in ms, as RS-485 adapters do. */
+const ECHO_MS = 100;
+
+/** Whether a PDU has the shape of a request: a read or a single write, or a multiple write with its byte count. */
+function requestShaped(pdu: Uint8Array): boolean {
+  const fc = pdu[0];
+  if (fc === 15 || fc === 16) return pdu.length >= 6 && pdu.length === 6 + pdu[5];
+  return fc >= 1 && fc <= 6 && pdu.length === 5;
+}
+
+/** Whether a PDU is the answer to what was asked, rather than a new request. */
+export function answers(pdu: Uint8Array, asked: Request): boolean {
+  if ((pdu[0] & 0x7f) !== asked.fc) return false;
+  if (pdu[0] & 0x80) return pdu.length === 2;
+  const fc = asked.fc;
+  if (fc <= 4) {
+    // A read's answer is its byte count and the bytes; registers come in pairs.
+    return pdu.length === 2 + pdu[1] && (fc <= 2 || pdu[1] % 2 === 0);
+  }
+  // A single write is echoed; a multiple write is answered with its address and count.
+  return pdu.length === 5;
+}
+
+const same = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((byte, index) => byte === b[index]);
+
+/**
+ * Reads every frame on a line, what terNIMA sends and what it receives,
+ * whoever is master: each one checked, and each response with the request
+ * it answers and how long it took.
+ */
+export class BusReader {
+  private readonly received: ModbusReader;
+  private readonly sentReader: ModbusReader;
+  /** The last request, while no response has answered it. */
+  private asked: BusFrame | null = null;
+  /** What terNIMA sent last, to know its echo. */
+  private lastSent: Message | null = null;
+  /** Whether what terNIMA sends comes back to it, as some RS-485 adapters do: learnt from a read coming back. */
+  private echoes = false;
+  /** The frames found while bytes are fed. */
+  private found: BusFrame[] = [];
+  /** Whether terNIMA answers as a slave: what it receives are then requests, never the responses to them. */
+  answering = false;
+
+  constructor(mode: ModbusMode, gapMs = 50) {
+    this.received = new ModbusReader(mode, "either", gapMs, true);
+    this.sentReader = new ModbusReader(mode, "either", gapMs, true);
+    this.received.onMessage = (message) => this.take(message, false);
+    this.sentReader.onMessage = (message) => this.take(message, true);
   }
 
-  private mbap(): Message[] {
-    const out: Message[] = [];
-    let at = 0;
-    while (this.buffer.length - at >= 7) {
-      const length = readWord(this.buffer, at + 4);
-      if (length < 2 || length > 254) {
-        at++;
-        continue;
-      }
-      if (this.buffer.length - at < 6 + length) break;
-      const raw = this.buffer.slice(at, at + 6 + length);
-      out.push({ unit: raw[6], pdu: raw.slice(7), raw, transaction: readWord(raw, 0), ok: true, problem: null });
-      at += 6 + length;
+  feed(bytes: Uint8Array, at: number, sent: boolean): BusFrame[] {
+    this.found = [];
+    // What the other side left half way is over if it has been quiet since: it came first.
+    (sent ? this.received : this.sentReader).pause(at);
+    const reader = sent ? this.sentReader : this.received;
+    reader.expect = this.expected(sent);
+    reader.feed(bytes, at);
+    return this.found;
+  }
+
+  /** Ends what either side left half way, once the line has been quiet for a pause. */
+  pause(at: number): BusFrame[] {
+    this.found = [];
+    this.received.pause(at);
+    this.sentReader.pause(at);
+    return this.found;
+  }
+
+  /** The length the next frame on one side should have: the response to a request that waits for one. */
+  private expected(sent: boolean): number | null {
+    const asked = this.asked;
+    if (!asked?.request || asked.request.unit === 0) return null;
+    // A response comes from the side that did not ask; or, listening to a bus, with the request.
+    const comes = sent ? !asked.sent : asked.sent || !this.answering;
+    return comes ? responseLength(asked.request) : null;
+  }
+
+  private take(message: Message, sent: boolean): number | null {
+    if (sent) {
+      this.lastSent = message;
+    } else if (this.isEcho(message)) {
+      return this.expected(sent);
     }
-    this.buffer = this.buffer.slice(at);
-    return out;
+    this.found.push(this.frameOf(message, sent));
+    return this.expected(sent);
+  }
+
+  private isEcho(message: Message): boolean {
+    const last = this.lastSent;
+    if (!message.ok || !last || message.at - last.at > ECHO_MS || !same(message.raw, last.raw)) return false;
+    // A single write is answered with the same bytes: those are an echo only from an adapter known to echo.
+    const fc = message.pdu[0];
+    if (fc === 5 || fc === 6) {
+      if (!this.echoes) return false;
+    } else {
+      this.echoes = true;
+    }
+    this.lastSent = null;
+    return true;
+  }
+
+  private frameOf(message: Message, sent: boolean): BusFrame {
+    const at = message.at;
+    const frame: BusFrame = {
+      at,
+      sent,
+      raw: message.raw,
+      bytes: message.bytes,
+      checked: message.ok,
+      ok: false,
+      problem: message.problem,
+      kind: null,
+      unit: null,
+      fc: null,
+      request: null,
+      response: null,
+      ms: null,
+      unanswered: false,
+    };
+    if (!message.ok) return frame;
+    const { unit, pdu } = message;
+    const fc = pdu[0] & 0x7f;
+    const asked = this.asked;
+    // A response answers the last request to its unit, from the other side:
+    // terNIMA does not answer what it asks itself.
+    if (asked?.request && asked.request.unit === unit && !(asked.sent && sent) && answers(pdu, asked.request)) {
+      this.asked = null;
+      return this.response({ ...frame, unit, fc }, pdu, asked.request, at - asked.at);
+    }
+    if (requestShaped(pdu)) {
+      const request = parseRequest(unit, pdu);
+      if (typeof request !== "string") {
+        if (asked?.request && asked.request.unit !== 0) asked.unanswered = true;
+        const out: BusFrame = { ...frame, ok: true, kind: "request", unit, fc, request };
+        this.asked = out;
+        return out;
+      }
+    }
+    // A response to a request that was not on the line, such as one before terNIMA listened.
+    return this.response({ ...frame, unit, fc }, pdu, null, null);
+  }
+
+  private response(frame: BusFrame, pdu: Uint8Array, request: Request | null, ms: number | null): BusFrame {
+    const response = parseResponse(frame.unit!, pdu, request?.count);
+    if (typeof response === "string") return { ...frame, problem: response };
+    const problem = response.exception !== undefined ? describeResponse(response) : null;
+    return { ...frame, ok: true, problem, kind: "response", request, response, ms };
   }
 }
 

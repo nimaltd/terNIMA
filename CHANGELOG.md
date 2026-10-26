@@ -181,35 +181,33 @@ yet; the README says how to open them.
   to, or a macro to send, such as "sf" for Send file. The matched letters
   are marked, a check shows what is on, and the commands used lately come
   first when nothing is typed.
-- A Modbus view (View > Modbus, Ctrl+Shift+M, or Modbus in the toolbar):
-  a Modbus RTU, ASCII or TCP tester on the tab's own connection, serial or
-  TCP. As a master, a list of requests (functions 1 to 6, 15 and 16, each
-  with its unit, address and count or values to write) is sent one by one
-  or polled every 100 ms to 5 s; each shows what came back, in its time
-  and how long it took, as unsigned, signed, hex or 32 bit floats either
-  word first, or the exception and its name, or that no answer came in
-  the timeout. Scan units asks 1 to 247 and lists those that answer. The
-  Plot view's Read: Modbus plots what is polled, named hr0, ir5, c3. As a
-  slave, it answers a master for its unit from tables of holding and
-  input registers, coils and discrete inputs that can be edited, and that
-  a master's writes change, with exceptions for what it cannot do. Both
-  keep a log of every message, in words and in hex, and counts of what
-  was sent, answered, timed out and wrong.
-- Modbus RTU and Modbus ASCII in the Frames view: requests and answers
-  read off a bus and checked, each in words, with a read's values named by
-  their address for the plot, and exceptions marked.
-- A Frames view (View > Frames, Ctrl+Shift+B, or Frames in the toolbar):
-  the data split into frames, each checked and its fields read. Frames
-  can be of your own layout (start bytes, a length of 1 or 2 bytes or a
-  fixed size, fields from u8 to f64, either byte order, with a scale, and
-  a sum, XOR, CRC-8, CRC-16 Modbus, CCITT or XMODEM, or CRC-32 check at
-  the end), COBS, SLIP, or NMEA sentences from a GPS receiver, read into
-  lat, lon, alt, sats, speed and course. Tools > Frame layout shows how
-  many frames a layout finds in what came lately while it is changed, and
-  a new layout reads that data again. The list marks each frame right or
-  wrong, with why; the frame picked shows its bytes, colored by start,
-  length, fields and check, and its fields. CSV... saves the frames, and
-  the Plot view's Read: Frames plots their fields, as XY too.
+- A Modbus view on serial tabs (View > Modbus, Ctrl+Shift+M, or Modbus in
+  the toolbar): Modbus RTU or ASCII on the tab's own port, in two pages.
+  The terminal's Enter, Echo, New line after and the send box are hidden
+  while it is shown.
+  - Tester: as a master, a list of requests (functions 1 to 6, 15 and 16,
+    each with its unit, address and count or values to write) is sent one
+    by one or polled every 100 ms to 5 s; each shows what came back, in
+    its time and how long it took, as unsigned, signed, hex or 32 bit
+    floats either word first, or the exception and its name, or that no
+    answer came in the timeout. Scan units asks 1 to 247 and lists those
+    that answer. As a slave, it answers a master for its unit from tables
+    of holding and input registers, coils and discrete inputs that can be
+    edited, and that a master's writes change, with exceptions for what it
+    cannot do. Both keep a log of every message, in words and in hex, and
+    counts of what was sent, answered, timed out and wrong.
+  - Traffic: every frame on the line, what terNIMA sends and what it
+    receives, or what a master and its slaves say on a bus it only listens
+    to. Each request is a row with its response under it and the time it
+    took to answer, the unit, the function, the addresses and the values
+    in words; exceptions, requests nothing answered, and broken frames
+    with why (a wrong CRC or LRC, cut short) are marked, and the echo
+    RS-485 adapters give of what was sent is left out. Filters by unit and
+    function, and Only bad; the frame picked shows its bytes colored by
+    unit, function, address, count, values and check, and each value with
+    its address; CSV... saves the frames shown.
+  - The Plot view's Read: Modbus plots the values read on the line, named
+    hr0, ir5, c3, whether terNIMA polls them or only listens to a bus.
 - Record and replay. Rec in the toolbar, or File > Record this tab,
   records every byte a tab receives and sends, with when, to a `.trec`
   file in the log folder, named after the tab and the time. It is a text

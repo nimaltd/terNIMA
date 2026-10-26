@@ -2,7 +2,6 @@
 // the commands that reach them.
 
 import { invoke } from "@tauri-apps/api/core";
-import type { FrameSpec } from "./frames";
 import type { ModbusSetup } from "./modbus.svelte";
 import type { NetState, TcpConfig } from "./net";
 import type { ChannelInfo, RttConfig, RttState, SwoConfig, SwoState } from "./probe";
@@ -52,8 +51,11 @@ export type TerminalOptions = {
 /** A tab's session: a device, or a recording played back. */
 export type SessionKind = "serial" | "rtt" | "swo" | "tcp" | "replay";
 
-/** What a tab shows: the terminal, every byte in hex, every line in a list, or the numbers in a chart. */
-export type View = "terminal" | "hex" | "lines" | "plot" | "frames" | "modbus";
+/**
+ * What a tab shows: the terminal, every byte in hex, every line in a list,
+ * the numbers in a chart, or Modbus on a serial tab.
+ */
+export type View = "terminal" | "hex" | "lines" | "plot" | "modbus";
 
 /** A Zephyr log level. */
 export type Level = "err" | "wrn" | "inf" | "dbg";
@@ -97,8 +99,8 @@ export type Trigger = {
 /** How the Plot view reads and shows numbers. */
 export type PlotView = {
   /** "auto" reads JSON, named values and plain numbers; "regex" uses `regex`. */
-  /** "frames" plots the fields of the frames the Frames view reads; "modbus" what the Modbus master reads. */
-  mode: "auto" | "regex" | "frames" | "modbus";
+  /** "modbus" plots the values read on a serial tab's Modbus line. */
+  mode: "auto" | "regex" | "modbus";
   regex: string;
   /** The time shown while it follows the newest values, in ms; 0 shows them all. */
   window_ms: number;
@@ -172,7 +174,6 @@ export type SessionSetup = {
   hex_view?: HexView;
   lines_view?: LinesView;
   plot_view?: PlotView;
-  frames?: FrameSpec;
   modbus?: ModbusSetup;
   /** The lines sent from the send box, oldest first. */
   history?: SentLine[];

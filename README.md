@@ -42,8 +42,8 @@ What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 - Log, hex and plot views of the same data, side by side if you like
 - A live plotter with XY, histogram, FFT and a scope trigger, Arduino Serial Plotter format included
 - Record a session and play it back later with its timing, faster or slower, from any point
-- Binary frames split, checked and read: your own layout with a CRC, COBS, SLIP, NMEA and Modbus
-- A Modbus RTU, ASCII and TCP tester, as a master that polls and plots, or as a slave that answers
+- A Modbus RTU and ASCII tester on serial ports, as a master that polls and plots, or as a slave that answers
+- Every Modbus frame on the bus in a table, each response under its request, checked, with the time it took
 - Remembers everything when you close it, finds your device again even if its COM number changed, and reconnects when you plug it back in
 
 Coming next: probe tools to watch variables live from your ELF, read registers by name from SVD files, and decode crash addresses.
@@ -60,7 +60,7 @@ Coming next: probe tools to watch variables live from your ELF, read registers b
 | 3 | Log, hex and input | ✅ |
 | 4 | Plotter | ✅ |
 | 5 | Probe tools | next |
-| 6 | Device and protocol tools | frames and Modbus done |
+| 6 | Device and protocol tools | Modbus done |
 | 7 | 1.0 | released; signing, auto update and package managers to come |
 
 Each phase's checklist is in [docs/PLAN.md](docs/PLAN.md#roadmap).

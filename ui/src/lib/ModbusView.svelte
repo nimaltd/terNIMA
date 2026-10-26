@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { FUNCTION_NAMES } from "./modbus";
-  import { formatRegisters, type LogEntry, type ModbusRequestRow, type RegisterFormat } from "./modbus.svelte";
+  import { formatRegisters, type LogEntry, type ModbusRequestRow, type ModbusSetup, type RegisterFormat } from "./modbus.svelte";
+  import ModbusTraffic from "./ModbusTraffic.svelte";
   import { changed, type Tab } from "./tabs.svelte";
   import { clearActiveTerminal, setActiveTerminal, type TerminalActions } from "./terminal-actions";
 
@@ -17,6 +18,7 @@
   const setup = $derived(tab.modbusSetup);
   const session = $derived(tab.modbus);
   const master = $derived(setup.role === "master");
+  const traffic = $derived(setup.page === "traffic");
 
   const FUNCTIONS = Object.entries(FUNCTION_NAMES).map(([code, name]) => ({ code: Number(code), name }));
   const POLLS = [
@@ -41,7 +43,8 @@
     { key: "discrete", label: "Discrete inputs", bits: true },
   ];
 
-  let root: HTMLDivElement;
+  /** The Tester page, while it is shown. */
+  let root: HTMLDivElement | undefined = $state();
   let logBox: HTMLDivElement | undefined = $state();
 
   const isWrite = (code: number) => code === 5 || code === 6 || code === 15 || code === 16;
@@ -49,6 +52,17 @@
 
   function save() {
     changed();
+  }
+
+  function setPage(page: ModbusSetup["page"]) {
+    setup.page = page;
+    save();
+  }
+
+  /** Another mode reads the line again, from what came and went lately. */
+  function changeMode() {
+    save();
+    tab.readModbusAgain();
   }
 
   function addRequest() {
@@ -107,20 +121,43 @@
     findPrevious: () => {},
   };
 
-  // The view on screen is the one the menus act on, and has the keyboard.
+  // The view on screen is the one the menus act on, and has the keyboard. The Traffic page has its own.
   $effect(() => {
-    if (active) {
+    if (active && !traffic) {
       setActiveTerminal(actions);
-      root.focus();
+      root?.focus();
     }
   });
 
   onMount(() => () => clearActiveTerminal(actions));
 </script>
 
+<!-- The start of the bar, the same on both pages. -->
+{#snippet head()}
+  <div class="segment" role="group" aria-label="Page">
+    <button class:on={!traffic} title="Ask devices as a master, or answer a master as a slave" onclick={() => setPage("tester")}>
+      Tester
+    </button>
+    <button class:on={traffic} title="Every frame on the line, each response under its request" onclick={() => setPage("traffic")}>
+      Traffic
+    </button>
+  </div>
+  <label class="option" title="How messages are framed: RTU with a CRC, or ASCII lines with an LRC">
+    Mode
+    <select class="field head-field" bind:value={setup.mode} onchange={changeMode}>
+      <option value="rtu">RTU</option>
+      <option value="ascii">ASCII</option>
+    </select>
+  </label>
+{/snippet}
+
+{#if traffic}
+  <ModbusTraffic {tab} {active} {head} />
+{:else}
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <div class="modbusview" tabindex="0" role="region" aria-label="Modbus" bind:this={root}>
   <div class="bar">
+    {@render head()}
     <div class="segment" role="group" aria-label="Role">
       <button class:on={master} title="Ask devices" onclick={() => ((setup.role = "master"), session.setAnswering(false), save())}>
         Master
@@ -129,14 +166,6 @@
         Slave
       </button>
     </div>
-    <label class="option" title="How messages are framed: RTU with a CRC, ASCII lines with an LRC, or TCP with its header">
-      Mode
-      <select class="field" bind:value={setup.mode} onchange={save}>
-        <option value="rtu">RTU</option>
-        <option value="ascii">ASCII</option>
-        <option value="tcp">TCP</option>
-      </select>
-    </label>
     {#if master}
       <label class="option" title="How long to wait for an answer">
         Timeout
@@ -310,6 +339,7 @@
     </div>
   </div>
 </div>
+{/if}
 
 <style>
   .modbusview {
@@ -370,7 +400,8 @@
   }
 
   .bar .field,
-  .table-bar .field {
+  .table-bar .field,
+  .head-field {
     height: 24px;
     font-size: 12px;
   }

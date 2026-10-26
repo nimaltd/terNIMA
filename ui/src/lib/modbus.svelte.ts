@@ -1,7 +1,9 @@
-// A tab's Modbus master or slave, on the tab's own connection: asking
-// devices and keeping what they answer, or answering a master from tables.
+// A serial tab's Modbus master or slave, on the tab's own port: asking
+// devices and keeping what they answer, or answering a master from tables;
+// and every frame on the line, for the Traffic view and the plot.
 
 import {
+  BusReader,
   ModbusReader,
   answer,
   describeRequest,
@@ -10,6 +12,7 @@ import {
   parseRequest,
   parseResponse,
   requestPdu,
+  type BusFrame,
   type FunctionCode,
   type Message,
   type ModbusMode,
@@ -33,6 +36,8 @@ export type ModbusRequestRow = {
 
 /** How a tab's Modbus view asks or answers, as workspace.toml keeps it. */
 export type ModbusSetup = {
+  /** The master's requests or the slave's tables, or every frame on the line. */
+  page: "tester" | "traffic";
   role: "master" | "slave";
   mode: ModbusMode;
   timeout_ms: number;
@@ -51,6 +56,7 @@ export type ModbusSetup = {
 const TABLE = 20;
 
 export const DEFAULT_MODBUS: ModbusSetup = {
+  page: "tester",
   role: "master",
   mode: "rtu",
   timeout_ms: 1000,
@@ -76,8 +82,14 @@ export type LogEntry = {
 /** What a request in the list got last. */
 export type RowResult = { at: number; ms: number; values: number[] | null; text: string | null; problem: string | null };
 
-/** Values read, for the plot, as frames are. */
+/** Values read, for the plot. */
 export type Sample = { n: number; at: number; ok: boolean; values: [string, number][] };
+
+/** A frame on the line as the Traffic view keeps it: numbered from the tab's first. */
+export type TrafficFrame = BusFrame & { n: number };
+
+/** Whether a frame on the line is one to look at: broken, an exception, or a request nothing answered. */
+export const isBad = (frame: BusFrame) => !frame.ok || frame.problem !== null || frame.unanswered;
 
 type Outcome = { response?: Response; problem?: string; ms: number };
 
@@ -92,6 +104,10 @@ export type ModbusHost = {
 
 const LOG_MAX = 300;
 const SAMPLES_MAX = 50_000;
+/** The most frames the Traffic view keeps; a tenth of them go when there are more. */
+const TRAFFIC_MAX = 50_000;
+/** How long after the last bytes the line is taken as quiet, so a frame left half way is given. */
+const QUIET_MS = 100;
 /** How long a scan waits for each unit. */
 const SCAN_TIMEOUT_MS = 150;
 
@@ -159,13 +175,29 @@ export class ModbusSession {
   /** The number of the first sample the plot reads: Clear in the Plot view moves it on. */
   plotFrom = $state(0);
   private nextSample = 0;
+  /** When the newest sample was read, so frames read again add none twice. */
+  private sampledAt = 0;
+  /**
+   * Every frame on the line lately, oldest first, for the Traffic view.
+   * Plain values, as there can be many: `trafficVersion` changes with them.
+   */
+  readonly traffic: TrafficFrame[] = [];
+  trafficVersion = $state(0);
+  /** How many of the frames kept are bad, and the units and functions seen, for the filters. */
+  badFrames = 0;
+  readonly units = new Set<number>();
+  readonly functions = new Set<number>();
+  private bus: BusReader | null = null;
+  private busMode = "";
+  private nextFrame = 0;
+  /** The newest request kept, which a request after it can mark as unanswered. */
+  private lastRequest: TrafficFrame | null = null;
+  private quietTimer: ReturnType<typeof setTimeout> | undefined;
 
   private readonly host: ModbusHost;
   private reader: ModbusReader | null = null;
   private readerFor = "";
-  private waiting: { unit: number; fc: number; count: number; transaction: number; done: (outcome: Outcome) => void } | null =
-    null;
-  private transaction = 0;
+  private waiting: { unit: number; fc: number; count: number; done: (outcome: Outcome) => void } | null = null;
   private queue: Promise<unknown> = Promise.resolve();
   private pollTimer: ReturnType<typeof setTimeout> | undefined;
   private wake: (() => void) | null = null;
@@ -224,8 +256,7 @@ export class ModbusSession {
         resolve({ problem: "Not connected.", ms: 0 });
         return;
       }
-      this.transaction = (this.transaction + 1) & 0xffff;
-      const bytes = frame(setup.mode, request.unit, requestPdu(request), this.transaction);
+      const bytes = frame(setup.mode, request.unit, requestPdu(request));
       const reader = this.readerOf(setup, true);
       const sentAt = performance.now();
       const elapsed = () => Math.round(performance.now() - sentAt);
@@ -249,7 +280,6 @@ export class ModbusSession {
         unit: request.unit,
         fc: request.fc,
         count: request.count,
-        transaction: this.transaction,
         done: (outcome) => {
           clearTimeout(timer);
           this.waiting = null;
@@ -267,9 +297,7 @@ export class ModbusSession {
       this.addLog("problem", message.problem ?? "a broken message", message.raw);
       return;
     }
-    const setup = this.host.setup();
-    const sameTransaction = setup.mode !== "tcp" || message.transaction === waiting.transaction;
-    if (message.unit !== waiting.unit || (message.pdu[0] & 0x7f) !== waiting.fc || !sameTransaction) {
+    if (message.unit !== waiting.unit || (message.pdu[0] & 0x7f) !== waiting.fc) {
       this.addLog("problem", `an answer to something else, from unit ${message.unit}`, message.raw);
       return;
     }
@@ -304,7 +332,6 @@ export class ModbusSession {
       problem = describeResponse(response);
     } else if (response?.registers || response?.bits) {
       values = response.registers ?? response.bits!.map(Number);
-      this.addSample(request, values);
     } else if (response) {
       text = describeResponse(response);
     }
@@ -315,16 +342,17 @@ export class ModbusSession {
    * Keeps a read's values for the plot, named by their address: hr0, ir5,
    * c3, di1. Registers are read as Show says: signed, or two to a float.
    */
-  private addSample(request: Request, values: number[]): void {
+  private addSample(request: Request, values: number[], at: number): void {
     const kind = { 1: "c", 2: "di", 3: "hr", 4: "ir" }[request.fc as 1 | 2 | 3 | 4];
-    if (!kind) return;
+    if (!kind || at <= this.sampledAt) return;
+    this.sampledAt = at;
     const prefix = request.unit === 1 ? kind : `u${request.unit}.${kind}`;
     const format = this.host.setup().format;
     const registers = request.fc === 3 || request.fc === 4;
     const shown = registers && format !== "hex" && format !== "unsigned" ? formatRegisters(values, format).map(Number) : values;
     this.samples.push({
       n: this.nextSample++,
-      at: Date.now(),
+      at,
       ok: true,
       values: shown
         .map((value, index): [string, number] => [`${prefix}${request.address + index}`, value])
@@ -409,7 +437,7 @@ export class ModbusSession {
     if (fc === 5 || fc === 6 || fc === 15 || fc === 16) this.host.changed();
     // A broadcast is acted on, not answered.
     if (message.unit === 0) return;
-    const bytes = frame(setup.mode, message.unit, reply, message.transaction);
+    const bytes = frame(setup.mode, message.unit, reply);
     this.host.send(bytes);
     const response = parseResponse(message.unit, reply);
     if (typeof response !== "string" && response.exception !== undefined) this.stats.problems++;
@@ -426,5 +454,69 @@ export class ModbusSession {
   stop(): void {
     this.stopPolling();
     this.stopScan();
+  }
+
+  /** Whether the tab is asking or answering, which keeps the line read whatever view is shown. */
+  get busy(): boolean {
+    return this.polling || this.answering;
+  }
+
+  /** Bytes on the line, sent or received, for the Traffic view and the plot. */
+  heard(sent: boolean, bytes: Uint8Array, at: number): void {
+    const mode = this.host.setup().mode;
+    if (!this.bus || mode !== this.busMode) {
+      this.bus = new BusReader(mode);
+      this.busMode = mode;
+    }
+    this.bus.answering = this.answering;
+    const bus = this.bus;
+    this.keep(() => bus.feed(bytes, at, sent));
+    clearTimeout(this.quietTimer);
+    this.quietTimer = setTimeout(() => this.keep(() => bus.pause(Date.now())), QUIET_MS);
+  }
+
+  /** Keeps the frames read, with the bad ones counted: a request among those before can be found unanswered. */
+  private keep(read: () => BusFrame[]): void {
+    const before = this.lastRequest;
+    const wasUnanswered = before?.unanswered ?? true;
+    const frames = read();
+    if (frames.length === 0) return;
+    for (const found of frames) {
+      const kept = Object.assign(found, { n: this.nextFrame++ });
+      this.traffic.push(kept);
+      if (isBad(kept)) this.badFrames++;
+      if (kept.unit !== null) this.units.add(kept.unit);
+      if (kept.fc !== null) this.functions.add(kept.fc);
+      if (kept.kind === "request") this.lastRequest = kept;
+      const values = kept.response?.registers ?? kept.response?.bits?.map(Number);
+      if (kept.request && values) this.addSample(kept.request, values, kept.at);
+    }
+    // A request nothing answered is found so when the next one comes.
+    if (before && !wasUnanswered && before.unanswered) this.badFrames++;
+    if (this.traffic.length > TRAFFIC_MAX) {
+      const gone = this.traffic.splice(0, this.traffic.length - TRAFFIC_MAX + TRAFFIC_MAX / 10);
+      this.badFrames -= gone.filter(isBad).length;
+    }
+    this.trafficVersion++;
+  }
+
+  /** Reads the line again from what came and went lately: as the Traffic view opens, or the mode changes. */
+  readAgain(chunks: { tx: boolean; at: number; bytes: Uint8Array }[]): void {
+    this.clearTraffic();
+    this.bus = null;
+    for (const chunk of chunks) this.heard(chunk.tx, chunk.bytes, chunk.at);
+    const bus = this.bus as BusReader | null;
+    if (bus) this.keep(() => bus.pause(Date.now()));
+    this.trafficVersion++;
+  }
+
+  /** Forgets the frames kept for the Traffic view. */
+  clearTraffic(): void {
+    this.traffic.length = 0;
+    this.badFrames = 0;
+    this.units.clear();
+    this.functions.clear();
+    this.lastRequest = null;
+    this.trafficVersion++;
   }
 }

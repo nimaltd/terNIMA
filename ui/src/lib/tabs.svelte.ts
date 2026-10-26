@@ -3,7 +3,6 @@
 
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { Terminal } from "@xterm/xterm";
-import { DEFAULT_FRAME_SPEC, FrameReader, type Frame, type FrameSpec } from "./frames";
 import { HexDump } from "./hexdump";
 import { DEFAULT_MODBUS, ModbusSession, type ModbusSetup } from "./modbus.svelte";
 import { DEFAULT_TCP, address, protocolText, type TcpConfig } from "./net";
@@ -81,26 +80,9 @@ const RTT_FILE_RATE = 1000;
 const LINES_MAX = 100_000;
 /** The most time, in ms, that lines read at once are spread over. */
 const SPREAD_MS = 200;
-/** The most frames a tab keeps; a tenth of them go when there are more. */
-const FRAMES_MAX = 50_000;
 
 /** A line as the Lines view keeps it: numbered from the tab's first, with when it came. */
 export type StoredLine = LogLine & { n: number; at: number };
-
-/** A frame as the Frames view keeps it: numbered from the tab's first, with when it came. */
-export type StoredFrame = Frame & { n: number; at: number };
-
-/** A frame layout as saved, filled in where it says nothing. */
-function frameSpecFrom(saved: Partial<FrameSpec> | undefined): FrameSpec {
-  const spec = structuredClone(DEFAULT_FRAME_SPEC);
-  return {
-    ...spec,
-    ...saved,
-    length: saved?.length ?? null,
-    fields: saved?.fields ?? [],
-    check: { ...spec.check, ...saved?.check },
-  };
-}
 
 let nextId = 1;
 
@@ -144,7 +126,7 @@ export class Tab {
   playback: PlayState | null = $state(null);
   /** Set to play a recording as soon as it is open. */
   private playWhenOpen = false;
-  /** What the tab shows: the terminal, every byte in hex, every line, or a chart of the numbers. */
+  /** What the tab shows: the terminal, every byte in hex, every line, a chart of the numbers, or Modbus. */
   view: View = $state("terminal");
   /** How the hex view breaks its lines. */
   hexView: HexView = $state({ ...DEFAULT_HEX_VIEW });
@@ -154,23 +136,9 @@ export class Tab {
   plotView: PlotView = $state({ ...DEFAULT_PLOT_VIEW });
   /** The number of the first line the plot reads: Clear in the Plot view moves it on. */
   plotFrom = $state(0);
-  /** The same for frames, when the plot reads them. */
-  plotFromFrame = $state(0);
-  /** How the data is split into frames, for the Frames view and the plot. */
-  frameSpec: FrameSpec = $state(structuredClone(DEFAULT_FRAME_SPEC));
-  /**
-   * The frames read lately, oldest first. Plain values rather than $state,
-   * as there can be many: `framesVersion` changes when they do.
-   */
-  readonly frames: StoredFrame[] = [];
-  framesVersion = $state(0);
-  /** How many of the frames kept are wrong. */
-  badFrames = 0;
-  private nextFrame = 0;
-  private frameReader: FrameReader | null = null;
   /** How the Modbus view asks or answers. */
   modbusSetup: ModbusSetup = $state(structuredClone(DEFAULT_MODBUS));
-  /** The tab's Modbus master or slave, on its own connection. */
+  /** The tab's Modbus master or slave, on its own port, and the frames on the line. */
   readonly modbus = new ModbusSession({
     send: (bytes) => this.sendBytes(bytes),
     setup: () => this.modbusSetup,
@@ -216,6 +184,8 @@ export class Tab {
   private resetting = false;
   /** Set once the "SWO only receives" hint has been shown. */
   private hinted = false;
+  /** Whether the line is being read for Modbus's frames. */
+  private modbusOn = false;
 
   constructor(setup: SessionSetup) {
     this.kind = setup.kind ?? "serial";
@@ -231,13 +201,17 @@ export class Tab {
     this.view = setup.view ?? "terminal";
     this.hexView = { ...DEFAULT_HEX_VIEW, ...setup.hex_view };
     this.linesView = { ...DEFAULT_LINES_VIEW, ...setup.lines_view };
-    this.frameSpec = frameSpecFrom(setup.frames);
     this.modbusSetup = { ...structuredClone(DEFAULT_MODBUS), ...setup.modbus };
     this.plotView = {
       ...DEFAULT_PLOT_VIEW,
       ...setup.plot_view,
       trigger: { ...DEFAULT_PLOT_VIEW.trigger, ...setup.plot_view?.trigger },
     };
+    // Modbus is on serial tabs only: 1.0.0 had it on TCP tabs too.
+    if (this.kind !== "serial") {
+      if (this.view === "modbus") this.view = "terminal";
+      if (this.plotView.mode === "modbus") this.plotView.mode = "auto";
+    }
     this.history = setup.history ?? [];
   }
 
@@ -269,7 +243,6 @@ export class Tab {
       hex_view: this.hexView,
       lines_view: this.linesView,
       plot_view: this.plotView,
-      frames: this.frameSpec,
       modbus: this.modbusSetup,
       history: this.history,
     };
@@ -312,9 +285,10 @@ export class Tab {
     }
   }
 
-  /** Shows the terminal or the hex view. */
+  /** Shows the terminal or another view. */
   setView(view: View): void {
     this.view = view;
+    this.listenForModbus();
     changed();
   }
 
@@ -334,14 +308,51 @@ export class Tab {
   /** Changes how the Plot view reads and shows numbers. */
   setPlotView(plotView: PlotView): void {
     this.plotView = plotView;
+    this.listenForModbus();
     changed();
   }
 
   /** Starts the plot again from the next line, leaving the lines kept as they are. */
   clearPlot(): void {
     this.plotFrom = this.nextLine;
-    this.plotFromFrame = this.nextFrame;
     this.modbus.plotFrom = this.modbus.nextNumber;
+  }
+
+  /**
+   * Whether the line is read for Modbus's frames: while the Modbus view or a
+   * plot of its values is shown, or the tab asks or answers. Not otherwise,
+   * so a terminal at speed is not read as Modbus for nothing.
+   */
+  private get modbusWanted(): boolean {
+    return (
+      this.kind === "serial" &&
+      (this.view === "modbus" || (this.view === "plot" && this.plotView.mode === "modbus") || this.modbus.busy)
+    );
+  }
+
+  /** Starts reading the line for Modbus when it is wanted, from what came and went lately. */
+  private listenForModbus(): void {
+    if (this.modbusWanted && !this.modbusOn) {
+      this.modbusOn = true;
+      this.modbus.readAgain(this.recent);
+    }
+  }
+
+  /** Reads the line for Modbus again from what came and went lately, as its mode changes. */
+  readModbusAgain(): void {
+    this.modbus.readAgain(this.recent);
+  }
+
+  /** Bytes on the line, sent or received, for Modbus's frames while they are wanted. */
+  private hearModbus(sent: boolean, bytes: Uint8Array, at: number): void {
+    if (!this.modbusWanted) {
+      this.modbusOn = false;
+    } else if (!this.modbusOn) {
+      // What came lately holds these bytes already.
+      this.listenForModbus();
+    } else {
+      this.modbus.heard(sent, bytes, at);
+    }
   }
 
   /** Marks a line with a bookmark, or takes the bookmark off. */
@@ -537,8 +548,6 @@ export class Tab {
     this.recentBytes = 0;
     this.layOutHex();
     this.clearLines();
-    this.clearFrames();
-    this.frameReader = null;
     this.rx = 0;
     this.tx = 0;
   }
@@ -759,7 +768,9 @@ export class Tab {
     void invoke("write_session", { id: this.id, data: Array.from(bytes) });
     this.tx += bytes.length;
     this.sentSince = true;
-    this.keepForHex(true, bytes);
+    const at = Date.now();
+    this.keepForHex(true, bytes, at);
+    this.hearModbus(true, bytes, at);
   }
 
   /** Sends a file, paced for the link, with its progress in `sending`. */
@@ -850,67 +861,6 @@ export class Tab {
     void invoke("reset_target", { id: this.id });
   }
 
-  /** Changes how frames are read, and reads what came lately again that way. */
-  setFrameSpec(spec: FrameSpec): void {
-    this.frameSpec = spec;
-    changed();
-    this.clearFrames();
-    this.frameReader = null;
-    for (const chunk of this.recent) {
-      if (!chunk.tx) this.readFrames(chunk.bytes, chunk.at);
-    }
-  }
-
-  /** What a frame layout would read from what came lately, before it is kept. */
-  previewFrames(spec: FrameSpec): { frames: number; good: number; first: Frame | null; problem: string | null } {
-    const reader = new FrameReader(spec);
-    let frames = 0;
-    let good = 0;
-    let first: Frame | null = null;
-    let problem: string | null = null;
-    for (const chunk of this.recent) {
-      if (chunk.tx) continue;
-      for (const frame of reader.feed(chunk.bytes, chunk.at)) {
-        frames++;
-        if (frame.ok) {
-          good++;
-          first ??= frame;
-        } else {
-          problem ??= frame.problem;
-        }
-      }
-    }
-    return { frames, good, first, problem };
-  }
-
-  /** Forgets the frames read, as Clear does for the terminal. */
-  clearFrames(): void {
-    this.frames.length = 0;
-    this.badFrames = 0;
-    this.framesVersion++;
-  }
-
-  /** Reads frames from received bytes, when a decoder is picked. */
-  private readFrames(bytes: Uint8Array, at: number): void {
-    if (this.frameSpec.decoder === "off") {
-      return;
-    }
-    this.frameReader ??= new FrameReader($state.snapshot(this.frameSpec));
-    const found = this.frameReader.feed(bytes, at);
-    if (found.length === 0) {
-      return;
-    }
-    for (const frame of found) {
-      this.frames.push({ ...frame, n: this.nextFrame++, at });
-      if (!frame.ok) this.badFrames++;
-    }
-    if (this.frames.length > FRAMES_MAX) {
-      const gone = this.frames.splice(0, this.frames.length - FRAMES_MAX + FRAMES_MAX / 10);
-      this.badFrames -= gone.filter((frame) => !frame.ok).length;
-    }
-    this.framesVersion++;
-  }
-
   /** Bytes from the device, with when they came: now, or when a recording says. */
   private receive(bytes: Uint8Array, at = Date.now()): void {
     this.rx += bytes.length;
@@ -930,8 +880,8 @@ export class Tab {
     this.sentSince = false;
     this.write(bytes);
     this.keepForHex(false, bytes, at);
-    this.readFrames(bytes, at);
     this.modbus.receive(bytes, at);
+    this.hearModbus(false, bytes, at);
   }
 
   /** Keeps bytes for the hex view, and shows them there if it is open. */

@@ -61,7 +61,7 @@ jobs:
           tagName: v__VERSION__
           releaseName: terNIMA v__VERSION__
           releaseBody: |
-            A serial, RTT, SWO and TCP terminal for embedded developers, with Zephyr logs, a plotter, frame decoders, a Modbus tester, and record and replay.
+            A serial, RTT, SWO and TCP terminal for embedded developers, with Zephyr logs, a plotter, a Modbus RTU and ASCII tester with every frame on the bus, and record and replay.
 
             **Downloads**
             - Windows 10 and 11: the `-setup.exe` installer, or the `.msi`
