@@ -111,12 +111,16 @@ export type PlotView = {
   x_series: string;
   /** The histogram's bins; 0 picks them from the values. */
   bins: number;
+  /** The series the histogram counts; empty for the first. */
+  hist_series: string;
   fft_window: "hann" | "hamming" | "blackman" | "rect";
   /** The FFT in dB rather than as amplitudes. */
   fft_db: boolean;
   /** Samples a second for the FFT; 0 measures it from when the lines came. */
   fft_rate: number;
   trigger: Trigger;
+  /** Keeps the help over the chart while values come too; it shows on its own while there are none. */
+  help: boolean;
 };
 
 export const DEFAULT_TRIGGER: Trigger = { on: false, series: "", level: 0, edge: "rising", single: false };
@@ -129,10 +133,12 @@ export const DEFAULT_PLOT_VIEW: PlotView = {
   chart: "time",
   x_series: "",
   bins: 0,
+  hist_series: "",
   fft_window: "hann",
   fft_db: true,
   fft_rate: 0,
   trigger: DEFAULT_TRIGGER,
+  help: false,
 };
 
 /** How the hex view breaks its lines, besides the tab's pause. It only changes what is shown. */

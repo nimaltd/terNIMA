@@ -53,298 +53,299 @@
   }
 </script>
 
+<!-- What the tab is connected to on the left; how it shows on the right, where it stays as other views come and go. -->
 <div class="toolbar">
-  {#if tab.kind === "replay"}
-    {#if tab.playback?.playing}
-      <button class="btn play" title="Pause (the tab keeps what it showed)" onclick={() => act(() => tab.pause())}>Pause</button>
-    {:else}
-      <button class="btn primary play" title="Play the recording from where it is" onclick={() => act(() => tab.play())}>Play</button>
-    {/if}
-    <button
-      class="btn small"
-      disabled={!tab.running}
-      title="Play from the start again"
-      onclick={() =>
-        act(() => {
-          tab.seek(0);
-          tab.play();
-        })}
-    >
-      Restart
-    </button>
-  {:else if tab.running}
-    <button class="btn" onclick={() => act(() => tab.stop())}>Disconnect</button>
-  {:else}
-    <button class="btn primary" onclick={() => act(() => tab.start())}>Connect</button>
-  {/if}
-
-  {#if tab.kind === "serial"}
-    <button class="btn target" title="Port settings" onclick={onsettings}>
-      <span class="mono">{tab.port.name}</span>
-      <span class="muted mono">{summary(tab.serial)}</span>
-      <span class="muted">▾</span>
-    </button>
-
-    <span class="separator"></span>
-
-    <label class="check" title="Data terminal ready: an output line some boards use for reset">
-      <input
-        type="checkbox"
-        checked={tab.serial.dtr}
-        onchange={(event) => act(() => tab.setDtr(event.currentTarget.checked))}
-      />
-      DTR
-    </label>
-    <label
-      class="check"
-      title={tab.serial.flow === "rtscts"
-        ? "RTS is used by RTS/CTS flow control"
-        : "Request to send: an output line some boards use for boot mode"}
-    >
-      <input
-        type="checkbox"
-        checked={tab.serial.rts}
-        disabled={tab.serial.flow === "rtscts"}
-        onchange={(event) => act(() => tab.setRts(event.currentTarget.checked))}
-      />
-      RTS
-    </label>
-    <button
-      class="btn small"
-      disabled={!tab.connected}
-      title="Hold the TX line low for 250 ms"
-      onclick={() => act(() => tab.sendBreak())}
-    >
-      Break
-    </button>
-
-    <span class="separator"></span>
-
-    <div class="leds" title="Input lines from the device">
-      {#each LINES as line (line.key)}
-        <span class="led" class:on={tab.lines?.[line.key] ?? false} title={line.title}>{line.label}</span>
-      {/each}
-    </div>
-  {:else if tab.kind === "rtt"}
-    <button class="btn target" title="RTT settings" onclick={onsettings}>
-      <span class="mono">{tab.rtt.chip || "No chip"}</span>
-      <span class="muted">RTT</span>
-      <span class="muted">▾</span>
-    </button>
-
-    <span class="separator"></span>
-
-    <label class="option" title="The up channel shown in the terminal">
-      Channel
-      <select
-        class="field"
-        value={tab.rtt.up_channel}
-        onchange={(event) =>
-          act(() => tab.reconfigureRtt({ ...tab.rtt, up_channel: Number(event.currentTarget.value) }))}
-      >
-        {#if tab.channels && tab.channels.up.length > 0}
-          {#each tab.channels.up as channel (channel.number)}
-            <option value={channel.number}>{channelText(channel)}</option>
-          {/each}
-        {:else}
-          <option value={tab.rtt.up_channel}>{tab.rtt.up_channel}</option>
-        {/if}
-      </select>
-    </label>
-    <button
-      class="btn small"
-      disabled={!tab.connected}
-      title="Reset the chip through the probe, then find RTT again"
-      onclick={() => act(() => tab.resetTarget())}
-    >
-      Reset target
-    </button>
-  {:else if tab.kind === "tcp"}
-    <button class="btn target" title="Connection settings" onclick={onsettings}>
-      <span class="mono">{address(tab.tcp)}</span>
-      <span class="muted">{protocolText(tab.tcp)}</span>
-      <span class="muted">▾</span>
-    </button>
-  {:else if tab.kind === "replay"}
-    <button class="btn target" title={`${tab.replay.path}: click to play another recording`} onclick={onsettings}>
-      <span class="mono file">{fileName(tab.replay.path)}</span>
-      <span class="muted">▾</span>
-    </button>
-
-    <span class="separator"></span>
-
-    <label class="option" title="How fast it plays, against how it was recorded">
-      Speed
-      <select
-        class="field"
-        value={String(tab.replay.speed)}
-        onchange={(event) => act(() => tab.setSpeed(Number(event.currentTarget.value)))}
-      >
-        {#each [...new Set([...SPEEDS, tab.replay.speed])].sort((a, b) => a - b) as speed (speed)}
-          <option value={String(speed)}>{speed}×</option>
-        {/each}
-      </select>
-    </label>
-    <input
-      class="seek"
-      type="range"
-      min="0"
-      max={length}
-      step="any"
-      value={seeking ?? position}
-      disabled={!tab.running || length === 0}
-      title="Go to a point in the recording"
-      aria-label="Position in the recording"
-      oninput={(event) => (seeking = Number(event.currentTarget.value))}
-      onchange={(event) => {
-        tab.seek(Number(event.currentTarget.value));
-        seeking = null;
-        activeTerminal()?.focus();
-      }}
-    />
-    <span class="time">{playTime(seeking ?? position)} / {playTime(length)}</span>
-  {:else}
-    <button class="btn target" title="SWO settings" onclick={onsettings}>
-      <span class="mono">{tab.swo.chip || "No chip"}</span>
-      <span class="muted">SWO {hzText(tab.swo.baud)}</span>
-      <span class="muted">▾</span>
-    </button>
-
-    <span class="separator"></span>
-
-    <label class="option" title="The ITM stimulus port shown">
-      Port
-      <select
-        class="field"
-        value={tab.swo.all_ports ? "all" : String(tab.swo.port)}
-        onchange={(event) =>
+  <div class="main">
+    {#if tab.kind === "replay"}
+      {#if tab.playback?.playing}
+        <button class="btn play" title="Pause (the tab keeps what it showed)" onclick={() => act(() => tab.pause())}>Pause</button>
+      {:else}
+        <button class="btn primary play" title="Play the recording from where it is" onclick={() => act(() => tab.play())}>Play</button>
+      {/if}
+      <button
+        class="btn small"
+        disabled={!tab.running}
+        title="Play from the start again"
+        onclick={() =>
           act(() => {
-            const value = event.currentTarget.value;
-            tab.reconfigureSwo(
-              value === "all"
-                ? { ...tab.swo, all_ports: true }
-                : { ...tab.swo, all_ports: false, port: Number(value) },
-            );
+            tab.seek(0);
+            tab.play();
           })}
       >
-        <option value="all">All</option>
-        {#each Array.from({ length: 32 }, (_, port) => port) as port (port)}
-          <option value={String(port)}>{port}</option>
-        {/each}
-      </select>
-    </label>
-    <button
-      class="btn small"
-      disabled={!tab.connected}
-      title="Reset the chip through the probe, then turn SWO on again"
-      onclick={() => act(() => tab.resetTarget())}
-    >
-      Reset target
-    </button>
-  {/if}
-
-  <span class="spacer"></span>
-
-  {#if tab.kind !== "replay"}
-    <button
-      class="btn small log"
-      class:on={tab.log}
-      title={tab.logPath ?? (tab.log ? "The log starts when the tab connects" : "Write what this tab receives to a log file")}
-      onclick={() => act(() => tab.setLog(!tab.log))}
-    >
-      <span class="dot"></span>
-      Log
-    </button>
-    <button
-      class="btn small log"
-      class:on={tab.recordPath !== null}
-      disabled={!tab.running}
-      title={tab.recordPath ??
-        (tab.running
-          ? "Record what this tab receives and sends, with its timing, to play it back later (File > Play a recording)"
-          : "Connect first, then record")}
-      onclick={() => act(() => tab.setRecording(tab.recordPath === null))}
-    >
-      <span class="dot"></span>
-      Rec
-    </button>
-  {/if}
-
-  <div class="views" role="group" aria-label="View">
-    {#each views as { view, label, title } (view)}
-      <button
-        class="view"
-        class:on={tab.view === view}
-        aria-pressed={tab.view === view}
-        {title}
-        onclick={() => act(() => tab.setView(view))}
-      >
-        {label}
+        Restart
       </button>
-    {/each}
-  </div>
+    {:else if tab.running}
+      <button class="btn" onclick={() => act(() => tab.stop())}>Disconnect</button>
+    {:else}
+      <button class="btn primary" onclick={() => act(() => tab.start())}>Connect</button>
+    {/if}
 
-  <!-- The Modbus view frames what it sends itself: the terminal's settings are not for it. -->
-  {#if tab.view !== "modbus"}
-    <label
-      class="option"
-      title="Starts a new line when data comes after a pause this long, so each message starts on its own line. Not after what you type, so a shell's echo stays on its line. Only the view changes."
-    >
-      New line after
-      <select
-        class="field"
-        value={String(tab.terminal.pause_ms)}
-        onchange={(event) => act(() => tab.setPause(Number(event.currentTarget.value)))}
-      >
-        {#each [...new Set([...PAUSES, tab.terminal.pause_ms])].sort((a, b) => a - b) as ms (ms)}
-          <option value={String(ms)}>{pauseText(ms)}</option>
-        {/each}
-      </select>
-    </label>
+    {#if tab.kind === "serial"}
+      <button class="btn target" title="Port settings" onclick={onsettings}>
+        <span class="mono">{tab.port.name}</span>
+        <span class="muted mono">{summary(tab.serial)}</span>
+        <span class="muted">▾</span>
+      </button>
 
-    {#if tab.kind === "swo"}
-      <span class="muted" title="SWO only comes from the chip">Output only</span>
-    {:else if tab.kind !== "replay"}
-      <label class="option" title="What the Enter key sends">
-        Enter
-        <select
-          class="field"
-          value={tab.terminal.enter}
-          onchange={(event) =>
-            act(() => {
-              tab.terminal.enter = event.currentTarget.value as LineEnding;
-              changed();
-            })}
-        >
-          <option value="cr">CR</option>
-          <option value="lf">LF</option>
-          <option value="crlf">CR LF</option>
-        </select>
-      </label>
-      <label class="check" title="Show what you type, for devices that do not echo it">
+      <span class="separator"></span>
+
+      <label class="check" title="Data terminal ready: an output line some boards use for reset">
         <input
           type="checkbox"
-          checked={tab.terminal.local_echo}
+          checked={tab.serial.dtr}
+          onchange={(event) => act(() => tab.setDtr(event.currentTarget.checked))}
+        />
+        DTR
+      </label>
+      <label
+        class="check"
+        title={tab.serial.flow === "rtscts"
+          ? "RTS is used by RTS/CTS flow control"
+          : "Request to send: an output line some boards use for boot mode"}
+      >
+        <input
+          type="checkbox"
+          checked={tab.serial.rts}
+          disabled={tab.serial.flow === "rtscts"}
+          onchange={(event) => act(() => tab.setRts(event.currentTarget.checked))}
+        />
+        RTS
+      </label>
+      <button
+        class="btn small"
+        disabled={!tab.connected}
+        title="Hold the TX line low for 250 ms"
+        onclick={() => act(() => tab.sendBreak())}
+      >
+        Break
+      </button>
+
+      <span class="separator"></span>
+
+      <div class="leds" title="Input lines from the device">
+        {#each LINES as line (line.key)}
+          <span class="led" class:on={tab.lines?.[line.key] ?? false} title={line.title}>{line.label}</span>
+        {/each}
+      </div>
+    {:else if tab.kind === "rtt"}
+      <button class="btn target" title="RTT settings" onclick={onsettings}>
+        <span class="mono">{tab.rtt.chip || "No chip"}</span>
+        <span class="muted">RTT</span>
+        <span class="muted">▾</span>
+      </button>
+
+      <span class="separator"></span>
+
+      <label class="option" title="The up channel shown in the terminal">
+        Channel
+        <select
+          class="field"
+          value={tab.rtt.up_channel}
+          onchange={(event) =>
+            act(() => tab.reconfigureRtt({ ...tab.rtt, up_channel: Number(event.currentTarget.value) }))}
+        >
+          {#if tab.channels && tab.channels.up.length > 0}
+            {#each tab.channels.up as channel (channel.number)}
+              <option value={channel.number}>{channelText(channel)}</option>
+            {/each}
+          {:else}
+            <option value={tab.rtt.up_channel}>{tab.rtt.up_channel}</option>
+          {/if}
+        </select>
+      </label>
+      <button
+        class="btn small"
+        disabled={!tab.connected}
+        title="Reset the chip through the probe, then find RTT again"
+        onclick={() => act(() => tab.resetTarget())}
+      >
+        Reset target
+      </button>
+    {:else if tab.kind === "tcp"}
+      <button class="btn target" title="Connection settings" onclick={onsettings}>
+        <span class="mono">{address(tab.tcp)}</span>
+        <span class="muted">{protocolText(tab.tcp)}</span>
+        <span class="muted">▾</span>
+      </button>
+    {:else if tab.kind === "replay"}
+      <button class="btn target" title={`${tab.replay.path}: click to play another recording`} onclick={onsettings}>
+        <span class="mono file">{fileName(tab.replay.path)}</span>
+        <span class="muted">▾</span>
+      </button>
+
+      <span class="separator"></span>
+
+      <label class="option" title="How fast it plays, against how it was recorded">
+        Speed
+        <select
+          class="field"
+          value={String(tab.replay.speed)}
+          onchange={(event) => act(() => tab.setSpeed(Number(event.currentTarget.value)))}
+        >
+          {#each [...new Set([...SPEEDS, tab.replay.speed])].sort((a, b) => a - b) as speed (speed)}
+            <option value={String(speed)}>{speed}×</option>
+          {/each}
+        </select>
+      </label>
+      <input
+        class="seek"
+        type="range"
+        min="0"
+        max={length}
+        step="any"
+        value={seeking ?? position}
+        disabled={!tab.running || length === 0}
+        title="Go to a point in the recording"
+        aria-label="Position in the recording"
+        oninput={(event) => (seeking = Number(event.currentTarget.value))}
+        onchange={(event) => {
+          tab.seek(Number(event.currentTarget.value));
+          seeking = null;
+          activeTerminal()?.focus();
+        }}
+      />
+      <span class="time">{playTime(seeking ?? position)} / {playTime(length)}</span>
+    {:else}
+      <button class="btn target" title="SWO settings" onclick={onsettings}>
+        <span class="mono">{tab.swo.chip || "No chip"}</span>
+        <span class="muted">SWO {hzText(tab.swo.baud)}</span>
+        <span class="muted">▾</span>
+      </button>
+
+      <span class="separator"></span>
+
+      <label class="option" title="The ITM stimulus port shown">
+        Port
+        <select
+          class="field"
+          value={tab.swo.all_ports ? "all" : String(tab.swo.port)}
           onchange={(event) =>
             act(() => {
-              tab.terminal.local_echo = event.currentTarget.checked;
-              changed();
+              const value = event.currentTarget.value;
+              tab.reconfigureSwo(
+                value === "all"
+                  ? { ...tab.swo, all_ports: true }
+                  : { ...tab.swo, all_ports: false, port: Number(value) },
+              );
             })}
-        />
-        Echo
+        >
+          <option value="all">All</option>
+          {#each Array.from({ length: 32 }, (_, port) => port) as port (port)}
+            <option value={String(port)}>{port}</option>
+          {/each}
+        </select>
       </label>
+      <button
+        class="btn small"
+        disabled={!tab.connected}
+        title="Reset the chip through the probe, then turn SWO on again"
+        onclick={() => act(() => tab.resetTarget())}
+      >
+        Reset target
+      </button>
     {/if}
-  {/if}
+
+    <!-- The Modbus view frames what it sends itself: the terminal's settings are not for it. -->
+    {#if tab.view !== "modbus"}
+      <div class="terminal">
+        <label
+          class="option"
+          title="Starts a new line when data comes after a pause this long, so each message starts on its own line. Not after what you type, so a shell's echo stays on its line. Only the view changes."
+        >
+          New line after
+          <select
+            class="field"
+            value={String(tab.terminal.pause_ms)}
+            onchange={(event) => act(() => tab.setPause(Number(event.currentTarget.value)))}
+          >
+            {#each [...new Set([...PAUSES, tab.terminal.pause_ms])].sort((a, b) => a - b) as ms (ms)}
+              <option value={String(ms)}>{pauseText(ms)}</option>
+            {/each}
+          </select>
+        </label>
+
+        {#if tab.kind === "swo"}
+          <span class="muted" title="SWO only comes from the chip">Output only</span>
+        {:else if tab.kind !== "replay"}
+          <label class="option" title="What the Enter key sends">
+            Enter
+            <select
+              class="field"
+              value={tab.terminal.enter}
+              onchange={(event) =>
+                act(() => {
+                  tab.terminal.enter = event.currentTarget.value as LineEnding;
+                  changed();
+                })}
+            >
+              <option value="cr">CR</option>
+              <option value="lf">LF</option>
+              <option value="crlf">CR LF</option>
+            </select>
+          </label>
+          <label class="check" title="Show what you type, for devices that do not echo it">
+            <input
+              type="checkbox"
+              checked={tab.terminal.local_echo}
+              onchange={(event) =>
+                act(() => {
+                  tab.terminal.local_echo = event.currentTarget.checked;
+                  changed();
+                })}
+            />
+            Echo
+          </label>
+        {/if}
+      </div>
+    {/if}
+  </div>
+
+  <div class="side">
+    {#if tab.kind !== "replay"}
+      <button
+        class="btn small log"
+        class:on={tab.log}
+        title={tab.logPath ?? (tab.log ? "The log starts when the tab connects" : "Write what this tab receives to a log file")}
+        onclick={() => act(() => tab.setLog(!tab.log))}
+      >
+        <span class="dot"></span>
+        Log
+      </button>
+      <button
+        class="btn small log"
+        class:on={tab.recordPath !== null}
+        disabled={!tab.running}
+        title={tab.recordPath ??
+          (tab.running
+            ? "Record what this tab receives and sends, with its timing, to play it back later (File > Play a recording)"
+            : "Connect first, then record")}
+        onclick={() => act(() => tab.setRecording(tab.recordPath === null))}
+      >
+        <span class="dot"></span>
+        Rec
+      </button>
+    {/if}
+
+    <div class="views" role="group" aria-label="View">
+      {#each views as { view, label, title } (view)}
+        <button
+          class="view"
+          class:on={tab.view === view}
+          aria-pressed={tab.view === view}
+          {title}
+          onclick={() => act(() => tab.setView(view))}
+        >
+          {label}
+        </button>
+      {/each}
+    </div>
+  </div>
 </div>
 
 <style>
-  /* Where there is no room for all of it, it takes a second row on the right rather than hide some. */
   .toolbar {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 6px 10px;
+    gap: 10px;
     /* 40px tall on one row: the padding adds to this. */
     min-height: 30px;
     padding: 5px 10px;
@@ -354,8 +355,37 @@
     border-bottom: 1px solid var(--border);
   }
 
-  .toolbar > * {
+  /* Where there is no room for all of it, the left part takes a second row rather than hide some. */
+  .main {
+    display: flex;
+    flex: 1;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    min-width: 0;
+  }
+
+  .main > *,
+  .side > * {
     flex-shrink: 0;
+  }
+
+  /* The terminal's options keep to the right, next to the views. */
+  .terminal {
+    display: flex;
+    align-items: center;
+    gap: 6px 10px;
+    margin-left: auto;
+  }
+
+  /* Log, Rec and the views: always at the top right. */
+  .side {
+    display: flex;
+    flex: none;
+    align-items: center;
+    align-self: flex-start;
+    gap: 10px;
+    min-height: 30px;
   }
 
   .target {
@@ -376,10 +406,6 @@
     width: 1px;
     height: 20px;
     background: var(--border);
-  }
-
-  .spacer {
-    flex: 1;
   }
 
   .check,

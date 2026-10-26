@@ -5,7 +5,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
-## [1.0.0] - 2026-10-25
+## [1.0.0] - 2026-10-26
 
 The first release, for Windows, macOS and Linux. The apps are not signed
 yet; the README says how to open them.
@@ -264,6 +264,28 @@ yet; the README says how to open them.
   devices that send messages without line endings. Not after what was just
   typed or sent, so a shell's echo stays on its line. Only the view
   changes; logs keep the bytes as they came.
+- Help in the middle of the Plot view's chart: what the chart is, and a
+  line of C that sends what it needs, with the line it prints; for Regex
+  and Modbus, how they read. It shows while there are no values, and ? in
+  the bar shows it over them.
+- The time chart glides with the clock while it follows the newest
+  values, a frame at a time rather than a step at each line, and stands
+  still when no values come.
+- A drag with the right mouse button moves a chart along, as a hand would.
+- RMS and peak to peak in the plot's table, which is for the time shown,
+  its columns and each series' decimals kept as values come so the digits
+  stay still. With A and B placed on the time chart, a second table under
+  it has the time between them: each series' value at A and at B, the
+  change, and its min, max, peak to peak, mean, RMS, deviation and points
+  there.
+- The histogram counts one series at a time, picked in Series or in the
+  table, as series far apart, such as 2048 and 1 to 6, would share bins too
+  wide for either.
+- Another way of reading the lines, or another regex, starts the plot
+  again: the cursors and a trigger's last crossing belonged to the values
+  before.
+- Log, Rec and the view buttons keep their place at the top right of the
+  toolbar, whatever the view leaves out of it.
 
 ### Removed
 

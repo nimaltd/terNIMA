@@ -1,12 +1,16 @@
-# 📟 ternima
+# 📟 terNIMA
 
 [![CI](https://github.com/nimaltd/ternima/actions/workflows/ci.yml/badge.svg)](https://github.com/nimaltd/ternima/actions/workflows/ci.yml)
 [![Stars](https://img.shields.io/github/stars/nimaltd/ternima?style=social)](https://github.com/nimaltd/ternima)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE.md)
 
-A serial, RTT and Zephyr terminal for embedded developers, the same on Windows, Linux and macOS.
+A serial, RTT, SWO and TCP terminal for embedded developers, the same on Windows, macOS and Linux.
 
 The name is "terminal" with my name, Nima, in it: ter-NIMA.
+
+![terNIMA showing Zephyr logs by level and module, with highlights](https://nimaltd.github.io/assets/ternima-logs.png)
+
+More of it, feature by feature, is on [nimaltd.github.io](https://nimaltd.github.io/#ternima).
 
 ---
 
@@ -34,42 +38,24 @@ What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 
 - Serial ports with every option: any baud rate, data bits, parity, stop bits, flow control, DTR, RTS and break
 - SEGGER RTT through CMSIS-DAP, J-Link and ST-Link probes, with no vendor software needed
+- SWO through the same probes: ITM output such as printf, from one stimulus port or all of them
 - RTT over TCP while your IDE is debugging, from J-Link or OpenOCD
 - TCP and Telnet sessions, for devices and serial bridges on the network
 - A send box with history, macros on Alt+1 to Alt+9, hex sending, and sending a file
 - A full VT100 / xterm terminal with 256 and 24-bit color, so the Zephyr shell works as it should
 - Zephyr logs you can filter by level and module
 - Log, hex and plot views of the same data, side by side if you like
-- A live plotter with XY, histogram, FFT and a scope trigger, Arduino Serial Plotter format included
+- A live plotter for the numbers in the lines, Arduino Serial Plotter format included: over time with cursors, stats and a scope trigger, XY, histogram and FFT
 - Record a session and play it back later with its timing, faster or slower, from any point
 - A Modbus RTU and ASCII tester on serial ports, as a master that polls and plots, or as a slave that answers
 - Every Modbus frame on the bus in a table, each response under its request, checked, with the time it took
 - Remembers everything when you close it, finds your device again even if its COM number changed, and reconnects when you plug it back in
 
-Coming next: probe tools to watch variables live from your ELF, read registers by name from SVD files, and decode crash addresses.
-
----
-
-## 🗺️ Roadmap
-
-| Phase | What | |
-|---|---|---|
-| 0 | Skeleton: the app window and builds for all three OSes | ✅ |
-| 1 | Serial | ✅ |
-| 2 | RTT and network | ✅ |
-| 3 | Log, hex and input | ✅ |
-| 4 | Plotter | ✅ |
-| 5 | Probe tools | next |
-| 6 | Device and protocol tools | Modbus done |
-| 7 | 1.0 | released; signing, auto update and package managers to come |
-
-Each phase's checklist is in [docs/PLAN.md](docs/PLAN.md#roadmap).
-
 ---
 
 ## 🛠️ Building it
 
-ternima is written in Rust and TypeScript with [Tauri](https://tauri.app). With Rust, Node.js and Tauri's prerequisites installed:
+terNIMA is written in Rust and TypeScript with [Tauri](https://tauri.app). With Rust, Node.js and Tauri's prerequisites installed:
 
 ```bash
 npm install

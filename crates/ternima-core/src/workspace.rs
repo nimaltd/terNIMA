@@ -305,6 +305,9 @@ pub struct PlotView {
     pub x_series: String,
     /// The histogram's bins; 0 picks them from the values.
     pub bins: u32,
+    /// The series the histogram counts; empty for the first.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub hist_series: String,
     pub fft_window: FftWindow,
     /// The FFT in dB rather than as amplitudes.
     pub fft_db: bool,
@@ -312,6 +315,9 @@ pub struct PlotView {
     pub fft_rate: f64,
     #[serde(skip_serializing_if = "is_default")]
     pub trigger: Trigger,
+    /// Keeps the help on what the chart is and what to send for it over the
+    /// chart while values come too; it shows on its own while there are none.
+    pub help: bool,
 }
 
 impl Default for PlotView {
@@ -324,10 +330,12 @@ impl Default for PlotView {
             chart: Chart::Time,
             x_series: String::new(),
             bins: 0,
+            hist_series: String::new(),
             fft_window: FftWindow::Hann,
             fft_db: true,
             fft_rate: 0.0,
             trigger: Trigger::default(),
+            help: false,
         }
     }
 }
@@ -756,6 +764,7 @@ mod tests {
                     window_ms: 500,
                     hidden: vec!["hum".into()],
                     chart: Chart::Fft,
+                    hist_series: "adc".into(),
                     fft_rate: 1000.0,
                     trigger: Trigger {
                         on: true,
@@ -763,6 +772,7 @@ mod tests {
                         edge: Edge::Falling,
                         ..Trigger::default()
                     },
+                    help: true,
                     ..PlotView::default()
                 },
                 ..nucleo()
@@ -774,6 +784,8 @@ mod tests {
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains("mode = \"regex\""), "{text}");
         assert!(text.contains("chart = \"fft\""), "{text}");
+        assert!(text.contains("hist_series = \"adc\""), "{text}");
+        assert!(text.contains("help = true"), "{text}");
     }
 
     #[test]

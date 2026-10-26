@@ -45,6 +45,37 @@
     { chart: "histogram", label: "Histogram", title: "How often each value comes: its spread and noise" },
     { chart: "fft", label: "FFT", title: "The frequencies in the values" },
   ];
+  /** What each chart shows, and a line of C that sends what it needs, with what it prints. */
+  const GUIDES: Record<Chart, { title: string; what: string; send: string; code: string; line: string }> = {
+    time: {
+      title: "Time",
+      what: "Each value over time, with cursors, stats and a trigger.",
+      send: "Send a line for each reading, a name before each value:",
+      code: 'printf("temp=%.1f hum=%.1f\\n", temp, hum);',
+      line: "temp=21.5 hum=40.2",
+    },
+    xy: {
+      title: "XY",
+      what: "One value against another, as an X-Y scope: a circle, a Lissajous figure, a line.",
+      send: "Send both values on each line, then pick the one along the bottom in X:",
+      code: 'printf("x=%.3f y=%.3f\\n", x, y);',
+      line: "x=0.500 y=-0.207",
+    },
+    histogram: {
+      title: "Histogram",
+      what: "How often each value comes: the spread and the noise of a reading.",
+      send: "Send the reading again and again, one line each:",
+      code: 'printf("adc=%d\\n", adc);',
+      line: "adc=2048",
+    },
+    fft: {
+      title: "FFT",
+      what: "The frequencies in a signal, the strongest named in the table.",
+      send: "Send samples at a steady rate, one line each, and type that rate in Rate:",
+      code: 'printf("sig=%.4f\\n", sample);',
+      line: "sig=0.7071",
+    },
+  };
   const SPANS = [
     { ms: 100, label: "last 100 ms" },
     { ms: 500, label: "last 500 ms" },
@@ -90,6 +121,8 @@
   const lineNumbers: number[] = [];
   const columns: (number | null)[][] = [];
   const columnOf = new Map<string, number>();
+  /** The most decimals each series' values have had, up to 6, so the table shows them all with as many. */
+  const decimalsOf: number[] = [];
   /** The series' names, in the order they first came. */
   let names: string[] = $state([]);
   /** Set when a line had more values than the chart has series for. */
@@ -129,6 +162,10 @@
   let statsTimer: ReturnType<typeof setTimeout> | undefined;
   let frame = 0;
   let slow: ReturnType<typeof setTimeout> | undefined;
+  /** The frame that moves a following time chart with the clock, while one is asked for. */
+  let glideFrame = 0;
+  /** About how far apart the values come, in seconds: a gliding chart keeps a little more than that behind the clock. */
+  let spacing = 0.05;
 
   let regexDraft = $state(untrack(() => tab.plotView.regex));
   let regexTimer: ReturnType<typeof setTimeout> | undefined;
@@ -160,6 +197,7 @@
     lineNumbers.length = 0;
     columns.length = 0;
     columnOf.clear();
+    decimalsOf.length = 0;
     names = [];
     tooMany = false;
     scanned = 0;
@@ -169,6 +207,7 @@
   function restart() {
     reset();
     origin = null;
+    spacing = 0.05;
     cursorA = cursorB = null;
     triggeredAt = null;
     armedAt = -Infinity;
@@ -217,7 +256,9 @@
     const values = valuesOf(item, mode, regex);
     if (values.length === 0) return;
     const row = times.length;
-    times.push(Math.max((item.at - origin) / 1000, times[row - 1] ?? 0));
+    const time = Math.max((item.at - origin) / 1000, times[row - 1] ?? 0);
+    if (row > 0) spacing += (time - times[row - 1] - spacing) * 0.05;
+    times.push(time);
     lineNumbers.push(item.n);
     for (const column of columns) column.push(null);
     for (const [name, value] of values) {
@@ -230,9 +271,11 @@
         index = columns.length;
         columnOf.set(name, index);
         columns.push(new Array(row + 1).fill(null));
+        decimalsOf.push(0);
         names.push(name);
       }
       columns[index][row] = value;
+      if (decimalsOf[index] < 6) decimalsOf[index] = Math.max(decimalsOf[index], decimalsIn(value));
     }
   }
 
@@ -258,11 +301,12 @@
     }
   }
 
-  // Another way of reading the lines, or Clear, reads them all again.
+  // Another way of reading the lines, or Clear, starts again from nothing: the
+  // values, the cursors and the trigger's last crossing all belonged to the old ones.
   $effect(() => {
     void [tab.plotView.mode, pattern, tab.plotFrom, tab.modbus.plotFrom];
     untrack(() => {
-      const from = `${tab.plotFrom} ${tab.modbus.plotFrom}`;
+      const from = `${tab.plotView.mode} ${pattern?.source ?? ""} ${tab.plotFrom} ${tab.modbus.plotFrom}`;
       if (from !== plottedFrom) {
         plottedFrom = from;
         restart();
@@ -279,7 +323,7 @@
   let lastKind: Chart | null = null;
   $effect(() => {
     const view = tab.plotView;
-    void [view.chart, view.x_series, view.bins, view.fft_window, view.fft_db, view.fft_rate, view.window_ms];
+    void [view.chart, view.x_series, view.hist_series, view.bins, view.fft_window, view.fft_db, view.fft_rate, view.window_ms];
     void [trigger.on, trigger.series, trigger.level, trigger.edge, trigger.single];
     untrack(() => {
       if (view.chart !== lastKind) {
@@ -335,16 +379,67 @@
       showRange();
     }
     touchStats(false);
+    if (gliding() && glideFrame === 0) glideFrame = requestAnimationFrame(glide);
   }
 
-  /** The series on the chart, by their place in `names`: all of them, but XY's x. */
+  /** Whether the time chart follows the newest values with the clock: not with the trigger on, nor showing all. */
+  function gliding(): boolean {
+    return follow && tab.plotView.chart === "time" && tab.plotView.window_ms > 0 && !trigger.on && origin !== null;
+  }
+
+  /** Now, in the chart's seconds. */
+  function clockTime(): number {
+    return (Date.now() - (origin ?? Date.now())) / 1000;
+  }
+
+  /** How far behind the clock a gliding chart keeps: a little more than the time between values. */
+  function lag(): number {
+    return Math.min(1, Math.max(0.02, spacing * 1.5));
+  }
+
+  /**
+   * Moves a following time chart with the clock, a frame at a time, rather
+   * than a step at each new value. A frame that would move it less than half
+   * a pixel draws nothing, and it stops once the values have stopped.
+   */
+  function glide() {
+    glideFrame = 0;
+    if (!chart || !gliding()) return;
+    const next = newestSpan();
+    const moved = ((next.max - span.max) / Math.max(1e-9, next.max - next.min)) * chart.bbox.width;
+    if (Math.abs(moved) >= 0.5) {
+      span = next;
+      chart.setScale("x", span);
+    } else if (clockTime() - (times.at(-1) ?? 0) > 1 + lag()) {
+      // No values for a while: it stands still until the next ones.
+      return;
+    }
+    glideFrame = requestAnimationFrame(glide);
+  }
+
+  /**
+   * The series on the chart, by their place in `names`: all of them, but
+   * XY's x; and only the one the histogram counts, as series far apart, such
+   * as 2048 and 1 to 6, would share bins too wide for either.
+   */
   function charted(): number[] {
     const all = names.map((_, index) => index);
-    return tab.plotView.chart === "xy" ? all.filter((index) => index !== xIndex()) : all;
+    switch (tab.plotView.chart) {
+      case "xy":
+        return all.filter((index) => index !== xIndex());
+      case "histogram":
+        return all.length > 0 ? [histIndex()] : [];
+      default:
+        return all;
+    }
   }
 
   function xIndex(): number {
     return columnOf.get(tab.plotView.x_series) ?? 0;
+  }
+
+  function histIndex(): number {
+    return columnOf.get(tab.plotView.hist_series) ?? 0;
   }
 
   function triggerIndex(): number {
@@ -357,7 +452,13 @@
 
   function signature(): string {
     const view = tab.plotView;
-    return [view.chart, names.length, view.chart === "xy" ? xIndex() : "", view.chart === "fft" ? view.fft_db : ""].join("|");
+    return [
+      view.chart,
+      names.length,
+      view.chart === "xy" ? xIndex() : "",
+      view.chart === "histogram" ? histIndex() : "",
+      view.chart === "fft" ? view.fft_db : "",
+    ].join("|");
   }
 
   /** The time the charts and stats work on: between A and B, or else the time shown. */
@@ -375,7 +476,8 @@
 
   /**
    * The time to show while following: the newest values, as much as the span
-   * holds; or with the trigger on, the time around its last crossing.
+   * holds, moving with the clock; or with the trigger on, the time around its
+   * last crossing.
    */
   function newestSpan(): Span {
     const last = times.at(-1) ?? 0;
@@ -396,7 +498,11 @@
         return { min: crossing - width / 2, max: crossing + width / 2 };
       }
     }
-    return { min: Math.max(0, last - width), max: Math.max(last, width) };
+    // Gliding, the right edge goes with the clock: a little behind it, so the
+    // newest line always reaches the edge, and no further than the newest
+    // values once they stop coming.
+    const right = gliding() ? Math.min(clockTime() - lag(), last + lag()) : last;
+    return { min: Math.max(0, right - width), max: Math.max(right, width) };
   }
 
   function showRange() {
@@ -441,10 +547,10 @@
     ] as uPlot.AlignedData;
   }
 
-  /** The shown series' values counted in shared bins, drawn as steps. */
+  /** The picked series' values counted in bins, drawn as steps. */
   function histogramData(): uPlot.AlignedData {
     const [start, end] = pointsIn(range());
-    const counted = charted().filter(shown);
+    const counted = charted();
     const values = counted.map((index) => {
       const out: number[] = [];
       const column = columns[index];
@@ -515,7 +621,8 @@
       label: names[index],
       stroke: color,
       dash: DASHES[Math.floor(index / colors.length)],
-      show: shown(index),
+      // The histogram's one series is always shown: picking another hides it.
+      show: tab.plotView.chart === "histogram" || shown(index),
     };
     switch (tab.plotView.chart) {
       case "xy":
@@ -660,7 +767,11 @@
     self.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false);
   }
 
-  /** Clicks place the cursors on the time chart, the wheel zooms, a double-click shows all and follows. */
+  /**
+   * Clicks place the cursors on the time chart, the wheel zooms, a drag with
+   * the right button moves the chart along as a hand would, and a
+   * double-click shows all and follows.
+   */
   function listen(over: HTMLElement) {
     let downX = 0;
     let before: [number | null, number | null] = [null, null];
@@ -683,6 +794,30 @@
       root.focus();
     });
     over.addEventListener("wheel", onWheel, { passive: false });
+    over.addEventListener("contextmenu", (event) => event.preventDefault());
+    over.addEventListener("pointerdown", (event) => {
+      if (event.button !== 2 || !chart) return;
+      const { min, max } = chart.scales.x;
+      if (min == null || max == null) return;
+      event.preventDefault();
+      over.setPointerCapture(event.pointerId);
+      over.classList.add("grabbing");
+      const startX = event.clientX;
+      const perPixel = (max - min) / Math.max(1, over.clientWidth);
+      const move = (moved: PointerEvent) => {
+        const shift = (moved.clientX - startX) * perPixel;
+        zoomTo(min - shift, max - shift);
+      };
+      const end = () => {
+        over.classList.remove("grabbing");
+        over.removeEventListener("pointermove", move);
+        over.removeEventListener("pointerup", end);
+        over.removeEventListener("pointercancel", end);
+      };
+      over.addEventListener("pointermove", move);
+      over.addEventListener("pointerup", end);
+      over.addEventListener("pointercancel", end);
+    });
   }
 
   /** Places A, then B, then moves the nearer one. */
@@ -819,13 +954,10 @@
     return heldAt(column, firstFrom(time + 1e-9) - 1);
   }
 
-  type Stats = { min: number; max: number; mean: number; deviation: number; count: number } | null;
+  type Stats = { min: number; max: number; mean: number; deviation: number; rms: number; count: number } | null;
 
-  /** Each series' min, max, mean and standard deviation, in the time the charts work on. */
-  const stats = $derived.by(() => {
-    void statsVersion;
-    const both = cursorA !== null && cursorB !== null;
-    const time = range();
+  /** Each series' min, max, mean, RMS and standard deviation in a time, and how many values it has there. */
+  function statsIn(time: Span) {
     const [start, end] = pointsIn(time);
     const series: Stats[] = columns.map((column) => {
       let min = Infinity;
@@ -844,12 +976,48 @@
         mean += step / count;
         squares += step * (value - mean);
       }
-      return count > 0 ? { min, max, mean, deviation: Math.sqrt(squares / count), count } : null;
+      if (count === 0) return null;
+      const deviation = Math.sqrt(squares / count);
+      // The mean of the squares is the variance and the mean squared.
+      return { min, max, mean, deviation, rms: Math.sqrt(deviation * deviation + mean * mean), count };
     });
-    return { both, from: time.min, to: time.max, points: Math.max(0, end - start), series };
+    return { from: time.min, to: time.max, points: Math.max(0, end - start), series };
+  }
+
+  /**
+   * The stats of what the chart works on: on the time chart, the time shown,
+   * as A and B have a table of their own; on the others, the time between A
+   * and B when both are placed.
+   */
+  const stats = $derived.by(() => {
+    void statsVersion;
+    const both = kind !== "time" && cursorA !== null && cursorB !== null;
+    return { both, ...statsIn(kind === "time" ? span : range()) };
   });
 
-  /** The table: each series' stats, and its value under the mouse, at A and B, or its peak. */
+  /** The time chart's A and B: each series' value at both, and its stats between them. */
+  const section = $derived.by(() => {
+    void statsVersion;
+    const a = cursorA;
+    const b = cursorB;
+    if (kind !== "time" || a === null) return null;
+    const time = b === null ? { min: a, max: a } : { min: Math.min(a, b), max: Math.max(a, b) };
+    const found = b === null ? null : statsIn(time);
+    const rows = names.map((name, index) => {
+      const column = columns[index] ?? [];
+      return {
+        name,
+        index,
+        decimals: decimalsOf[index] ?? 0,
+        a: valueAt(column, a),
+        b: b === null ? null : valueAt(column, b),
+        stats: found?.series[index] ?? null,
+      };
+    });
+    return { both: b !== null, from: time.min, to: time.max, points: found?.points ?? 0, rows };
+  });
+
+  /** The table: each series' stats, and its value under the mouse, or its peak. */
   const table = $derived.by(() => {
     void statsVersion;
     const chartKind = tab.plotView.chart;
@@ -858,10 +1026,9 @@
       const row = {
         name,
         index,
+        decimals: decimalsOf[index] ?? 0,
         stats: stats.series[index],
         value: null as number | null,
-        a: null as number | null,
-        b: null as number | null,
         peak: null as { freq: number; level: number } | null,
       };
       if (chartKind === "fft") {
@@ -875,8 +1042,6 @@
         row.value = hover !== null && xyRows[hover] !== undefined ? column[xyRows[hover]] : heldAt(column, column.length - 1);
       } else {
         row.value = heldAt(column, hover ?? column.length - 1);
-        row.a = cursorA !== null ? valueAt(column, cursorA) : null;
-        row.b = cursorB !== null ? valueAt(column, cursorB) : null;
       }
       return row;
     });
@@ -896,6 +1061,29 @@
 
   function fftAt(index: number): number {
     return spectra.find(Boolean)?.freqs[index] ?? 0;
+  }
+
+  /** How many decimals a value has, up to 6: 21.5 has 1, 2048 none. */
+  function decimalsIn(value: number): number {
+    for (let places = 0; places < 6; places++) {
+      const scaled = value * 10 ** places;
+      if (Math.abs(scaled - Math.round(scaled)) < 1e-9 * Math.max(1, Math.abs(scaled))) return places;
+    }
+    return 6;
+  }
+
+  /**
+   * A number with as many decimals as asked, up to 6, so the digits of a
+   * column stay where they are as its values change. One too big or too
+   * small for them is as precise as it is instead.
+   */
+  function fixed(value: number | null | undefined, places: number): string {
+    if (value === null || value === undefined || !Number.isFinite(value)) return "";
+    const decimals = Math.min(6, places);
+    if (Math.abs(value) >= 1e15 || (value !== 0 && Math.abs(value) < 10 ** -decimals)) return number(value);
+    const text = value.toFixed(decimals);
+    // -0.00 is 0.00.
+    return /^-0\.?0*$/.test(text) ? text.slice(1) : text;
   }
 
   /** A number short enough for the table: six digits at most after the first. */
@@ -1108,6 +1296,7 @@
     return () => {
       resize.disconnect();
       cancelAnimationFrame(frame);
+      cancelAnimationFrame(glideFrame);
       clearTimeout(slow);
       clearTimeout(statsTimer);
       clearTimeout(regexTimer);
@@ -1138,6 +1327,57 @@
     return null;
   });
 </script>
+
+<!--
+  What the chart is and what to send for it, in the middle of the chart: on
+  its own while there are no values, and over them when ? is on.
+-->
+{#snippet guide(closable: boolean)}
+  {@const chartGuide = GUIDES[kind]}
+  <div class="guide" role="note">
+    {#if closable}
+      <button class="close" title="Hide the help; ? shows it again" aria-label="Hide the help" onclick={() => setPlotView({ help: false })}>
+        ×
+      </button>
+    {/if}
+    {#if tab.plotView.mode === "modbus"}
+      <h3>{chartGuide.title}, from Modbus</h3>
+      <p>{chartGuide.what}</p>
+      <p>
+        Nothing to send: poll registers in <b>Modbus › Tester</b>, or listen to a bus where a master reads them. Each
+        is named by its address: <code>hr0</code> holding register 0, <code>ir1</code> input register 1,
+        <code>c3</code> coil 3, <code>u2.hr0</code> unit 2's.
+      </p>
+      {#if !closable}<p class="waiting">Nothing read yet.</p>{/if}
+    {:else if tab.plotView.mode === "regex"}
+      <h3>{chartGuide.title}, with a regex</h3>
+      <p>{chartGuide.what}</p>
+      <p>
+        For lines with words around the numbers, such as <code>temperature 21.5 C</code>: each group in brackets is a
+        series, and <code>?&lt;name&gt;</code> names it.
+      </p>
+      <pre>temperature (?&lt;temp&gt;[\d.]+) C</pre>
+      {#if draftProblem}
+        <p class="problem">{draftProblem}</p>
+      {:else if !closable}
+        <p class="waiting">No line matches the regex yet.</p>
+      {/if}
+    {:else}
+      <h3>{chartGuide.title}</h3>
+      <p>{chartGuide.what}</p>
+      <p>{chartGuide.send}</p>
+      <pre>{chartGuide.code}</pre>
+      <p>
+        It prints <code>{chartGuide.line}</code>. Plain numbers such as <code>21.5,40.2</code> and JSON such as
+        <code>{'{"temp": 21.5}'}</code> work too.
+      </p>
+      {#if !closable}<p class="waiting">No values yet.</p>{/if}
+    {/if}
+    {#if kind === "time" && trigger.on}
+      <p><b>Trigger</b> holds the time around the last crossing of the level, the crossing in the middle, as a scope does.</p>
+    {/if}
+  </div>
+{/snippet}
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <div class="plotview" tabindex="0" role="region" aria-label="Plot" bind:this={root} {onkeydown}>
@@ -1176,6 +1416,15 @@
         </button>
       {/each}
     </div>
+    <button
+      class="btn small help-toggle"
+      class:on={tab.plotView.help}
+      aria-pressed={tab.plotView.help}
+      title={tab.plotView.help ? "Hide the help" : "What this chart is, and what to send for it"}
+      onclick={() => setPlotView({ help: !tab.plotView.help })}
+    >
+      ?
+    </button>
 
     <label class="option" title="The time shown while the chart follows the newest values; the other charts work on it too">
       Show
@@ -1268,6 +1517,14 @@
         </select>
       </label>
     {:else if kind === "histogram"}
+      <label class="option" title="The series counted; the table below has every series' count and spread">
+        Series
+        <select class="field" value={names[histIndex()] ?? ""} onchange={(event) => setPlotView({ hist_series: event.currentTarget.value })}>
+          {#each names as name (name)}
+            <option value={name}>{name}</option>
+          {/each}
+        </select>
+      </label>
       <label class="option" title="How many bins the values are counted in">
         Bins
         <select class="field" value={tab.plotView.bins} onchange={(event) => setPlotView({ bins: Number(event.currentTarget.value) })}>
@@ -1337,19 +1594,9 @@
       aria-label="The chart; the table below has its values in numbers"
       bind:this={host}
     ></div>
-    {#if names.length === 0}
-      <div class="empty">
-        <p>
-          {#if tab.plotView.mode === "regex"}
-            {draftProblem ?? "No line matches the regex yet."}
-          {:else if tab.plotView.mode === "modbus"}
-            Nothing read yet. Poll some registers in the Modbus view, or listen to a bus where a master reads them,
-            and their values are drawn here.
-          {:else}
-            No numbers yet. Lines such as <code>temp=21.5 hum=40</code>, <code>21.5,40</code> or
-            <code>{'{"temp": 21.5}'}</code> are drawn as they come. For other lines, read them with a regex.
-          {/if}
-        </p>
+    {#if names.length === 0 || tab.plotView.help}
+      <div class="guide-box">
+        {@render guide(names.length > 0)}
       </div>
     {:else if notice}
       <p class="notice">{notice}</p>
@@ -1381,11 +1628,11 @@
       <span class="spacer"></span>
       <span class="hint">
         {kind === "time"
-          ? "Click: cursors A and B · Drag or wheel: zoom · Shift+wheel: move · Double-click: follow"
-          : "Drag or wheel: zoom · Double-click: all · A and B on the time chart pick the time"}
+          ? "Click: cursors A and B · Drag or wheel: zoom · Right-drag or Shift+wheel: move · Double-click: follow"
+          : "Drag or wheel: zoom · Right-drag: move · Double-click: all · A and B on the time chart pick the time"}
       </span>
     </div>
-    <div class="table">
+    <div class="table" class:with-section={section !== null}>
       <table>
         <thead>
           <tr>
@@ -1403,10 +1650,10 @@
               {/if}
               <th>Min</th>
               <th>Max</th>
+              <th title="Max − Min">Pk-pk</th>
               <th>Mean</th>
+              <th title="Root mean square: the square root of the squares' mean">RMS</th>
               <th>Std dev</th>
-              {#if kind === "time" && cursorA !== null}<th>At A</th>{/if}
-              {#if kind === "time" && cursorB !== null}<th>At B</th><th>B − A</th>{/if}
             {/if}
           </tr>
         </thead>
@@ -1416,10 +1663,15 @@
             {@const color = COLORS[appScheme()][row.index % COLORS.light.length]}
             {@const dash = DASHES[Math.floor(row.index / COLORS.light.length)]}
             {@const isX = kind === "xy" && row.index === xIndex()}
-            <tr class:off={!shownNow && !isX}>
+            {@const counted = row.index === histIndex()}
+            <tr class:off={kind === "histogram" ? !counted : !shownNow && !isX}>
               <td class="name">
-                <label title={isX ? "Along x" : "Show or hide this series"}>
-                  <input type="checkbox" checked={shownNow || isX} disabled={isX} onchange={() => toggleSeries(row.name, row.index)} />
+                <label title={isX ? "Along x" : kind === "histogram" ? "Count this series" : "Show or hide this series"}>
+                  {#if kind === "histogram"}
+                    <input type="radio" name="histogram-series" checked={counted} onchange={() => setPlotView({ hist_series: row.name })} />
+                  {:else}
+                    <input type="checkbox" checked={shownNow || isX} disabled={isX} onchange={() => toggleSeries(row.name, row.index)} />
+                  {/if}
                   {#if isX}
                     <span class="axis">x</span>
                   {:else}
@@ -1439,22 +1691,82 @@
                   <td>{row.stats?.count.toLocaleString() ?? ""}</td>
                   {#if hoverTitle}<td>{number(row.value)}</td>{/if}
                 {:else}
-                  <td>{number(row.value)}</td>
+                  <td>{fixed(row.value, row.decimals)}</td>
                 {/if}
-                <td>{number(row.stats?.min)}</td>
-                <td>{number(row.stats?.max)}</td>
-                <td>{number(row.stats?.mean)}</td>
-                <td>{number(row.stats?.deviation)}</td>
-                {#if kind === "time" && cursorA !== null}<td>{number(row.a)}</td>{/if}
-                {#if kind === "time" && cursorB !== null}
-                  <td>{number(row.b)}</td>
-                  <td>{row.a !== null && row.b !== null ? number(row.b - row.a) : ""}</td>
-                {/if}
+                <td>{fixed(row.stats?.min, row.decimals)}</td>
+                <td>{fixed(row.stats?.max, row.decimals)}</td>
+                <td>{row.stats ? fixed(row.stats.max - row.stats.min, row.decimals) : ""}</td>
+                <td>{fixed(row.stats?.mean, row.decimals + 2)}</td>
+                <td>{fixed(row.stats?.rms, row.decimals + 2)}</td>
+                <td>{fixed(row.stats?.deviation, row.decimals + 2)}</td>
               {/if}
             </tr>
           {/each}
         </tbody>
       </table>
+
+      {#if section}
+        <!-- A and B, with all their values: a table of their own under the one of the time shown. -->
+        <div class="range section">
+          {#if section.both}
+            <span>
+              <b>A → B</b>
+              {duration(section.to - section.from)}{section.to > section.from ? `, ${frequency(section.to - section.from)}` : ""}
+            </span>
+            <span class="number">{section.points.toLocaleString()} points</span>
+          {:else}
+            <span><b>A</b> at {number(Number(section.from.toFixed(4)))} s</span>
+            <span>Click again for B: the values between A and B come here.</span>
+          {/if}
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th class="name">Series</th>
+              <th>At A</th>
+              {#if section.both}
+                <th>At B</th>
+                <th>B − A</th>
+                <th>Min</th>
+                <th>Max</th>
+                <th title="Max − Min">Pk-pk</th>
+                <th>Mean</th>
+                <th title="Root mean square: the square root of the squares' mean">RMS</th>
+                <th>Std dev</th>
+                <th>Points</th>
+              {/if}
+            </tr>
+          </thead>
+          <tbody>
+            {#each section.rows as row (row.name)}
+              {@const color = COLORS[appScheme()][row.index % COLORS.light.length]}
+              {@const dash = DASHES[Math.floor(row.index / COLORS.light.length)]}
+              <tr class:off={tab.plotView.hidden.includes(row.name)}>
+                <td class="name">
+                  <span class="series">
+                    <svg width="18" height="8" aria-hidden="true">
+                      <line x1="0" y1="4" x2="18" y2="4" stroke={color} stroke-width="2" stroke-dasharray={dash?.join(" ")} />
+                    </svg>
+                    <span class="mono">{row.name}</span>
+                  </span>
+                </td>
+                <td>{fixed(row.a, row.decimals)}</td>
+                {#if section.both}
+                  <td>{fixed(row.b, row.decimals)}</td>
+                  <td>{row.a !== null && row.b !== null ? fixed(row.b - row.a, row.decimals) : ""}</td>
+                  <td>{fixed(row.stats?.min, row.decimals)}</td>
+                  <td>{fixed(row.stats?.max, row.decimals)}</td>
+                  <td>{row.stats ? fixed(row.stats.max - row.stats.min, row.decimals) : ""}</td>
+                  <td>{fixed(row.stats?.mean, row.decimals + 2)}</td>
+                  <td>{fixed(row.stats?.rms, row.decimals + 2)}</td>
+                  <td>{fixed(row.stats?.deviation, row.decimals + 2)}</td>
+                  <td>{row.stats?.count.toLocaleString() ?? ""}</td>
+                {/if}
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
     </div>
   {/if}
 </div>
@@ -1515,6 +1827,22 @@
 
   .rate {
     width: 72px;
+  }
+
+  .help-toggle {
+    width: 24px;
+    padding: 0;
+    font-weight: 600;
+  }
+
+  .help-toggle.on {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  /* A right-drag holds the chart, as a hand would. */
+  .chart :global(.u-over.grabbing) {
+    cursor: grabbing;
   }
 
   .kinds {
@@ -1597,29 +1925,93 @@
     visibility: hidden;
   }
 
-  .empty {
+  /* What the chart is and what to send for it, in the middle of the chart. */
+  .guide-box {
     position: absolute;
     inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 0 24px;
+    padding: 12px 24px;
+    overflow: auto;
+    pointer-events: none;
+  }
+
+  .guide {
+    position: relative;
+    max-width: 560px;
+    padding: 14px 20px;
     font-size: 13px;
+    line-height: 1.55;
     color: var(--muted);
-    text-align: center;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    pointer-events: auto;
   }
 
-  .empty p {
-    max-width: 640px;
-    margin: 0;
-    line-height: 1.6;
+  .guide h3 {
+    margin: 0 0 2px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
   }
 
-  .empty code {
-    white-space: nowrap;
-    margin: 0 2px;
+  .guide p {
+    margin: 4px 0 0;
+  }
+
+  .guide pre {
+    margin: 6px 0 0;
+    padding: 6px 10px;
+    font: 12px/1.5 var(--font-mono);
+    color: var(--text);
+    white-space: pre-wrap;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  .guide code {
     font-family: var(--font-mono);
     color: var(--text);
+    white-space: nowrap;
+  }
+
+  .guide b {
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .guide .waiting {
+    margin-top: 10px;
+    color: var(--accent);
+  }
+
+  .guide .problem {
+    margin-top: 10px;
+    color: var(--bad);
+  }
+
+  .guide .close {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 22px;
+    height: 22px;
+    font: inherit;
+    font-size: 14px;
+    color: var(--muted);
+    background: none;
+    border: 0;
+    border-radius: 4px;
+    cursor: default;
+  }
+
+  .guide .close:hover {
+    color: var(--text);
+    background: var(--hover);
   }
 
   .notice {
@@ -1667,9 +2059,16 @@
     border-top: 1px solid var(--border);
   }
 
+  /* With the A and B table under it, both get more room. */
+  .table.with-section {
+    max-height: 50%;
+  }
+
+  /* The columns keep their widths as the values change, so the digits stay still. */
   table {
     width: 100%;
     font-size: 12px;
+    table-layout: fixed;
     border-collapse: collapse;
     font-variant-numeric: tabular-nums;
   }
@@ -1687,10 +2086,12 @@
 
   td {
     padding: 2px 10px;
+    overflow: hidden;
     font-family: var(--font-mono);
     color: var(--text);
     text-align: right;
     white-space: nowrap;
+    text-overflow: ellipsis;
   }
 
   th.name,
@@ -1699,10 +2100,17 @@
     text-align: left;
   }
 
-  td.name label {
+  td.name label,
+  td.name .series {
     display: flex;
     gap: 6px;
     align-items: center;
+  }
+
+  /* The A and B table's heading, under the table of the time shown. */
+  .range.section {
+    padding: 8px 10px 4px;
+    border-top: 1px solid var(--border);
   }
 
   .axis {
