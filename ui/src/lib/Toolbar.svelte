@@ -20,8 +20,8 @@
     { view: "hex", label: "Hex", title: "Every byte sent and received in hex (Ctrl+Shift+H)" },
     {
       view: "lines",
-      label: "Lines",
-      title: "Every line in a list: filter Zephyr logs by level and module, search, highlight, bookmark (Ctrl+Shift+J)",
+      label: "Zephyr",
+      title: "Every line in a list: Zephyr's logs by level and module, search, highlight, bookmark (Ctrl+Shift+J)",
     },
     {
       view: "plot",
@@ -248,6 +248,23 @@
     <!-- The Modbus view frames what it sends itself: the terminal's settings are not for it. -->
     {#if tab.view !== "modbus"}
       <div class="terminal">
+        {#if tab.view === "terminal" || tab.view === "hex"}
+          <button class="btn small" title="Clear the screen (Ctrl+Shift+K)" onclick={() => act(() => tab.clearScreen())}>
+            Clear
+          </button>
+          <button
+            class="btn small lock"
+            class:on={tab.scrollLock}
+            aria-pressed={tab.scrollLock}
+            title={tab.scrollLock
+              ? "Lines keep coming below: scroll down to them, or turn this off to follow the newest again. Typing turns it off too."
+              : "Keep the screen where it is while lines keep coming (Scroll Lock key)"}
+            onclick={() => act(() => tab.setScrollLock(!tab.scrollLock))}
+          >
+            Scroll lock
+          </button>
+          <span class="separator"></span>
+        {/if}
         <label
           class="option"
           title="Starts a new line when data comes after a pause this long, so each message starts on its own line. Not after what you type, so a shell's echo stays on its line. Only the view changes."
@@ -446,6 +463,12 @@
     font-size: 12px;
     color: var(--muted);
     font-variant-numeric: tabular-nums;
+  }
+
+  .lock.on {
+    color: var(--text);
+    background: var(--accent-soft);
+    border-color: var(--accent);
   }
 
   .log .dot {

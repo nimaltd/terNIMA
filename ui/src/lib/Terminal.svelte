@@ -1,15 +1,17 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { openUrl } from "@tauri-apps/plugin-opener";
-  import { Terminal } from "@xterm/xterm";
+  import { Terminal, type IMarker } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import { SearchAddon } from "@xterm/addon-search";
   import { Unicode11Addon } from "@xterm/addon-unicode11";
   import { WebLinksAddon } from "@xterm/addon-web-links";
   import { WebglAddon } from "@xterm/addon-webgl";
+  import { echoed } from "./echo";
   import { settings } from "./settings.svelte";
+  import { isMac } from "./shortcuts";
   import type { Tab } from "./tabs.svelte";
   import { clearActiveTerminal, setActiveTerminal, type TerminalActions } from "./terminal-actions";
   import { appScheme, searchColors, terminalThemes } from "./theme.svelte";
@@ -52,6 +54,8 @@
     // The unicode11 addon uses xterm.js's proposed API.
     allowProposedApi: true,
     theme: terminalThemes[appScheme()],
+    // A right-click pastes, or does nothing: it does not pick a word, as it would on macOS.
+    rightClickSelectsWord: false,
   });
 
   const fit = new FitAddon();
@@ -65,14 +69,133 @@
   search.onDidChangeResults(({ resultIndex, resultCount }) => {
     results = { index: resultIndex + 1, count: resultCount };
   });
-  term.attachCustomKeyEventHandler((event) => !isAppKey(event));
+  term.attachCustomKeyEventHandler((event) => {
+    if (event.type === "keydown" && clipboardKey(event)) {
+      return false;
+    }
+    return !isAppKey(event);
+  });
 
   term.onData((data) => {
     if (tab) {
       tab.type(data);
     } else {
       // The welcome tab has nothing to send to, so it echoes to show the terminal works.
-      term.write(data.replace(/\r/g, "\r\n").replace(/\x7f/g, "\b \b"));
+      term.write(echoed(data));
+    }
+  });
+
+  /**
+   * Ctrl+C copies while text is selected, and goes to the device as Ctrl+C
+   * when nothing is; Ctrl+V and Shift+Insert paste. On macOS, Cmd+C and
+   * Cmd+V do it, from the Edit menu. Says whether the key was one of these.
+   */
+  function clipboardKey(event: KeyboardEvent): boolean {
+    if (isMac || event.altKey || event.metaKey) {
+      return false;
+    }
+    const ctrl = event.ctrlKey && !event.shiftKey;
+    if (ctrl && event.code === "KeyC" && term.hasSelection()) {
+      event.preventDefault();
+      void actions.copy();
+      term.clearSelection();
+      return true;
+    }
+    if ((ctrl && event.code === "KeyV") || (event.shiftKey && !event.ctrlKey && event.key === "Insert")) {
+      event.preventDefault();
+      void actions.paste();
+      return true;
+    }
+    return false;
+  }
+
+  /** Selecting text with the mouse copies it, as in PuTTY, once the button is up, wherever it is. */
+  function onMouseDown(event: MouseEvent) {
+    if (event.button !== 0 || !settings.mouse.select_copies) {
+      return;
+    }
+    window.addEventListener(
+      "mouseup",
+      () =>
+        // After xterm.js has made the selection.
+        setTimeout(() => {
+          if (term.hasSelection()) {
+            void actions.copy();
+          }
+        }),
+      { once: true },
+    );
+  }
+
+  /**
+   * A right-click pastes, as in PuTTY, or copies the selection when selecting
+   * does not. Never the web view's own menu, with its emoji and writing direction.
+   */
+  function onContextMenu(event: MouseEvent) {
+    event.preventDefault();
+    // A program that reads the mouse, such as htop, gets the click instead.
+    if (!settings.mouse.right_click_pastes || term.modes.mouseTrackingMode !== "none") {
+      return;
+    }
+    if (term.hasSelection() && !settings.mouse.select_copies) {
+      void actions.copy();
+      term.clearSelection();
+    } else {
+      void actions.paste();
+    }
+  }
+
+  /**
+   * Scroll lock: the line at the top of the screen, which the screen keeps to
+   * while lines come below; and whether the screen was at the bottom, where
+   * xterm.js follows new lines itself.
+   */
+  let anchor: IMarker | null = null;
+  let wasAtBottom = true;
+
+  /** Keeps the screen where it is from now on, or goes to the newest line and follows it again. */
+  function setLock(on: boolean) {
+    if (on) {
+      anchorHere();
+    } else if (anchor) {
+      anchor.dispose();
+      anchor = null;
+      term.scrollToBottom();
+    }
+  }
+
+  /** Keeps the screen to the line now at its top. */
+  function anchorHere() {
+    anchor?.dispose();
+    const buffer = term.buffer.active;
+    anchor = term.registerMarker(buffer.viewportY - buffer.baseY - buffer.cursorY);
+    wasAtBottom = buffer.viewportY === buffer.baseY;
+  }
+
+  // Moved with the wheel, the scrollbar or the keys, the screen keeps to where it
+  // is now. Not when xterm.js follows new lines at the bottom: it goes back once they are written.
+  term.onScroll(() => {
+    if (!anchor) {
+      return;
+    }
+    const buffer = term.buffer.active;
+    const atBottom = buffer.viewportY === buffer.baseY;
+    if (!(atBottom && wasAtBottom) && buffer.viewportY !== anchor.line) {
+      anchorHere();
+    }
+    wasAtBottom = atBottom;
+  });
+
+  term.onWriteParsed(() => {
+    if (!anchor) {
+      return;
+    }
+    if (anchor.isDisposed) {
+      // Its line went out of the scrollback, or Clear took it: the screen keeps to where it is now.
+      anchorHere();
+    }
+    if (term.buffer.active.viewportY !== anchor.line) {
+      term.scrollToLine(anchor.line);
     }
   });
 
@@ -92,7 +215,7 @@
       }
     },
     selectAll: () => term.selectAll(),
-    clear: () => term.clear(),
+    clear: () => (tab ? tab.clearScreen() : term.clear()),
     text: () => {
       const buffer = term.buffer.active;
       const lines: string[] = [];
@@ -191,6 +314,12 @@
     term.options.theme = terminalThemes[appScheme()];
   });
   $effect(() => {
+    const locked = tab?.scrollLock ?? false;
+    if (opened) {
+      untrack(() => setLock(locked));
+    }
+  });
+  $effect(() => {
     term.options.fontSize = settings.font_size;
     if (opened) {
       fit.fit();
@@ -228,6 +357,9 @@
       }
 
       term.open(container);
+      // Before xterm.js's own handlers, which may keep the events to themselves.
+      container.addEventListener("mousedown", onMouseDown, true);
+      container.addEventListener("contextmenu", onContextMenu, true);
       loadWebgl();
       fit.fit();
       resize.observe(container);
@@ -272,6 +404,20 @@
 
 <div class="wrap">
   <div class="terminal" bind:this={container}></div>
+
+  {#if tab?.scrollLock}
+    <!-- Scroll lock keeps the screen where it is: a way back to the newest line, as the Zephyr log view has. -->
+    <button
+      class="btn latest"
+      title="Turn Scroll lock off, go to the newest line and follow it again"
+      onclick={() => {
+        tab?.setScrollLock(false);
+        term.focus();
+      }}
+    >
+      Latest ↓
+    </button>
+  {/if}
 
   {#if searchOpen}
     <div class="search" role="search">
@@ -339,6 +485,18 @@
   .terminal {
     width: 100%;
     height: 100%;
+  }
+
+  /* The same place as the Zephyr log view's way back to the newest line. */
+  .latest {
+    position: absolute;
+    right: 24px;
+    bottom: 12px;
+    z-index: 5;
+    height: 28px;
+    padding: 0 12px;
+    font-size: 12px;
+    box-shadow: var(--shadow);
   }
 
   .search {

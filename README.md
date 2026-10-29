@@ -41,8 +41,10 @@ What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 - SWO through the same probes: ITM output such as printf, from one stimulus port or all of them
 - RTT over TCP while your IDE is debugging, from J-Link or OpenOCD
 - TCP and Telnet sessions, for devices and serial bridges on the network
-- A send box with history, macros on Alt+1 to Alt+9, hex sending, and sending a file
+- A send box with history, macros on Alt+1 to Alt+9 and sequences of them, hex sending, and sending a file
 - A full VT100 / xterm terminal with 256 and 24-bit color, so the Zephyr shell works as it should
+- Copy by selecting and paste with a right-click, as in PuTTY; Ctrl+C copies while text is selected
+- Scroll lock keeps the screen where it is while you read, as lines keep coming below
 - Zephyr logs you can filter by level and module
 - Log, hex and plot views of the same data, side by side if you like
 - A live plotter for the numbers in the lines, Arduino Serial Plotter format included: over time with cursors, stats and a scope trigger, XY, histogram and FFT
@@ -50,6 +52,24 @@ What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 - A Modbus RTU and ASCII tester on serial ports, as a master that polls and plots, or as a slave that answers
 - Every Modbus frame on the bus in a table, each response under its request, checked, with the time it took
 - Remembers everything when you close it, finds your device again even if its COM number changed, and reconnects when you plug it back in
+- Tells you when a new version is out
+
+---
+
+## 🐞 RTT while you debug
+
+A probe has one owner: while your IDE debugs through it, terNIMA cannot open it too. Read RTT from the debugger's own RTT server instead, with **RTT through J-Link or OpenOCD** under + or File > New session. The debugger keeps the probe, and both work at once.
+
+- **J-Link**: its software serves RTT on port 19021 while it is connected to the chip: the GDB Server your IDE starts (Cortex-Debug with `"servertype": "jlink"`), Ozone, J-Link Commander or RTT Viewer. There is nothing to set up.
+- **OpenOCD**: it serves RTT once it is told to, with its own commands, after the firmware has set RTT up. Type them in OpenOCD's telnet console, or after `monitor` in GDB's:
+
+  ```
+  rtt setup 0x20000000 0x10000 "SEGGER RTT"
+  rtt start
+  rtt server start 9090 0
+  ```
+
+  The address and size say where to look for RTT: your chip's RAM. Port 9090 then serves channel 0.
 
 ---
 

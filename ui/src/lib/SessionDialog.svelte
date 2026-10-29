@@ -12,10 +12,12 @@
     type PortId,
     type PortInfo,
     type SerialConfig,
+    type SessionSetup,
     type TerminalOptions,
   } from "./serial";
+  import { sameDevice } from "./recent";
   import { settings } from "./settings.svelte";
-  import { addTab, changed, tabs, type Tab } from "./tabs.svelte";
+  import { addTab, changed, closedTabs, forgetClosed, tabs, type Tab } from "./tabs.svelte";
 
   let {
     tab = null,
@@ -33,10 +35,12 @@
   let selected: string | null = $state(start?.port?.name ?? null);
   let serial: SerialConfig = $state({ ...DEFAULT_SERIAL, ...start?.serial });
   let terminal: TerminalOptions = $state({ ...(start?.terminal ?? DEFAULT_TERMINAL) });
-  let baudText = $state(String(serial.baud));
+  let baudText = $state(String(start?.serial?.baud ?? DEFAULT_SERIAL.baud));
   let name = $state(start?.name ?? "");
   let nameTyped = start !== null;
   let error = $state("");
+  /** For a new session: the chosen device's tab as it was when it was closed, whose settings it gets again. */
+  let known: SessionSetup | null = $state(null);
 
   // The tab's own port stays in the list while it is unplugged, so it can stay chosen.
   const shown: PortInfo[] = $derived.by(() => {
@@ -71,9 +75,24 @@
 
   function choose(port: PortInfo) {
     selected = port.name;
-    if (!nameTyped) {
-      name = product(port) ?? port.name;
+    if (!tab) {
+      recall(port);
     }
+    if (!nameTyped) {
+      name = known?.name ?? product(port) ?? port.name;
+    }
+  }
+
+  /** Takes the settings the device had when its tab was last closed, or the defaults for one not seen before. */
+  function recall(port: PortInfo) {
+    const found = closedTabs.find((setup) => setup.kind === "serial" && setup.port && sameDevice(setup.port, port)) ?? null;
+    if (found === known) {
+      return;
+    }
+    serial = { ...DEFAULT_SERIAL, ...found?.serial };
+    terminal = { ...(found?.terminal ?? DEFAULT_TERMINAL) };
+    baudText = String(serial.baud);
+    known = found;
   }
 
   /** The other tab that has this port open, if any. */
@@ -113,11 +132,17 @@
       }
       changed();
     } else {
+      // A device seen before gets its tab back as it was: its views, log and sent lines too.
+      const before = known ? $state.snapshot(known) : null;
+      if (known) {
+        forgetClosed(known);
+      }
       addTab({
+        ...before,
         name: sessionName,
         kind: "serial",
         connected: false,
-        log: settings.log.new_tabs,
+        log: before?.log ?? settings.log.new_tabs,
         port: portId,
         serial: { ...serial },
         terminal: { ...terminal },
@@ -174,6 +199,9 @@
   </div>
 
   <h2 class="dlg-section">Settings</h2>
+  {#if known}
+    <p class="dlg-hint">As this device's tab, {known.name}, had them when it was closed.</p>
+  {/if}
   <div class="dlg-grid">
     <label class="dlg-label">
       Baud rate

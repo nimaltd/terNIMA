@@ -9,7 +9,9 @@
     settings,
     updateSettings,
     type LogSettings,
+    type MouseSettings,
     type StartupSettings,
+    type UpdateSettings,
     type ThemeChoice,
   } from "./settings.svelte";
 
@@ -20,6 +22,8 @@
   let fontSize = $state(settings.font_size);
   let startup: StartupSettings = $state({ ...settings.startup });
   let log: LogSettings = $state({ ...settings.log });
+  let mouse: MouseSettings = $state({ ...settings.mouse });
+  let updates: UpdateSettings = $state({ ...settings.updates });
   let defaultFolder = $state("");
   let error = $state("");
 
@@ -44,7 +48,14 @@
       error = `The text size must be a whole number from ${FONT_SIZE_MIN} to ${FONT_SIZE_MAX}.`;
       return;
     }
-    updateSettings({ theme, font_size: fontSize, startup: { ...startup }, log: { ...log, folder: log.folder.trim() } });
+    updateSettings({
+      theme,
+      font_size: fontSize,
+      startup: { ...startup },
+      log: { ...log, folder: log.folder.trim() },
+      mouse: { ...mouse },
+      updates: { ...updates },
+    });
     onclose();
   }
 </script>
@@ -63,6 +74,20 @@
     <label class="dlg-label">
       Text size
       <input class="field mono" type="number" min={FONT_SIZE_MIN} max={FONT_SIZE_MAX} bind:value={fontSize} />
+    </label>
+  </div>
+
+  <h2 class="dlg-section">Mouse</h2>
+  <p class="dlg-hint">
+    In the terminal and the hex view. Ctrl+C copies too while text is selected; with nothing selected, it goes to
+    the device. Ctrl+V pastes.
+  </p>
+  <div class="dlg-checks">
+    <label class="dlg-check">
+      <input type="checkbox" bind:checked={mouse.select_copies} /> Selecting text copies it
+    </label>
+    <label class="dlg-check">
+      <input type="checkbox" bind:checked={mouse.right_click_pastes} /> A right-click pastes
     </label>
   </div>
 
@@ -111,6 +136,13 @@
         <option value="text">Text, colors removed</option>
         <option value="raw">Raw bytes, as they came</option>
       </select>
+    </label>
+  </div>
+
+  <h2 class="dlg-section">Updates</h2>
+  <div class="dlg-checks">
+    <label class="dlg-check">
+      <input type="checkbox" bind:checked={updates.check} /> Look on GitHub for a new version when terNIMA starts
     </label>
   </div>
 

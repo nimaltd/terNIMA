@@ -22,15 +22,17 @@
   import TcpDialog from "./lib/TcpDialog.svelte";
   import Terminal from "./lib/Terminal.svelte";
   import Toolbar from "./lib/Toolbar.svelte";
+  import UpdateDialog from "./lib/UpdateDialog.svelte";
   import { buildMenus, isEnabled, itemForKey, macroForKey, menuCommands, menuForAltKey } from "./lib/menus";
   import type { Command } from "./lib/palette";
   import { keys } from "./lib/shortcuts";
-  import { defaultLogFolder, loadSettings, settings } from "./lib/settings.svelte";
+  import { defaultLogFolder, loadSettings, settings, updateSettings } from "./lib/settings.svelte";
   import { activeTab, addTab, changed, loadWorkspace, recordingName, showTab, tabs, view, type Tab } from "./lib/tabs.svelte";
   import { activeTerminal } from "./lib/terminal-actions";
   import type { Protocol } from "./lib/net";
   import { DEFAULT_TERMINAL, type SessionKind } from "./lib/serial";
   import { appScheme } from "./lib/theme.svelte";
+  import { checkForUpdate, type UpdateCheck } from "./lib/update";
 
   type AppInfo = { version: string; os: string; arch: string };
 
@@ -42,6 +44,8 @@
   let highlightsOpen = $state(false);
   /** The command palette's commands while it is open. */
   let palette: Command[] | null = $state(null);
+  /** What looking for a newer version found, while it is shown. */
+  let updateCheck: UpdateCheck | null = $state(null);
   /**
    * The open session dialog, if any: for a new session, or for a tab's
    * settings. A new TCP session can start with a protocol picked.
@@ -55,10 +59,7 @@
   const menus = buildMenus({
     about: () => (aboutOpen = true),
     exit: () => void getCurrentWindow().close(),
-    newSession: () => (dialog = { kind: "serial", tab: null }),
-    newRttSession: () => (dialog = { kind: "rtt", tab: null }),
-    newSwoSession: () => (dialog = { kind: "swo", tab: null }),
-    newTcpSession: () => (dialog = { kind: "tcp", tab: null }),
+    newTab,
     sessionSettings,
     settings: () => (settingsOpen = true),
     saveOutput,
@@ -67,8 +68,32 @@
     macros: () => (macrosOpen = true),
     highlights: () => (highlightsOpen = true),
     commandPalette: openPalette,
-    playRecording: () => void playRecording(null),
+    checkUpdates: () => void lookForUpdate(true),
   });
+
+  /** Opens the dialog for a new tab of a kind, or picks a recording to play in one. */
+  function newTab(kind: SessionKind, protocol?: Protocol) {
+    if (kind === "replay") {
+      void playRecording(null);
+    } else {
+      dialog = { kind, tab: null, protocol };
+    }
+  }
+
+  /**
+   * Looks on GitHub for a newer terNIMA. Asked from the Help menu, it says
+   * what it found; when terNIMA starts, it speaks only of a newer version
+   * that was not skipped, and says nothing when GitHub cannot be reached.
+   */
+  async function lookForUpdate(asked: boolean) {
+    if (!info) {
+      return;
+    }
+    const check = await checkForUpdate(info.version);
+    if (asked || (check.kind === "newer" && check.release.version !== settings.updates.skipped)) {
+      updateCheck = check;
+    }
+  }
 
   /** Opens the command palette with what can be done now: the menus, the tabs and the macros. */
   function openPalette() {
@@ -83,6 +108,14 @@
     );
     const tab = activeTab();
     if (tab?.connected && tab.takesInput) {
+      settings.sequences.forEach((sequence) => {
+        const running = tab.sequence?.name === sequence.name;
+        commands.push({
+          label: `${running ? "Stop" : "Run"} ${sequence.name}`,
+          group: "Sequence",
+          run: () => (running ? tab.stopSequence() : void tab.runSequence(sequence)),
+        });
+      });
       settings.macros.forEach((macro, index) =>
         commands.push({
           label: `Send ${macro.name}`,
@@ -183,7 +216,7 @@
   }
 
   onMount(() => {
-    invoke<AppInfo>("app_info").then((result) => (info = result));
+    const appInfo = invoke<AppInfo>("app_info").then((result) => (info = result));
     // The terminals wait for the settings, so they open at the saved text size,
     // and for the workspace, so the tabs from last time come back. The
     // workspace waits for the settings, which say how much of it comes back.
@@ -191,7 +224,11 @@
       .catch((error) => console.error(error))
       .then(() => loadWorkspace())
       .catch((error) => console.error(error))
-      .finally(() => (ready = true));
+      .finally(() => (ready = true))
+      // Once the tabs are back, if the settings let it.
+      .then(() => appInfo)
+      .then(() => (settings.updates.check ? lookForUpdate(false) : undefined))
+      .catch((error) => console.error(error));
   });
 
   // The page and the window frame follow the theme.
@@ -204,7 +241,7 @@
   });
 
   function onkeydown(event: KeyboardEvent) {
-    if (aboutOpen || settingsOpen || macrosOpen || highlightsOpen || palette || dialog) {
+    if (aboutOpen || settingsOpen || macrosOpen || highlightsOpen || palette || dialog || updateCheck) {
       return;
     }
     const item = itemForKey(menus, event);
@@ -228,6 +265,17 @@
     if (menu !== null) {
       event.preventDefault();
       void menuBar.openMenu(menu);
+    }
+  }
+
+  /**
+   * The web view's own menu, with its emoji and writing direction, only where
+   * text is typed. The terminals have their own right-click.
+   */
+  function oncontextmenu(event: MouseEvent) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target?.closest("input, textarea, [contenteditable]") || target.closest(".xterm")) {
+      event.preventDefault();
     }
   }
 
@@ -303,11 +351,11 @@
   }
 </script>
 
-<svelte:window {onkeydown} />
+<svelte:window {onkeydown} {oncontextmenu} />
 
 <div class="app">
   <MenuBar bind:this={menuBar} {menus} onclose={focusTerminal} />
-  <TabBar onnew={(kind, protocol) => (kind === "replay" ? void playRecording(null) : (dialog = { kind, tab: null, protocol }))} />
+  <TabBar onnew={newTab} />
 
   <main class="pane" class:dragging bind:this={pane}>
     {#if ready}
@@ -395,7 +443,12 @@
 </div>
 
 {#if dialog?.kind === "rtt" || dialog?.kind === "swo"}
-  <ProbeDialog kind={dialog.kind} tab={dialog.tab} onclose={closeDialog} />
+  <ProbeDialog
+    kind={dialog.kind}
+    tab={dialog.tab}
+    onclose={closeDialog}
+    onserver={dialog.tab ? undefined : () => newTab("tcp", "jlink")}
+  />
 {:else if dialog?.kind === "tcp"}
   <TcpDialog tab={dialog.tab} protocol={dialog.protocol} onclose={closeDialog} />
 {:else if dialog}
@@ -434,6 +487,22 @@
   <MacrosDialog
     onclose={() => {
       macrosOpen = false;
+      focusTerminal();
+    }}
+  />
+{/if}
+
+{#if updateCheck && info}
+  <UpdateDialog
+    check={updateCheck}
+    current={info.version}
+    onskip={(version) => {
+      updateSettings({ updates: { ...settings.updates, skipped: version } });
+      updateCheck = null;
+      focusTerminal();
+    }}
+    onclose={() => {
+      updateCheck = null;
       focusTerminal();
     }}
   />

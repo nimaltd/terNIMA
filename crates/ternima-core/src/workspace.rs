@@ -299,6 +299,9 @@ pub struct PlotView {
     /// The series left out of the chart.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hidden: Vec<String>,
+    /// The series on the time chart's right axis, with a scale of their own.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub right: Vec<String>,
     pub chart: Chart,
     /// The series along the XY chart's x axis; empty for the first.
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -329,6 +332,7 @@ impl Default for PlotView {
             regex: String::new(),
             window_ms: 30_000,
             hidden: Vec::new(),
+            right: Vec::new(),
             chart: Chart::Time,
             x_series: String::new(),
             bins: 0,
@@ -404,6 +408,9 @@ fn is_false(value: &bool) -> bool {
 
 /// The most sent lines each tab keeps.
 pub const HISTORY_MAX: usize = 100;
+
+/// The most closed tabs kept, to open again and for their devices' settings.
+pub const CLOSED_MAX: usize = 20;
 
 /// One tab: a session and how it is set up. Only the settings of its kind
 /// are written.
@@ -540,6 +547,10 @@ pub struct Workspace {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub split: Option<Split>,
     pub sessions: Vec<SessionSetup>,
+    /// The tabs closed lately, newest first: to open again as they were, and
+    /// so a device gets the settings it had last time.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub closed: Vec<SessionSetup>,
 }
 
 impl Workspace {
@@ -555,10 +566,11 @@ impl Workspace {
 
     /// The same workspace with the tab in front pointing at a tab that exists,
     /// a split view only of two tabs that exist, no more than [`HISTORY_MAX`]
-    /// sent lines a tab, hex lines of a width offered, and without a window
-    /// size too small to be real.
+    /// sent lines a tab, hex lines of a width offered, no more than
+    /// [`CLOSED_MAX`] closed tabs, and without a window size too small to be real.
     pub fn checked(mut self) -> Self {
-        for session in &mut self.sessions {
+        self.closed.truncate(CLOSED_MAX);
+        for session in self.sessions.iter_mut().chain(&mut self.closed) {
             let extra = session.history.len().saturating_sub(HISTORY_MAX);
             session.history.drain(..extra);
             if !HEX_WIDTHS.contains(&session.hex_view.width) {
@@ -678,6 +690,7 @@ mod tests {
         let path = dir.file("workspace.toml");
         let workspace = Workspace {
             active: 0,
+            closed: Vec::new(),
             window: None,
             split: None,
             sessions: vec![nucleo(), rtt_tab()],
@@ -708,6 +721,7 @@ mod tests {
         };
         let workspace = Workspace {
             active: 0,
+            closed: Vec::new(),
             window: None,
             split: None,
             sessions: vec![SessionSetup {
@@ -777,6 +791,7 @@ mod tests {
                     },
                     help: true,
                     dots: false,
+                    right: vec!["hum".into()],
                     ..PlotView::default()
                 },
                 ..nucleo()
@@ -791,6 +806,7 @@ mod tests {
         assert!(text.contains("hist_series = \"adc\""), "{text}");
         assert!(text.contains("help = true"), "{text}");
         assert!(text.contains("dots = false"), "{text}");
+        assert!(text.contains(r#"right = ["hum"]"#), "{text}");
     }
 
     #[test]
@@ -919,11 +935,37 @@ mode = "tcp"
     }
 
     #[test]
+    fn closed_tabs_are_kept_newest_first_and_no_more_than_the_most() {
+        let dir = TempDir::new("workspace-closed");
+        let path = dir.file("workspace.toml");
+        let workspace = Workspace {
+            closed: (0..CLOSED_MAX + 3)
+                .map(|n| SessionSetup {
+                    name: format!("Board {n}"),
+                    ..nucleo()
+                })
+                .collect(),
+            ..Workspace::default()
+        };
+        workspace.save(&path).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("[[closed]]"), "{text}");
+        let loaded = Workspace::load(&path);
+        assert_eq!(loaded.closed.len(), CLOSED_MAX);
+        assert_eq!(loaded.closed[0].name, "Board 0");
+        assert_eq!(loaded.closed[0].serial, nucleo().serial);
+        // Without closed tabs, the file has none written.
+        Workspace::default().save(&path).unwrap();
+        assert!(!fs::read_to_string(&path).unwrap().contains("closed"));
+    }
+
+    #[test]
     fn tcp_tabs_are_kept_with_their_protocol() {
         let dir = TempDir::new("workspace-tcp");
         let path = dir.file("workspace.toml");
         let workspace = Workspace {
             active: 0,
+            closed: Vec::new(),
             window: None,
             split: None,
             sessions: vec![jlink_tab()],
@@ -947,6 +989,7 @@ mode = "tcp"
         let path = dir.file("workspace.toml");
         let workspace = Workspace {
             active: 1,
+            closed: Vec::new(),
             window: None,
             split: None,
             sessions: vec![
@@ -996,6 +1039,7 @@ mode = "tcp"
     fn tab_in_front_always_exists() {
         let workspace = Workspace {
             active: 7,
+            closed: Vec::new(),
             window: None,
             split: None,
             sessions: vec![nucleo()],
@@ -1004,6 +1048,7 @@ mode = "tcp"
         assert_eq!(
             Workspace {
                 active: 3,
+                closed: Vec::new(),
                 window: None,
                 split: None,
                 sessions: vec![]
@@ -1043,6 +1088,7 @@ mode = "tcp"
         let path = dir.file("workspace.toml");
         let workspace = Workspace {
             active: 0,
+            closed: Vec::new(),
             window: Some(WindowState {
                 maximized: true,
                 ..window(120, 80, 1200, 760)
@@ -1087,6 +1133,7 @@ mode = "tcp"
     fn three_tabs(split: Option<Split>, active: usize) -> Workspace {
         Workspace {
             active,
+            closed: Vec::new(),
             window: None,
             split,
             sessions: vec![nucleo(), rtt_tab(), nucleo()],

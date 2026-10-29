@@ -27,12 +27,15 @@
     kind,
     tab = null,
     onclose,
+    onserver,
   }: {
     /** What the session reads through the probe. */
     kind: "rtt" | "swo";
     /** The tab whose settings to change, or null for a new session. */
     tab?: Tab | null;
     onclose: () => void;
+    /** Opens the dialog for RTT from a debugger's own server instead, for a new session. */
+    onserver?: () => void;
   } = $props();
 
   const KIND = untrack(() => kind);
@@ -287,6 +290,14 @@
     {/each}
   </div>
 
+  {#if KIND === "rtt" && onserver}
+    <!-- A probe has one owner: while an IDE debugs through it, it cannot be opened here too. -->
+    <p class="dlg-hint server">
+      A debugger has the probe? Read RTT from its own server instead, and keep debugging:
+      <button class="link" onclick={onserver}>RTT through J-Link or OpenOCD</button>
+    </p>
+  {/if}
+
   <h2 class="dlg-section">Target</h2>
   <label class="dlg-label">
     Chip
@@ -495,5 +506,19 @@
 
   .tab-name {
     margin-top: 14px;
+  }
+
+  .server {
+    margin-top: 8px;
+  }
+
+  .link {
+    padding: 0;
+    font: inherit;
+    color: var(--accent);
+    text-decoration: underline;
+    background: none;
+    border: 0;
+    cursor: pointer;
   }
 </style>

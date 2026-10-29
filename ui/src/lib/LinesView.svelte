@@ -89,7 +89,8 @@
     if (line.level) {
       if (view.hidden_levels.includes(line.level)) return false;
       if (line.module && view.hidden_modules.includes(line.module)) return false;
-    } else if (!view.others) {
+    } else if (!line.note && !view.others) {
+      // A note, such as "connected to COM6", stays whatever levels are shown.
       return false;
     }
     if (onlyMatching && search && !matches(search, line.text)) return false;
@@ -482,7 +483,8 @@
           class="row {color ?? ''}"
           class:selected={isSelected(line.n)}
           class:marked={color !== null}
-          class:other={line.level === null}
+          class:other={line.level === null && !line.note}
+          class:note={line.note}
           role="row"
           tabindex="-1"
           style:top={`${index * ROW}px`}
@@ -497,16 +499,25 @@
           >
             {tab.bookmarks.has(line.n) ? "★" : "☆"}
           </button>
-          <span class="time mono" title={new Date(line.at).toLocaleTimeString()}>{line.time ?? ""}</span>
-          <span class="level {line.level ?? ''}">{line.level?.toUpperCase() ?? ""}</span>
-          <span class="mod mono" title={line.module ?? ""} style:color={line.module ? moduleColor(line.module) : ""}>
-            {line.module ?? ""}
-          </span>
-          <span class="message mono" title={line.text}>
-            {#each pieces(line.level ? line.message : line.text) as piece, at (at)}
-              {#if piece.match}<mark>{piece.text}</mark>{:else}{piece.text}{/if}
-            {/each}
-          </span>
+          {#if line.note}
+            <!-- The tab's own line, as the terminal shows it, across the columns. -->
+            <span class="message mono" title={new Date(line.at).toLocaleTimeString()}>
+              {#each pieces(line.text) as piece, at (at)}
+                {#if piece.match}<mark>{piece.text}</mark>{:else}{piece.text}{/if}
+              {/each}
+            </span>
+          {:else}
+            <span class="time mono" title={new Date(line.at).toLocaleTimeString()}>{line.time ?? ""}</span>
+            <span class="level {line.level ?? ''}">{line.level?.toUpperCase() ?? ""}</span>
+            <span class="mod mono" title={line.module ?? ""} style:color={line.module ? moduleColor(line.module) : ""}>
+              {line.module ?? ""}
+            </span>
+            <span class="message mono" title={line.text}>
+              {#each pieces(line.level ? line.message : line.text) as piece, at (at)}
+                {#if piece.match}<mark>{piece.text}</mark>{:else}{piece.text}{/if}
+              {/each}
+            </span>
+          {/if}
         </div>
       {/each}
     </div>
@@ -752,6 +763,11 @@
 
   .row.other .message {
     color: var(--muted);
+  }
+
+  .row.note .message {
+    color: var(--muted);
+    opacity: 0.8;
   }
 
   /* Highlight rules: a tint and a bar in the rule's color. */

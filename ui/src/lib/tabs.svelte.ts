@@ -3,9 +3,11 @@
 
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { Terminal } from "@xterm/xterm";
+import { echoed } from "./echo";
 import { HexDump } from "./hexdump";
 import { DEFAULT_MODBUS, ModbusSession, type ModbusSetup } from "./modbus.svelte";
 import { DEFAULT_TCP, address, protocolText, type TcpConfig } from "./net";
+import { withClosed } from "./recent";
 import {
   DEFAULT_RTT,
   DEFAULT_SWO,
@@ -45,7 +47,7 @@ import {
   type TerminalOptions,
   type View,
 } from "./serial";
-import { settings, type Macro } from "./settings.svelte";
+import { settings, type Macro, type Sequence } from "./settings.svelte";
 import { bytes as byteText } from "./state";
 
 /** Whether a log is being written, and where; or why it could not start. */
@@ -81,8 +83,11 @@ const LINES_MAX = 100_000;
 /** The most time, in ms, that lines read at once are spread over. */
 const SPREAD_MS = 200;
 
-/** A line as the Lines view keeps it: numbered from the tab's first, with when it came. */
-export type StoredLine = LogLine & { n: number; at: number };
+/**
+ * A line as the Lines view keeps it: numbered from the tab's first, with when
+ * it came. A note is one of the tab's own lines, such as "connected to COM6".
+ */
+export type StoredLine = LogLine & { n: number; at: number; note?: boolean };
 
 let nextId = 1;
 
@@ -165,6 +170,14 @@ export class Tab {
   draft = $state({ text: "", hex: false, enter: true });
   /** The file being sent, while one is. */
   sending: { name: string; sent: number; total: number } | null = $state(null);
+  /** Scroll lock: the screen stays where it is while lines keep coming below it. */
+  scrollLock = $state(false);
+  /** The sequence of macros running, and where it has got to, while one runs. */
+  sequence: { name: string; round: number; rounds: number } | null = $state(null);
+  /** Set by Stop, for the sequence to end before its next macro. */
+  private stopping = false;
+  /** Ends the sequence's wait early, when it is stopped. */
+  private wake: (() => void) | null = null;
 
   private term: Terminal | null = null;
   private hexTerm: Terminal | null = null;
@@ -387,6 +400,26 @@ export class Tab {
       this.textLines.push({ ...line, n: this.nextLine++, at: when });
       this.count(line, 1);
     });
+    this.trimLines();
+  }
+
+  /** Keeps a note for the Lines view, as the terminal shows it: no level, no module, not counted. */
+  private addNote(text: string): void {
+    this.textLines.push({
+      text,
+      time: null,
+      level: null,
+      module: null,
+      message: text,
+      note: true,
+      n: this.nextLine++,
+      at: Date.now(),
+    });
+    this.trimLines();
+  }
+
+  /** Lets the oldest tenth of the lines go when there are too many, and tells the views. */
+  private trimLines(): void {
     if (this.textLines.length > LINES_MAX) {
       const gone = this.textLines.splice(0, this.textLines.length - LINES_MAX + LINES_MAX / 10);
       for (const line of gone) {
@@ -397,7 +430,10 @@ export class Tab {
     this.linesVersion++;
   }
 
-  private count(line: LogLine, step: number): void {
+  private count(line: LogLine & { note?: boolean }, step: number): void {
+    if (line.note) {
+      return;
+    }
     const level = line.level ?? "other";
     this.levelCounts.set(level, (this.levelCounts.get(level) ?? 0) + step);
     if (line.module) {
@@ -425,6 +461,20 @@ export class Tab {
       term.write("\x1bc");
       this.attachHex(term);
     }
+  }
+
+  /**
+   * Scroll lock: the terminal and the hex view keep the screen where it is
+   * while lines keep coming below, to be scrolled down to; off, they follow
+   * the newest line again. Their terminals do it, as the tab says.
+   */
+  setScrollLock(on: boolean): void {
+    this.scrollLock = on;
+  }
+
+  /** Clears the terminal, or the hex view while it is shown. */
+  clearScreen(): void {
+    (this.view === "hex" ? this.hexTerm : this.term)?.clear();
   }
 
   /** Connects, or starts waiting for the device. */
@@ -620,6 +670,7 @@ export class Tab {
     if (this.recordPath) {
       this.note(`recording saved: ${this.recordPath}`);
     }
+    this.stopSequence();
     this.modbus.stop();
     this.running = false;
     this.status = null;
@@ -703,9 +754,11 @@ export class Tab {
       }
       return;
     }
+    // Typing goes back to the newest line, as terminals do.
+    this.setScrollLock(false);
     this.sendBytes(encoder.encode(data.replace(/\r/g, ENTER[this.terminal.enter])));
     if (this.terminal.local_echo) {
-      this.write(data.replace(/\r/g, "\r\n").replace(/\x7f/g, "\b \b"));
+      this.write(echoed(data));
     }
   }
 
@@ -740,11 +793,68 @@ export class Tab {
 
   /** Sends a macro from its key, and says in the terminal why when it cannot. */
   async sendMacro(macro: Macro): Promise<void> {
+    this.setScrollLock(false);
     try {
       await this.sendLine(macro.text, macro.hex, macro.enter);
     } catch (problem) {
       this.note(`${macro.name}: ${problem}`);
     }
+  }
+
+  /**
+   * Sends a sequence's macros one after another, with its wait after each,
+   * as many times as it says or until it is stopped; then says in the
+   * terminal how it ended.
+   */
+  async runSequence(sequence: Sequence): Promise<void> {
+    if (this.sequence) {
+      return;
+    }
+    const macros = sequence.steps.map((name) => settings.macros.find((macro) => macro.name === name));
+    const missing = sequence.steps.find((_, index) => macros[index] === undefined);
+    if (macros.length === 0 || missing !== undefined) {
+      this.note(`${sequence.name}: ${missing === undefined ? "it has no macros" : `there is no macro called ${missing}`}`);
+      return;
+    }
+    this.stopping = false;
+    let done = 0;
+    try {
+      while (sequence.repeat === 0 || done < sequence.repeat) {
+        this.sequence = { name: sequence.name, round: done + 1, rounds: sequence.repeat };
+        for (const macro of macros as Macro[]) {
+          if (this.stopping) {
+            this.note(`${sequence.name}: stopped, after ${done} of ${sequence.repeat || "∞"} times`);
+            return;
+          }
+          await this.sendLine(macro.text, macro.hex, macro.enter);
+          await this.waitFor(sequence.delay_ms);
+        }
+        done++;
+      }
+      this.note(`${sequence.name}: sent ${done} ${done === 1 ? "time" : "times"}`);
+    } catch (problem) {
+      this.note(`${sequence.name}: ${problem}`);
+    } finally {
+      this.sequence = null;
+      this.wake = null;
+    }
+  }
+
+  /** Stops the sequence running, before its next macro, also in the middle of its wait. */
+  stopSequence(): void {
+    this.stopping = true;
+    this.wake?.();
+  }
+
+  /** Waits `ms`, or less if the sequence is stopped. */
+  private waitFor(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(resolve, ms);
+      this.wake = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+    });
   }
 
   /** Keeps a line sent from the send box, so ↑ brings it back. */
@@ -1051,10 +1161,11 @@ export class Tab {
     return owner ? `${this.port.name} is open in the tab "${owner.name}".` : problem;
   }
 
-  /** Writes a dim marker line, on a line of its own. */
+  /** Writes a dim marker line, on a line of its own, and keeps it for the Lines view too. */
   private note(text: string): void {
     const atLineStart = !this.term || this.term.buffer.active.cursorX === 0;
     this.write(`${atLineStart ? "" : "\r\n"}\x1b[2m---- ${text} ----\x1b[0m\r\n`);
+    this.addNote(`---- ${text} ----`);
   }
 
   private write(chunk: Uint8Array | string): void {
@@ -1068,6 +1179,13 @@ export class Tab {
 
 /** The open tabs, and which one is in front. */
 export const tabs: Tab[] = $state([]);
+
+/**
+ * The tabs closed lately, newest first, as they were: to open again, and so a
+ * device gets the settings it had last time. One for each device, chip,
+ * address or recording.
+ */
+export const closedTabs: SessionSetup[] = $state([]);
 
 /**
  * What is on screen. `active` is the tab with the keyboard. With a split
@@ -1092,13 +1210,20 @@ export async function loadWorkspace(): Promise<void> {
   await closeAllSessions();
   const workspace = await getWorkspace();
   const { restore_tabs, reconnect } = settings.startup;
+  let closed = workspace.closed ?? [];
   if (restore_tabs) {
     for (const setup of workspace.sessions) {
       tabs.push(new Tab(setup));
     }
     view.active = workspace.active;
     view.split = workspace.split ?? null;
+  } else {
+    // The tabs that do not come back are kept as closed ones, with their settings.
+    for (const setup of [...workspace.sessions].reverse()) {
+      closed = withClosed(closed, setup);
+    }
   }
+  closedTabs.splice(0, closedTabs.length, ...closed);
   loaded = true;
   if (restore_tabs && reconnect) {
     workspace.sessions.forEach((setup, index) => {
@@ -1117,11 +1242,14 @@ export function addTab(setup: SessionSetup): Tab {
 }
 
 export function closeTab(tab: Tab): void {
+  // As it is before it stops: open again, it connects if it was connected.
+  const setup = tab.setup();
   tab.stop();
   const index = tabs.indexOf(tab);
   if (index < 0) {
     return;
   }
+  closedTabs.splice(0, closedTabs.length, ...withClosed($state.snapshot(closedTabs), setup));
   // A split view ends when one of its tabs closes; the other stays in front.
   if (view.split && (index === view.split.first || index === view.split.second)) {
     view.active = index === view.split.first ? view.split.second : view.split.first;
@@ -1135,6 +1263,41 @@ export function closeTab(tab: Tab): void {
     view.split.second = after(view.split.second);
   }
   changed();
+}
+
+/** Opens a closed tab again as it was, and connects it if it was connected. */
+export function reopenTab(setup: SessionSetup): void {
+  const plain = $state.snapshot(setup);
+  forgetClosed(setup);
+  const tab = addTab({ ...plain, connected: false });
+  if (plain.connected) {
+    tab.start();
+  }
+}
+
+/** Takes a tab off the closed ones, as it is open again. */
+export function forgetClosed(setup: SessionSetup): void {
+  const index = closedTabs.indexOf(setup);
+  if (index >= 0) {
+    closedTabs.splice(index, 1);
+    changed();
+  }
+}
+
+/** What a closed tab was connected to: "COM6, 115200 8N1", "STM32H503RB, RTT", "localhost:19021, J-Link RTT". */
+export function closedText(setup: SessionSetup): string {
+  switch (setup.kind) {
+    case "serial":
+      return setup.port && setup.serial ? `${setup.port.name}, ${summary(setup.serial)}` : "Serial";
+    case "rtt":
+      return setup.rtt?.chip ? `${setup.rtt.chip}, RTT` : "RTT";
+    case "swo":
+      return setup.swo?.chip ? `${setup.swo.chip}, SWO` : "SWO";
+    case "tcp":
+      return setup.tcp ? `${address(setup.tcp)}, ${protocolText(setup.tcp)}` : "TCP";
+    case "replay":
+      return setup.replay ? fileName(setup.replay.path) : "Recording";
+  }
 }
 
 /**
@@ -1206,6 +1369,7 @@ export function changed(): void {
       active: view.active,
       split: $state.snapshot(view.split),
       sessions: tabs.map((tab) => tab.setup()),
+      closed: $state.snapshot(closedTabs),
     }).catch((error) => console.error(error));
   }, 300);
 }

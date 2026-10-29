@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { NEW_TABS } from "./new-tab";
   import { look, stateText } from "./state";
   import { closeTab, showTab, tabs, view } from "./tabs.svelte";
 
@@ -95,30 +96,13 @@
 
   {#if choice}
     <div class="choice" role="menu" style:left={`${choice.left}px`}>
-      <button role="menuitem" onclick={() => pick("serial")}>
-        <strong>Serial port</strong>
-        <span>A UART, USB serial adapter or a board's virtual COM port</span>
-      </button>
-      <button role="menuitem" onclick={() => pick("rtt")}>
-        <strong>RTT through a debug probe</strong>
-        <span>CMSIS-DAP, J-Link or ST-Link, while the chip runs</span>
-      </button>
-      <button role="menuitem" onclick={() => pick("tcp", "jlink")}>
-        <strong>RTT through J-Link or OpenOCD</strong>
-        <span>From the RTT server they open, while a debugger has the probe</span>
-      </button>
-      <button role="menuitem" onclick={() => pick("swo")}>
-        <strong>SWO through a debug probe</strong>
-        <span>ITM output on the chip's trace pin, such as printf</span>
-      </button>
-      <button role="menuitem" onclick={() => pick("tcp")}>
-        <strong>TCP or Telnet</strong>
-        <span>A device, a serial bridge or a shell on the network</span>
-      </button>
-      <button role="menuitem" onclick={() => pick("replay")}>
-        <strong>A recording</strong>
-        <span>Play back what a tab recorded, with its timing</span>
-      </button>
+      <!-- The same as File > New session. -->
+      {#each NEW_TABS as { kind, protocol, label, detail } (label)}
+        <button role="menuitem" onclick={() => pick(kind, protocol)}>
+          <strong>{label}</strong>
+          <span>{detail}</span>
+        </button>
+      {/each}
     </div>
   {/if}
 </div>

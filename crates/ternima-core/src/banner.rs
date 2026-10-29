@@ -143,7 +143,7 @@ pub fn welcome_banner(background: Background) -> String {
     out.push_str("\r\n");
     let _ = write!(
         out,
-        "  {DIM}Open a serial port with the + button above, or File > New serial session.{RESET}\r\n"
+        "  {DIM}Open a serial port with the + button above, or File > New session.{RESET}\r\n"
     );
     let _ = write!(
         out,

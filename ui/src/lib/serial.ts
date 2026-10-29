@@ -106,6 +106,8 @@ export type PlotView = {
   window_ms: number;
   /** The series left out of the chart. */
   hidden: string[];
+  /** The series on the time chart's right axis, with a scale of their own. */
+  right: string[];
   chart: Chart;
   /** The series along the XY chart's x axis; empty for the first. */
   x_series: string;
@@ -132,6 +134,7 @@ export const DEFAULT_PLOT_VIEW: PlotView = {
   regex: "",
   window_ms: 30_000,
   hidden: [],
+  right: [],
   chart: "time",
   x_series: "",
   bins: 0,
@@ -199,7 +202,13 @@ export type Split = {
   ratio: number;
 };
 
-export type Workspace = { active: number; split?: Split | null; sessions: SessionSetup[] };
+export type Workspace = {
+  active: number;
+  split?: Split | null;
+  sessions: SessionSetup[];
+  /** The tabs closed lately, newest first, as they were. */
+  closed?: SessionSetup[];
+};
 
 export type SessionState =
   | { state: "waiting"; problem: string | null }

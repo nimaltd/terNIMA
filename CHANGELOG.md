@@ -5,6 +5,58 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-29
+
+### Added
+
+- Copying and pasting as in PuTTY: selecting text in the terminal or the
+  hex view copies it, and a right-click pastes. Ctrl+C copies while text is
+  selected, and goes to the device as Ctrl+C when nothing is; Ctrl+V and
+  Shift+Insert paste. Settings can turn off either mouse action.
+- Clear and Scroll lock in the toolbar of the terminal and the hex view.
+  With Scroll lock on, the screen stays where it is while lines keep coming
+  below it, to be scrolled down to; off, or as you type, it follows the
+  newest line again. The Scroll Lock key and Edit > Scroll lock turn it on
+  and off too.
+- The Zephyr log view shows the tab's own lines too, as the terminal does:
+  connected, disconnected, reconnected, logging to a file and the like.
+- A right axis in the time chart: R by a series in the table puts it on
+  an axis of its own on the right, named after it, with its own scale, for
+  values far from the others, as a count beside a voltage. It stays in step
+  with the others in time.
+- Sequences of macros, in Tools > Macros: macros sent one after another
+  with a wait after each, a number of times or until stopped. Each has a
+  button next to the macros under the terminal, which shows the round it is
+  in and stops it; the terminal says how it ended. Macros need names of
+  their own now, as sequences find them by name.
+- Closed tabs are kept: File > Closed tabs opens one again as it was,
+  connected if it was. A new serial session for a device seen before gets
+  the settings its tab had, found by the device's USB serial number even if
+  its COM number changed. The 20 latest are kept in workspace.toml, with the
+  tabs that do not come back at start.
+- The RTT dialog says what to do while a debugger has the probe, with a link
+  to RTT through J-Link or OpenOCD, which reads RTT from the debugger's own
+  server; the README says how to start that server in J-Link and OpenOCD.
+- terNIMA looks on GitHub for a new version when it starts, and says when
+  there is one, with a link to its downloads; a version can be skipped.
+  Help > Check for updates looks at any time, and Settings can turn the
+  look at startup off.
+
+### Changed
+
+- File > New session lists the same six kinds of tab as the + button, in the
+  same words, RTT through J-Link or OpenOCD and playing a recording among
+  them.
+- The Lines view is called the Zephyr log view, and Zephyr on its button.
+- A right-click no longer opens the web view's own menu, with its emoji and
+  writing direction, except in a text box.
+
+### Fixed
+
+- With Echo on, ↑ and ↓ in a Linux shell wrote over the lines above: the
+  arrow keys' codes went to the screen too, and moved its cursor. Echo shows
+  only what is typed now, with Enter and Backspace.
+
 ## [1.0.0] - 2026-10-26
 
 The first release, for Windows, macOS and Linux. The apps are not signed
@@ -308,5 +360,6 @@ yet; the README says how to open them.
   at all for 2 s, as when flow control holds it, drops the rest and stays
   open.
 
-[Unreleased]: https://github.com/nimaltd/ternima/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/nimaltd/ternima/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/nimaltd/ternima/releases/tag/v1.1.0
 [1.0.0]: https://github.com/nimaltd/ternima/releases/tag/v1.0.0

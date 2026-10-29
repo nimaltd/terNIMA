@@ -10,14 +10,31 @@ import {
   updateSettings,
   type ThemeChoice,
 } from "./settings.svelte";
+import type { Protocol } from "./net";
+import { NEW_TABS } from "./new-tab";
 import type { Command } from "./palette";
+import type { SessionKind } from "./serial";
 import { isMac, keys, matches } from "./shortcuts";
-import { activeTab, closeTab, otherPane, showTab, splitView, tabs, unsplit, view } from "./tabs.svelte";
+import {
+  activeTab,
+  closeTab,
+  closedTabs,
+  closedText,
+  otherPane,
+  reopenTab,
+  showTab,
+  splitView,
+  tabs,
+  unsplit,
+  view,
+} from "./tabs.svelte";
 import { activeTerminal } from "./terminal-actions";
 
 export type Item = {
   label: string;
   shortcut?: string;
+  /** Shown on the right where a shortcut would be, such as what a closed tab was connected to. */
+  hint?: string;
   /** The roadmap phase that brings this item. Until then it is greyed out. */
   phase?: number;
   enabled?: () => boolean;
@@ -25,21 +42,15 @@ export type Item = {
   run?: () => void;
 };
 
-/** A menu's items, with `null` for a separator line. */
-export type Menu = { title: string; items: (Item | null)[] };
+/** A menu's items, with `null` for a separator line and a string for a heading over the items after it. */
+export type Menu = { title: string; items: (Item | string | null)[] };
 
 /** What the menus ask of the app around them. */
 export type AppActions = {
   about(): void;
   exit(): void;
-  /** Opens the dialog for a new serial session. */
-  newSession(): void;
-  /** Opens the dialog for a new RTT session. */
-  newRttSession(): void;
-  /** Opens the dialog for a new SWO session. */
-  newSwoSession(): void;
-  /** Opens the dialog for a new TCP session: a socket, Telnet or an RTT server. */
-  newTcpSession(): void;
+  /** Opens the dialog for a new tab of a kind, a TCP one with a protocol; a recording's is picking the file. */
+  newTab(kind: SessionKind, protocol?: Protocol): void;
   /** Opens the settings dialog of the tab in front. */
   sessionSettings(): void;
   /** Opens the app's settings. */
@@ -56,11 +67,13 @@ export type AppActions = {
   highlights(): void;
   /** Opens the command palette. */
   commandPalette(): void;
-  /** Picks a recording and plays it in a new tab. */
-  playRecording(): void;
+  /** Looks on GitHub for a newer terNIMA, and says what it found. */
+  checkUpdates(): void;
 };
 
 const GITHUB = "https://github.com/nimaltd/ternima";
+/** The closed tabs the File menu lists; it keeps more, for their devices' settings. */
+const CLOSED_SHOWN = 5;
 
 export function buildMenus(app: AppActions): Menu[] {
   const terminal = activeTerminal;
@@ -79,87 +92,91 @@ export function buildMenus(app: AppActions): Menu[] {
   const connected = () => activeTab()?.connected ?? false;
   const hasTabs = () => tabs.length > 1;
   const isSerial = () => activeTab()?.kind === "serial";
+
+  /** The tabs closed lately, to open again as they were; nothing while there are none. */
+  const closedItems = (): (Item | string | null)[] =>
+    closedTabs.length === 0
+      ? []
+      : [
+          null,
+          "Closed tabs",
+          ...closedTabs.slice(0, CLOSED_SHOWN).map((setup) => ({
+            label: setup.name,
+            hint: closedText(setup),
+            run: () => reopenTab(setup),
+          })),
+        ];
   const onProbe = () => activeTab()?.kind === "rtt" || activeTab()?.kind === "swo";
 
   return [
     {
       title: "File",
-      items: [
-        {
-          label: "New serial session...",
-          shortcut: keys("Ctrl+Shift+N", "Cmd+N"),
-          run: app.newSession,
-        },
-        {
-          label: "New RTT session...",
-          shortcut: keys("Ctrl+Shift+R", "Cmd+Shift+R"),
-          run: app.newRttSession,
-        },
-        { label: "New SWO session...", run: app.newSwoSession },
-        {
-          label: "New TCP session...",
-          shortcut: keys("Ctrl+Shift+T", "Cmd+Shift+T"),
-          run: app.newTcpSession,
-        },
-        null,
-        {
-          label: "Close tab",
-          shortcut: keys("Ctrl+Shift+W", "Cmd+W"),
-          enabled: hasTab,
-          run: () => {
-            const tab = activeTab();
-            if (tab) closeTab(tab);
+      // Tabs closed lately come and go, so the menu is made each time it is shown.
+      get items() {
+        return [
+          // The same as the + button's menu.
+          "New session",
+          ...NEW_TABS.map(({ kind, protocol, label, shortcut }) => ({
+            label: `${label}...`,
+            shortcut,
+            run: () => app.newTab(kind, protocol),
+          })),
+          null,
+          {
+            label: "Close tab",
+            shortcut: keys("Ctrl+Shift+W", "Cmd+W"),
+            enabled: hasTab,
+            run: () => {
+              const tab = activeTab();
+              if (tab) closeTab(tab);
+            },
           },
-        },
-        null,
-        {
-          label: "Log this tab to a file",
-          shortcut: keys("Ctrl+Shift+L", "Cmd+Shift+L"),
-          enabled: hasTab,
-          checked: () => activeTab()?.log ?? false,
-          run: () => {
-            const tab = activeTab();
-            tab?.setLog(!tab.log);
+          ...closedItems(),
+          null,
+          {
+            label: "Log this tab to a file",
+            shortcut: keys("Ctrl+Shift+L", "Cmd+Shift+L"),
+            enabled: hasTab,
+            checked: () => activeTab()?.log ?? false,
+            run: () => {
+              const tab = activeTab();
+              tab?.setLog(!tab.log);
+            },
           },
-        },
-        {
-          label: "Record this tab",
-          enabled: () => activeTab()?.running === true && activeTab()?.kind !== "replay",
-          checked: () => activeTab()?.recordPath != null,
-          run: () => {
-            const tab = activeTab();
-            tab?.setRecording(tab.recordPath === null);
+          {
+            label: "Record this tab",
+            enabled: () => activeTab()?.running === true && activeTab()?.kind !== "replay",
+            checked: () => activeTab()?.recordPath != null,
+            run: () => {
+              const tab = activeTab();
+              tab?.setRecording(tab.recordPath === null);
+            },
           },
-        },
-        {
-          label: "Play a recording...",
-          shortcut: keys("Ctrl+Shift+O", "Cmd+O"),
-          run: app.playRecording,
-        },
-        { label: "Open log folder", run: app.openLogFolder },
-        {
-          label: "Save output as...",
-          shortcut: keys("Ctrl+Shift+S", "Cmd+Shift+S"),
-          enabled: hasTerminal,
-          run: app.saveOutput,
-        },
-        {
-          label: "Export the plot as CSV...",
-          enabled: () => terminal()?.exportCsv !== undefined,
-          run: () => terminal()?.exportCsv?.(),
-        },
-        {
-          label: "Export the plot as PNG...",
-          enabled: () => terminal()?.exportPng !== undefined,
-          run: () => terminal()?.exportPng?.(),
-        },
-        null,
-        { label: "Settings...", shortcut: keys("Ctrl+,", "Cmd+,"), run: app.settings },
-        null,
-        isMac
-          ? { label: "Quit terNIMA", shortcut: "Cmd+Q", run: app.exit }
-          : { label: "Exit", run: app.exit },
-      ],
+          { label: "Open log folder", run: app.openLogFolder },
+          {
+            label: "Save output as...",
+            shortcut: keys("Ctrl+Shift+S", "Cmd+Shift+S"),
+            enabled: hasTerminal,
+            run: app.saveOutput,
+          },
+          {
+            label: "Export the plot as CSV...",
+            enabled: () => terminal()?.exportCsv !== undefined,
+            run: () => terminal()?.exportCsv?.(),
+          },
+          {
+            label: "Export the plot as PNG...",
+            enabled: () => terminal()?.exportPng !== undefined,
+            run: () => terminal()?.exportPng?.(),
+          },
+          null,
+          { label: "Settings...", shortcut: keys("Ctrl+,", "Cmd+,"), run: app.settings },
+          null,
+          isMac
+            ? { label: "Quit terNIMA", shortcut: "Cmd+Q", run: app.exit }
+            : { label: "Exit", run: app.exit },
+        ];
+      },
     },
     {
       title: "Edit",
@@ -202,6 +219,17 @@ export function buildMenus(app: AppActions): Menu[] {
           enabled: hasTerminal,
           run: () => terminal()?.clear(),
         },
+        {
+          label: "Scroll lock",
+          // Macs have no Scroll Lock key.
+          shortcut: isMac ? undefined : "ScrollLock",
+          enabled: () => activeTab()?.view === "terminal" || activeTab()?.view === "hex",
+          checked: () => activeTab()?.scrollLock ?? false,
+          run: () => {
+            const tab = activeTab();
+            tab?.setScrollLock(!tab.scrollLock);
+          },
+        },
       ],
     },
     {
@@ -230,7 +258,7 @@ export function buildMenus(app: AppActions): Menu[] {
           },
         },
         {
-          label: "Lines (Zephyr log)",
+          label: "Zephyr log",
           shortcut: keys("Ctrl+Shift+J", "Cmd+Shift+J"),
           enabled: hasTab,
           checked: () => activeTab()?.view === "lines",
@@ -411,6 +439,7 @@ export function buildMenus(app: AppActions): Menu[] {
       items: [
         { label: "terNIMA on GitHub", run: () => void openUrl(GITHUB) },
         { label: "Report a bug...", run: () => void openUrl(`${GITHUB}/issues/new`) },
+        { label: "Check for updates...", run: app.checkUpdates },
         null,
         { label: "About terNIMA", run: app.about },
       ],
@@ -425,10 +454,14 @@ export function buildMenus(app: AppActions): Menu[] {
 export function menuCommands(menus: Menu[]): Command[] {
   const commands: Command[] = [];
   for (const menu of menus) {
+    // Items under a heading are named with it: "New session: Serial port".
+    let heading = "";
     for (const item of menu.items) {
-      if (item && isEnabled(item) && item.run && !item.label.startsWith("Command palette")) {
+      if (typeof item === "string" || item === null) {
+        heading = item ?? "";
+      } else if (isEnabled(item) && item.run && !item.label.startsWith("Command palette")) {
         commands.push({
-          label: item.label.replace(/\.\.\.$/, ""),
+          label: `${heading ? `${heading}: ` : ""}${item.label.replace(/\.\.\.$/, "")}`,
           group: menu.title,
           shortcut: item.shortcut,
           checked: item.checked?.() ?? false,
@@ -452,7 +485,7 @@ export function isEnabled(item: Item): boolean {
 export function itemForKey(menus: Menu[], event: KeyboardEvent): Item | null {
   for (const menu of menus) {
     for (const item of menu.items) {
-      if (item?.shortcut && matches(item.shortcut, event)) {
+      if (item && typeof item !== "string" && item.shortcut && matches(item.shortcut, event)) {
         return item;
       }
     }

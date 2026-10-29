@@ -49,7 +49,7 @@
   const GUIDES: Record<Chart, { title: string; what: string; send: string; code: string; line: string }> = {
     time: {
       title: "Time",
-      what: "Each value over time, with cursors, stats and a trigger.",
+      what: "Each value over time, with cursors, stats and a trigger. R by a series gives it a scale of its own on the right.",
       send: "Send a line for each reading, a name before each value:",
       code: 'printf("temp=%.1f hum=%.1f\\n", temp, hum);',
       line: "temp=21.5 hum=40.2",
@@ -252,6 +252,8 @@
 
   function add(item: StoredLine | Sample, mode: PlotView["mode"], regex: RegExp | null) {
     if (item.n < firstPlotted(mode)) return;
+    // The tab's own lines, such as "connected to COM6, 115200 8N1", have no values.
+    if ("note" in item && item.note) return;
     origin ??= item.at;
     const values = valuesOf(item, mode, regex);
     if (values.length === 0) return;
@@ -323,7 +325,7 @@
   let lastKind: Chart | null = null;
   $effect(() => {
     const view = tab.plotView;
-    void [view.chart, view.x_series, view.hist_series, view.bins, view.fft_window, view.fft_db, view.fft_rate, view.window_ms, view.dots];
+    void [view.chart, view.x_series, view.hist_series, view.bins, view.fft_window, view.fft_db, view.fft_rate, view.window_ms, view.dots, view.right];
     void [trigger.on, trigger.series, trigger.level, trigger.edge, trigger.single];
     untrack(() => {
       if (view.chart !== lastKind) {
@@ -450,6 +452,16 @@
     return !tab.plotView.hidden.includes(names[index]);
   }
 
+  /** Whether a series is on the time chart's right axis, with a scale of its own. */
+  function onRight(index: number): boolean {
+    return tab.plotView.chart === "time" && tab.plotView.right.includes(names[index]);
+  }
+
+  /** The scale a series is drawn on: the left axis's, or the right one's. */
+  function scaleOf(index: number): string {
+    return onRight(index) ? "y2" : "y";
+  }
+
   function signature(): string {
     const view = tab.plotView;
     return [
@@ -459,6 +471,7 @@
       view.chart === "histogram" ? histIndex() : "",
       view.chart === "fft" ? view.fft_db : "",
       view.chart === "time" ? view.dots : "",
+      view.chart === "time" ? names.filter((name) => view.right.includes(name)).join(",") : "",
     ].join("|");
   }
 
@@ -620,6 +633,7 @@
     const color = colors[index % colors.length];
     const base = {
       label: names[index],
+      scale: scaleOf(index),
       stroke: color,
       dash: DASHES[Math.floor(index / colors.length)],
       // The histogram's one series is always shown: picking another hides it.
@@ -668,6 +682,8 @@
         : fromZero
           ? { range: (_chart: uPlot, _min: number, max: number) => [0, max > 0 ? max * 1.08 : 1] }
           : {};
+    // Series far from the others, such as a count beside a voltage, on an axis of their own.
+    const right = charted().filter(onRight);
     building = true;
     chart = new uPlot(
       {
@@ -681,6 +697,7 @@
             ...(view.chart === "xy" ? { range: (_chart: uPlot, min: number, max: number) => uPlot.rangeNum(min, max, 0.05, true) } : {}),
           },
           y,
+          ...(right.length > 0 ? { y2: {} } : {}),
         },
         cursor: {
           y: false,
@@ -699,6 +716,21 @@
             ...(view.chart === "fft" && view.fft_db ? { values: unit(" dB") } : {}),
             size: (_chart: uPlot, values: string[]) => axisWidth(values),
           },
+          // Named after its series, so it is plain which values it is for.
+          ...(right.length > 0
+            ? [
+                {
+                  ...axis,
+                  scale: "y2",
+                  side: 1,
+                  grid: { show: false },
+                  label: right.map((index) => names[index]).join(", "),
+                  labelFont: `11px ${FONT_FAMILY}`,
+                  labelSize: 16,
+                  size: (_chart: uPlot, values: string[]) => axisWidth(values),
+                },
+              ]
+            : []),
         ],
         hooks: {
           setSelect: [zoomToSelection],
@@ -895,7 +927,7 @@
     });
     if (trigger.on) {
       // The level as a dotted line, with T at its right end.
-      const y = self.valToPos(trigger.level, "y", true);
+      const y = self.valToPos(trigger.level, scaleOf(triggerIndex()), true);
       if (y >= top && y <= top + height) {
         const line = Math.round(y) + 0.5;
         ctx.strokeStyle = ink.text;
@@ -1128,6 +1160,14 @@
     if (position >= 0) chart?.setSeries(position + 1, { show: !hidden.includes(name) });
     // The other charts work out only what is shown.
     if (tab.plotView.chart !== "time") redrawNow();
+  }
+
+  /** Puts a series on the right axis, with a scale of its own, or back on the left one. */
+  function toggleRight(name: string) {
+    const right = tab.plotView.right.includes(name)
+      ? tab.plotView.right.filter((other) => other !== name)
+      : [...tab.plotView.right, name];
+    setPlotView({ right });
   }
 
   function onRegexInput(event: Event & { currentTarget: HTMLInputElement }) {
@@ -1682,21 +1722,37 @@
             {@const counted = row.index === histIndex()}
             <tr class:off={kind === "histogram" ? !counted : !shownNow && !isX}>
               <td class="name">
-                <label title={isX ? "Along x" : kind === "histogram" ? "Count this series" : "Show or hide this series"}>
-                  {#if kind === "histogram"}
-                    <input type="radio" name="histogram-series" checked={counted} onchange={() => setPlotView({ hist_series: row.name })} />
-                  {:else}
-                    <input type="checkbox" checked={shownNow || isX} disabled={isX} onchange={() => toggleSeries(row.name, row.index)} />
+                <div class="row-name">
+                  <label title={isX ? "Along x" : kind === "histogram" ? "Count this series" : "Show or hide this series"}>
+                    {#if kind === "histogram"}
+                      <input type="radio" name="histogram-series" checked={counted} onchange={() => setPlotView({ hist_series: row.name })} />
+                    {:else}
+                      <input type="checkbox" checked={shownNow || isX} disabled={isX} onchange={() => toggleSeries(row.name, row.index)} />
+                    {/if}
+                    {#if isX}
+                      <span class="axis">x</span>
+                    {:else}
+                      <svg width="18" height="8" aria-hidden="true">
+                        <line x1="0" y1="4" x2="18" y2="4" stroke={color} stroke-width="2" stroke-dasharray={dash?.join(" ")} />
+                      </svg>
+                    {/if}
+                    <span class="mono">{row.name}</span>
+                  </label>
+                  {#if kind === "time"}
+                    {@const right = tab.plotView.right.includes(row.name)}
+                    <button
+                      class="side"
+                      class:on={right}
+                      aria-pressed={right}
+                      title={right
+                        ? "On the right axis, with a scale of its own: click to put it back on the left one"
+                        : "Put it on a right axis, with a scale of its own, for values far from the others"}
+                      onclick={() => toggleRight(row.name)}
+                    >
+                      R
+                    </button>
                   {/if}
-                  {#if isX}
-                    <span class="axis">x</span>
-                  {:else}
-                    <svg width="18" height="8" aria-hidden="true">
-                      <line x1="0" y1="4" x2="18" y2="4" stroke={color} stroke-width="2" stroke-dasharray={dash?.join(" ")} />
-                    </svg>
-                  {/if}
-                  <span class="mono">{row.name}</span>
-                </label>
+                </div>
               </td>
               {#if kind === "fft"}
                 <td>{row.peak ? hz(row.peak.freq) : ""}</td>
@@ -2142,6 +2198,38 @@
   .range.section {
     padding: 8px 10px 4px;
     border-top: 1px solid var(--border);
+  }
+
+  .row-name {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+
+  /* R: the series on a right axis of its own. */
+  .side {
+    height: 16px;
+    padding: 0 4px;
+    font: inherit;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 14px;
+    color: var(--muted);
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    cursor: pointer;
+    opacity: 0.6;
+  }
+
+  .side:hover {
+    opacity: 1;
+  }
+
+  .side.on {
+    color: var(--accent);
+    border-color: var(--accent);
+    opacity: 1;
   }
 
   .axis {

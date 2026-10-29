@@ -25,6 +25,22 @@ export type StartupSettings = {
   restore_window: boolean;
 };
 
+/** What the mouse does in the terminal and the hex view. */
+export type MouseSettings = {
+  /** Selecting text copies it, as in PuTTY. */
+  select_copies: boolean;
+  /** A right-click pastes. */
+  right_click_pastes: boolean;
+};
+
+/** Looking on GitHub for a newer terNIMA. */
+export type UpdateSettings = {
+  /** Looks when terNIMA starts. */
+  check: boolean;
+  /** A version not to tell about again, such as "1.0.2"; empty for none. */
+  skipped: string;
+};
+
 /** A command kept for one click, or Alt with its number. */
 export type Macro = {
   name: string;
@@ -33,6 +49,17 @@ export type Macro = {
   hex: boolean;
   /** Sends the tab's Enter after the text. */
   enter: boolean;
+};
+
+/** Macros sent one after another with a click, a wait after each: a number of times, or until it is stopped. */
+export type Sequence = {
+  name: string;
+  /** The names of the macros it sends, in order. */
+  steps: string[];
+  /** How long it waits after each macro, in ms. */
+  delay_ms: number;
+  /** How many times it goes through its macros; 0 goes on until it is stopped. */
+  repeat: number;
 };
 
 export type HighlightColor = "red" | "orange" | "yellow" | "green" | "blue" | "purple";
@@ -57,7 +84,11 @@ export type Settings = {
   send_box: boolean;
   startup: StartupSettings;
   log: LogSettings;
+  mouse: MouseSettings;
+  updates: UpdateSettings;
   macros: Macro[];
+  /** Macros sent one after another. */
+  sequences: Sequence[];
   /** The Lines view's highlight rules; the first that matches a line marks it. */
   highlights: Highlight[];
 };
@@ -74,7 +105,10 @@ export const settings: Settings = $state({
   send_box: true,
   startup: { restore_tabs: true, reconnect: true, restore_window: true },
   log: { new_tabs: false, folder: "", format: "text", timestamps: true },
+  mouse: { select_copies: true, right_click_pastes: true },
+  updates: { check: true, skipped: "" },
   macros: [],
+  sequences: [],
   highlights: [],
 });
 

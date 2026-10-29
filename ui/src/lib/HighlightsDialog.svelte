@@ -51,7 +51,7 @@
 
 <Modal title="Highlight rules" {onclose} onsubmit={submit}>
   <p class="dlg-hint">
-    In the Lines view, a line with the text gets the rule's color. The first rule that matches
+    In the Zephyr log view, a line with the text gets the rule's color. The first rule that matches
     wins, so put the most important ones first.
   </p>
 

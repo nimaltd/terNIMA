@@ -75,6 +75,45 @@ impl Default for StartupSettings {
     }
 }
 
+/// What the mouse does in the terminal and the hex view.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MouseSettings {
+    /// Selecting text copies it, as in PuTTY.
+    pub select_copies: bool,
+    /// A right-click pastes.
+    pub right_click_pastes: bool,
+}
+
+impl Default for MouseSettings {
+    fn default() -> Self {
+        Self {
+            select_copies: true,
+            right_click_pastes: true,
+        }
+    }
+}
+
+/// Looking on GitHub for a newer terNIMA.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateSettings {
+    /// Looks when terNIMA starts.
+    pub check: bool,
+    /// A version not to tell about again, such as "1.0.2"; empty for none.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub skipped: String,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            check: true,
+            skipped: String::new(),
+        }
+    }
+}
+
 /// A command kept for one click, or Alt with its number.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Macro {
@@ -90,6 +129,30 @@ pub struct Macro {
 
 fn yes() -> bool {
     true
+}
+
+/// Macros sent one after another with a click, a wait after each: a number
+/// of times, or until it is stopped.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Sequence {
+    pub name: String,
+    /// The names of the macros it sends, in order.
+    #[serde(default)]
+    pub steps: Vec<String>,
+    /// How long it waits after each macro, in ms.
+    #[serde(default = "half_a_second")]
+    pub delay_ms: u32,
+    /// How many times it goes through its macros; 0 goes on until it is stopped.
+    #[serde(default = "once")]
+    pub repeat: u32,
+}
+
+fn half_a_second() -> u32 {
+    500
+}
+
+fn once() -> u32 {
+    1
 }
 
 /// The colors a highlight rule can mark lines in.
@@ -129,9 +192,14 @@ pub struct Settings {
     pub send_box: bool,
     pub startup: StartupSettings,
     pub log: LogSettings,
+    pub mouse: MouseSettings,
+    pub updates: UpdateSettings,
     /// The macros every tab can send, in the order they are shown.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub macros: Vec<Macro>,
+    /// Macros sent one after another, in the order they are shown.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sequences: Vec<Sequence>,
     /// The Lines view's highlight rules; the first that matches a line marks it.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub highlights: Vec<Highlight>,
@@ -145,7 +213,10 @@ impl Default for Settings {
             send_box: true,
             startup: StartupSettings::default(),
             log: LogSettings::default(),
+            mouse: MouseSettings::default(),
+            updates: UpdateSettings::default(),
             macros: Vec::new(),
+            sequences: Vec::new(),
             highlights: Vec::new(),
         }
     }
@@ -204,6 +275,14 @@ mod tests {
                 format: LogFormat::Raw,
                 timestamps: false,
             },
+            mouse: MouseSettings {
+                select_copies: false,
+                right_click_pastes: false,
+            },
+            updates: UpdateSettings {
+                check: false,
+                skipped: "1.0.2".into(),
+            },
             macros: vec![
                 Macro {
                     name: "Reboot".into(),
@@ -218,6 +297,12 @@ mod tests {
                     enter: false,
                 },
             ],
+            sequences: vec![Sequence {
+                name: "Boot test".into(),
+                steps: vec!["Reboot".into(), "Ping".into()],
+                delay_ms: 2000,
+                repeat: 0,
+            }],
             highlights: vec![Highlight {
                 text: "timeout|fail".into(),
                 regex: true,
@@ -246,6 +331,22 @@ mod tests {
     }
 
     #[test]
+    fn a_sequence_waits_half_a_second_and_runs_once_unless_told_otherwise() {
+        let settings: Settings =
+            toml::from_str("[[sequences]]\nname = \"Ping twice\"\nsteps = [\"Ping\", \"Ping\"]\n")
+                .unwrap();
+        assert_eq!(
+            settings.sequences,
+            [Sequence {
+                name: "Ping twice".into(),
+                steps: vec!["Ping".into(), "Ping".into()],
+                delay_ms: 500,
+                repeat: 1,
+            }]
+        );
+    }
+
+    #[test]
     fn saved_file_is_readable_toml() {
         let dir = TempDir::new("readable");
         let path = dir.file("settings.toml");
@@ -264,6 +365,10 @@ mod tests {
         let settings = Settings::load(&path);
         assert_eq!(settings.theme, Theme::Dark);
         assert_eq!(settings.font_size, FONT_SIZE_DEFAULT);
+        // From before the mouse and the updates had settings: on, as for a new install.
+        assert!(settings.mouse.select_copies && settings.mouse.right_click_pastes);
+        assert!(settings.updates.check);
+        assert_eq!(settings.updates.skipped, "");
     }
 
     #[test]

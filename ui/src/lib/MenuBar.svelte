@@ -43,7 +43,7 @@
     for (let tries = 0; tries < items.length; tries++) {
       index = (index + step + items.length) % items.length;
       const item = items[index];
-      if (item && isEnabled(item)) {
+      if (item && typeof item !== "string" && isEnabled(item)) {
         active = index;
         return;
       }
@@ -70,7 +70,7 @@
       case "Enter":
       case " ": {
         const item = active === null ? null : menus[open].items[active];
-        if (item) {
+        if (item && typeof item !== "string") {
           run(item);
         }
         break;
@@ -127,6 +127,8 @@
           {#each menu.items as item, j (j)}
             {#if item === null}
               <div class="separator" role="separator"></div>
+            {:else if typeof item === "string"}
+              <div class="heading" role="presentation">{item}</div>
             {:else}
               {@const enabled = isEnabled(item)}
               <button
@@ -148,6 +150,8 @@
                     Phase {item.phase}
                   {:else if item.shortcut}
                     {shortcutLabel(item.shortcut)}
+                  {:else if item.hint}
+                    {item.hint}
                   {/if}
                 </span>
               </button>
@@ -199,6 +203,8 @@
     top: calc(100% + 2px);
     left: 0;
     z-index: 10;
+    /* As wide as its longest item, each on one line. */
+    width: max-content;
     min-width: 270px;
     padding: 4px;
     background: var(--menu-bg);
@@ -232,6 +238,10 @@
     text-align: center;
   }
 
+  .label {
+    white-space: nowrap;
+  }
+
   .hint {
     padding-left: 32px;
     font-size: 12px;
@@ -242,5 +252,11 @@
     height: 1px;
     margin: 4px 8px;
     background: var(--border);
+  }
+
+  .heading {
+    padding: 6px 10px 2px 24px;
+    font-size: 12px;
+    color: var(--muted);
   }
 </style>

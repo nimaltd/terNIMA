@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { settings, type Macro } from "./settings.svelte";
+  import { settings, type Macro, type Sequence } from "./settings.svelte";
   import { keys, shortcutLabel } from "./shortcuts";
   import type { Tab } from "./tabs.svelte";
   import { activeTerminal } from "./terminal-actions";
@@ -20,6 +20,7 @@
     if (!text && !enter) {
       return;
     }
+    tab.setScrollLock(false);
     try {
       await tab.sendLine(text, hex, enter);
       if (text) {
@@ -34,6 +35,7 @@
   }
 
   async function sendMacro(macro: Macro) {
+    tab.setScrollLock(false);
     try {
       await tab.sendLine(macro.text, macro.hex, macro.enter);
       error = "";
@@ -99,6 +101,16 @@
     return index < 9 ? shortcutLabel(keys(`Alt+${index + 1}`, `Cmd+${index + 1}`)) : null;
   }
 
+  function sequenceTitle(sequence: Sequence): string {
+    const times = sequence.repeat === 0 ? "until stopped" : sequence.repeat === 1 ? "once" : `${sequence.repeat} times`;
+    return `Sends ${sequence.steps.join(", ")}, ${sequence.delay_ms} ms apart, ${times}. Click again to stop.`;
+  }
+
+  /** Where a running sequence is: "3 of 10", or "3" when it goes on until stopped. */
+  function progress(running: { round: number; rounds: number }): string {
+    return running.rounds === 0 ? String(running.round) : `${running.round} of ${running.rounds}`;
+  }
+
   function macroTitle(macro: Macro, index: number): string {
     const enter = macro.enter ? ` and ${ENTER_NAMES[tab.terminal.enter]}` : "";
     const key = macroKey(index);
@@ -156,6 +168,22 @@
             <span class="key">{index + 1}</span>
           {/if}
           {macro.name}
+        </button>
+      {/each}
+      {#each settings.sequences as sequence, index (index)}
+        {@const running = tab.sequence?.name === sequence.name ? tab.sequence : null}
+        <button
+          class="btn small macro sequence"
+          class:running={running !== null}
+          disabled={!tab.connected || (tab.sequence !== null && running === null)}
+          title={running ? "Stop it" : sequenceTitle(sequence)}
+          onclick={() => (running ? tab.stopSequence() : void tab.runSequence(sequence))}
+        >
+          <span class="key">{running ? "■" : "▶"}</span>
+          {sequence.name}
+          {#if running}
+            <span class="key">{progress(running)}</span>
+          {/if}
         </button>
       {/each}
     </div>
@@ -227,6 +255,11 @@
 
   .macro {
     gap: 6px;
+  }
+
+  .sequence.running {
+    border-color: var(--accent);
+    background: var(--accent-soft);
   }
 
   .key {
