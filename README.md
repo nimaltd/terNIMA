@@ -39,6 +39,7 @@ What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 - Serial ports with every option: any baud rate, data bits, parity, stop bits, flow control, DTR, RTS and break
 - SEGGER RTT through CMSIS-DAP, J-Link and ST-Link probes, with no vendor software needed
 - SWO through the same probes: ITM output such as printf, from one stimulus port or all of them
+- Live variables: watch and plot the firmware's globals, struct members and array elements by name from its ELF file, read through the probe as the chip runs
 - RTT over TCP while your IDE is debugging, from J-Link or OpenOCD
 - TCP and Telnet sessions, for devices and serial bridges on the network
 - A send box with history, macros on Alt+1 to Alt+9 and sequences of them, hex sending, and sending a file

@@ -99,10 +99,11 @@ fn find_and_open(id: Option<&ProbeId>, speed_khz: u32) -> Result<Probe, Option<S
 
     let mut probe = info.open().map_err(|error| {
         Some(format!(
-            "Could not open {}: {error}. If a debugger has it open, close that first, \
+            "Could not open {}: {}. If a debugger has it open, close that first, \
              or read RTT through the debugger's own RTT server: RTT through J-Link or OpenOCD, \
-             under + or File > New session.",
-            info.identifier
+             under + or File > New session. If nothing has it open, unplug it and plug it in again.",
+            info.identifier,
+            with_causes(&error)
         ))
     })?;
     if speed_khz > 0 {
@@ -113,6 +114,22 @@ fn find_and_open(id: Option<&ProbeId>, speed_khz: u32) -> Result<Probe, Option<S
         })?;
     }
     Ok(probe)
+}
+
+/// An error with what caused it, as "USB error: reset not supported by
+/// WinUSB": probe-rs says what went wrong in the causes.
+fn with_causes(error: &dyn std::error::Error) -> String {
+    let mut parts = vec![error.to_string()];
+    let mut cause = error.source();
+    while let Some(next) = cause {
+        parts.push(next.to_string());
+        cause = next.source();
+    }
+    parts
+        .iter()
+        .map(|part| part.trim_end_matches('.'))
+        .collect::<Vec<_>>()
+        .join(": ")
 }
 
 /// Every chip name probe-rs knows, read once.
@@ -176,6 +193,27 @@ mod tests {
     #[test]
     fn empty_search_finds_nothing() {
         assert!(search_chips("  ", 10).is_empty());
+    }
+
+    #[test]
+    fn an_error_says_what_caused_it() {
+        #[derive(Debug)]
+        struct Usb(std::io::Error);
+        impl std::fmt::Display for Usb {
+            fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("USB error.")
+            }
+        }
+        impl std::error::Error for Usb {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+        let error = Usb(std::io::Error::other("reset not supported by WinUSB"));
+        assert_eq!(
+            with_causes(&error),
+            "USB error: reset not supported by WinUSB"
+        );
     }
 
     #[test]

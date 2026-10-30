@@ -54,6 +54,8 @@ pub trait RttLink: Send {
     /// firmware can clear it or move it.
     fn still_there(&mut self) -> Result<bool, LinkProblem>;
     fn reset(&mut self) -> Result<(), LinkProblem>;
+    /// Reads the chip's memory while it runs, as the watched variables are read.
+    fn read_memory(&mut self, address: u64, buf: &mut [u8]) -> Result<(), LinkProblem>;
 }
 
 /// Real probes, through probe-rs.
@@ -141,6 +143,11 @@ impl RttLink for ProbeRsLink {
         self.rtt = None;
         let mut core = self.session.core(0).map_err(lost)?;
         core.reset().map_err(lost)
+    }
+
+    fn read_memory(&mut self, address: u64, buf: &mut [u8]) -> Result<(), LinkProblem> {
+        let mut core = self.session.core(0).map_err(lost)?;
+        core.read_8(address, buf).map_err(lost)
     }
 }
 

@@ -7,4 +7,4 @@ mod session;
 
 pub use config::RttConfig;
 pub use link::{Attached, ChannelInfo, LinkProblem, ProbeRs, RttBackend, RttLink};
-pub use session::{Event, RttState, Session};
+pub use session::{Event, RttState, Session, Watched};

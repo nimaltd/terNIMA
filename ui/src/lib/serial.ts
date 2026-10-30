@@ -55,7 +55,7 @@ export type SessionKind = "serial" | "rtt" | "swo" | "tcp" | "replay";
  * What a tab shows: the terminal, every byte in hex, every line in a list,
  * the numbers in a chart, or Modbus on a serial tab.
  */
-export type View = "terminal" | "hex" | "lines" | "plot" | "modbus";
+export type View = "terminal" | "hex" | "lines" | "plot" | "modbus" | "watch";
 
 /** A Zephyr log level. */
 export type Level = "err" | "wrn" | "inf" | "dbg";
@@ -99,8 +99,8 @@ export type Trigger = {
 /** How the Plot view reads and shows numbers. */
 export type PlotView = {
   /** "auto" reads JSON, named values and plain numbers; "regex" uses `regex`. */
-  /** "modbus" plots the values read on a serial tab's Modbus line. */
-  mode: "auto" | "regex" | "modbus";
+  /** "modbus" plots the values read on a serial tab's Modbus line; "watch" the variables an RTT tab watches. */
+  mode: "auto" | "regex" | "modbus" | "watch";
   regex: string;
   /** The time shown while it follows the newest values, in ms; 0 shows them all. */
   window_ms: number;
@@ -189,7 +189,28 @@ export type SessionSetup = {
   modbus?: ModbusSetup;
   /** The lines sent from the send box, oldest first. */
   history?: SentLine[];
+  watch?: WatchSetup;
 };
+
+/** The variables an RTT tab's Watch view reads, and how often. */
+export type WatchSetup = {
+  /** Their names, as the ELF file has them: counter, sensor.temp. */
+  names: string[];
+  /** How often they are read, in ms. */
+  every_ms: number;
+};
+
+export const DEFAULT_WATCH: WatchSetup = { names: [], every_ms: 50 };
+
+export type VariableKind = "bool" | "u8" | "i8" | "u16" | "i16" | "u32" | "i32" | "u64" | "i64" | "f32" | "f64";
+
+/** A variable in a firmware's ELF file that the Watch view can read. */
+export type Variable = { name: string; address: number; kind: VariableKind; type_name: string };
+
+/** Every variable in an ELF file that can be watched, by name. Rejects with why it cannot be read. */
+export function elfVariables(path: string): Promise<Variable[]> {
+  return invoke<Variable[]>("elf_variables", { path });
+}
 
 export type SplitDirection = "right" | "down";
 
@@ -225,6 +246,8 @@ export type SessionEvent =
   | ({ kind: "swo_state" } & SwoState)
   | ({ kind: "tcp_state" } & NetState)
   | { kind: "text_lines"; lines: LogLine[]; at: number }
+  /** The watched variables' values, in their order, with when they were read. */
+  | { kind: "watch"; values: (number | null)[]; at: number }
   | {
       kind: "replayed";
       pieces: { sent: boolean; bytes: number[]; at: number }[];

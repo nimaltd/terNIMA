@@ -4,8 +4,9 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { Terminal } from "@xterm/xterm";
 import { echoed } from "./echo";
+import { shortNames } from "./watch";
 import { HexDump } from "./hexdump";
-import { DEFAULT_MODBUS, ModbusSession, type ModbusSetup } from "./modbus.svelte";
+import { DEFAULT_MODBUS, ModbusSession, type ModbusSetup, type Sample } from "./modbus.svelte";
 import { DEFAULT_TCP, address, protocolText, type TcpConfig } from "./net";
 import { withClosed } from "./recent";
 import {
@@ -25,6 +26,7 @@ import {
   DEFAULT_REPLAY,
   DEFAULT_SERIAL,
   DEFAULT_TERMINAL,
+  DEFAULT_WATCH,
   closeAllSessions,
   getWorkspace,
   setWorkspace,
@@ -46,6 +48,7 @@ import {
   type SplitDirection,
   type TerminalOptions,
   type View,
+  type WatchSetup,
 } from "./serial";
 import { settings, type Macro, type Sequence } from "./settings.svelte";
 import { bytes as byteText } from "./state";
@@ -82,6 +85,8 @@ const RTT_FILE_RATE = 1000;
 const LINES_MAX = 100_000;
 /** The most time, in ms, that lines read at once are spread over. */
 const SPREAD_MS = 200;
+/** The most watched values a tab keeps for the plot; a tenth of them go when there are more. */
+const WATCH_SAMPLES_MAX = 100_000;
 
 /**
  * A line as the Lines view keeps it: numbered from the tab's first, with when
@@ -172,6 +177,26 @@ export class Tab {
   sending: { name: string; sent: number; total: number } | null = $state(null);
   /** Scroll lock: the screen stays where it is while lines keep coming below it. */
   scrollLock = $state(false);
+  /** The variables the Watch view reads from an RTT tab's chip, and how often. */
+  watch: WatchSetup = $state({ ...DEFAULT_WATCH });
+  /** The watched variables' newest values, in their order, and the smallest and largest of each. */
+  watchValues: (number | null)[] = $state([]);
+  watchRange: ({ min: number; max: number } | null)[] = $state([]);
+  /** Whether the ELF file has each watched variable, and why none can be read, if so. */
+  watchFound: boolean[] = $state([]);
+  watchProblem: string | null = $state(null);
+  /**
+   * The watched values over time, for the plot. Plain values, as there can be
+   * many: `watchVersion` changes with them.
+   */
+  readonly watchSamples: Sample[] = [];
+  watchVersion = $state(0);
+  /** The number of the first sample the plot reads: Clear in the Plot view moves it on. */
+  watchFrom = $state(0);
+  private nextWatch = 0;
+  /** The names the session was last told, which its values come in the order of, and as the plot names them. */
+  private watchSent: string[] = [];
+  private watchSeries: string[] = [];
   /** The sequence of macros running, and where it has got to, while one runs. */
   sequence: { name: string; round: number; rounds: number } | null = $state(null);
   /** Set by Stop, for the sequence to end before its next macro. */
@@ -226,6 +251,12 @@ export class Tab {
       if (this.plotView.mode === "modbus") this.plotView.mode = "auto";
     }
     this.history = setup.history ?? [];
+    this.watch = { ...DEFAULT_WATCH, ...setup.watch };
+    // The Watch view reads through a probe: it is on RTT tabs only.
+    if (this.kind !== "rtt") {
+      if (this.view === "watch") this.view = "terminal";
+      if (this.plotView.mode === "watch") this.plotView.mode = "auto";
+    }
   }
 
   get connected(): boolean {
@@ -261,7 +292,7 @@ export class Tab {
     };
     switch (this.kind) {
       case "rtt":
-        return $state.snapshot({ ...common, rtt: this.rtt });
+        return $state.snapshot({ ...common, rtt: this.rtt, watch: this.watch });
       case "swo":
         return $state.snapshot({ ...common, swo: this.swo });
       case "tcp":
@@ -329,6 +360,82 @@ export class Tab {
   clearPlot(): void {
     this.plotFrom = this.nextLine;
     this.modbus.plotFrom = this.modbus.nextNumber;
+    this.watchFrom = this.nextWatch;
+  }
+
+  /** Watches a variable of the chip, by its name in the ELF file. */
+  addWatch(name: string): void {
+    if (!this.watch.names.includes(name)) {
+      this.watch.names = [...this.watch.names, name];
+      this.sendWatch();
+      changed();
+    }
+  }
+
+  removeWatch(name: string): void {
+    this.watch.names = this.watch.names.filter((other) => other !== name);
+    this.sendWatch();
+    changed();
+  }
+
+  /** How often the watched variables are read, in ms. */
+  setWatchEvery(ms: number): void {
+    this.watch.every_ms = ms;
+    this.sendWatch();
+    changed();
+  }
+
+  /** Starts the smallest and largest values again, from the next ones read. */
+  resetWatchRange(): void {
+    this.watchRange = [];
+  }
+
+  /**
+   * Tells the session which variables to read, found by name in the ELF file
+   * again, as after the firmware was built anew; and keeps whether each was found.
+   */
+  sendWatch(): void {
+    if (this.kind !== "rtt" || !this.running) {
+      return;
+    }
+    const names = $state.snapshot(this.watch.names);
+    this.watchSent = names;
+    this.watchSeries = shortNames(names);
+    this.watchValues = [];
+    this.watchRange = [];
+    invoke<boolean[]>("watch_session", { id: this.id, elf: this.rtt.elf ?? "", names, everyMs: this.watch.every_ms })
+      .then((found) => {
+        this.watchFound = found;
+        this.watchProblem = null;
+      })
+      .catch((problem) => {
+        this.watchFound = [];
+        this.watchProblem = String(problem);
+      });
+  }
+
+  /** Values the session read: the newest for the Watch view, and all of them for the plot. */
+  private onWatched(values: (number | null)[], at: number): void {
+    const names = this.watchSent;
+    // From before the list changed.
+    if (values.length !== names.length) {
+      return;
+    }
+    this.watchValues = values;
+    this.watchRange = values.map((value, index) => {
+      const range = this.watchRange[index] ?? null;
+      if (value === null || !Number.isFinite(value)) return range;
+      return range ? { min: Math.min(range.min, value), max: Math.max(range.max, value) } : { min: value, max: value };
+    });
+    const read: [string, number][] = [];
+    values.forEach((value, index) => {
+      if (value !== null && Number.isFinite(value)) read.push([this.watchSeries[index], value]);
+    });
+    this.watchSamples.push({ n: this.nextWatch++, at, ok: read.length > 0, values: read });
+    if (this.watchSamples.length > WATCH_SAMPLES_MAX) {
+      this.watchSamples.splice(0, WATCH_SAMPLES_MAX / 10);
+    }
+    this.watchVersion++;
   }
 
   /**
@@ -518,7 +625,12 @@ export class Tab {
         });
     }
     started
-      .then((status) => this.onLogStatus(status))
+      .then((status) => {
+        this.onLogStatus(status);
+        if (this.watch.names.length > 0) {
+          this.sendWatch();
+        }
+      })
       .catch((error) => this.note(`could not start: ${error}`));
     changed();
   }
@@ -698,9 +810,13 @@ export class Tab {
   /** Changes an RTT session's settings; a running session attaches again at once. */
   reconfigureRtt(rtt: RttConfig): void {
     const channelBefore = this.rtt.up_channel;
+    const elfBefore = this.rtt.elf;
     this.rtt = rtt;
     if (this.running) {
       void invoke("reconfigure_rtt_session", { id: this.id, config: $state.snapshot(rtt) });
+      if (rtt.elf !== elfBefore) {
+        this.sendWatch();
+      }
       if (this.connected && rtt.up_channel !== channelBefore) {
         const channel = this.channels?.up.find((up) => up.number === rtt.up_channel);
         this.note(`now showing channel ${channel ? channelText(channel) : rtt.up_channel}`);
@@ -1066,10 +1182,17 @@ export class Tab {
           this.onWaiting(event.problem);
         }
         return;
+      case "watch":
+        this.onWatched(event.values, event.at);
+        return;
       case "rtt_state":
         if (event.state === "connected") {
           this.rttAddress = event.address;
           this.onConnected(event.chip, `${event.chip}, RTT at ${hexAddress(event.address)}`);
+          // New firmware may have moved them: found in its ELF file again.
+          if (this.watch.names.length > 0) {
+            this.sendWatch();
+          }
         } else {
           this.onWaiting(event.problem);
         }

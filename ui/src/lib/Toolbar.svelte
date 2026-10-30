@@ -33,10 +33,17 @@
       label: "Modbus",
       title: "A Modbus RTU or ASCII master or slave on this port, and every frame on the line (Ctrl+Shift+M)",
     },
+    {
+      view: "watch",
+      label: "Watch",
+      title: "The firmware's variables, read through the probe as the chip runs, by name from its ELF file",
+    },
   ];
 
-  /** Modbus is for serial tabs. */
-  const views = $derived(VIEWS.filter(({ view }) => view !== "modbus" || tab.kind === "serial"));
+  /** Modbus is for serial tabs, and Watch for RTT tabs, which have a probe. */
+  const views = $derived(
+    VIEWS.filter(({ view }) => (view !== "modbus" || tab.kind === "serial") && (view !== "watch" || tab.kind === "rtt")),
+  );
 
   /** How fast a recording can play, against how it was recorded. */
   const SPEEDS = [0.25, 0.5, 1, 2, 5, 10, 100];
@@ -245,8 +252,8 @@
       </button>
     {/if}
 
-    <!-- The Modbus view frames what it sends itself: the terminal's settings are not for it. -->
-    {#if tab.view !== "modbus"}
+    <!-- The Modbus view frames what it sends itself, and Watch sends nothing: the terminal's settings are not for them. -->
+    {#if tab.view !== "modbus" && tab.view !== "watch"}
       <div class="terminal">
         {#if tab.view === "terminal" || tab.view === "hex"}
           <button class="btn small" title="Clear the screen (Ctrl+Shift+K)" onclick={() => act(() => tab.clearScreen())}>

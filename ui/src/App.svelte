@@ -23,6 +23,7 @@
   import Terminal from "./lib/Terminal.svelte";
   import Toolbar from "./lib/Toolbar.svelte";
   import UpdateDialog from "./lib/UpdateDialog.svelte";
+  import WatchView from "./lib/WatchView.svelte";
   import { buildMenus, isEnabled, itemForKey, macroForKey, menuCommands, menuForAltKey } from "./lib/menus";
   import type { Command } from "./lib/palette";
   import { keys } from "./lib/shortcuts";
@@ -399,6 +400,11 @@
             {#if tab.view === "modbus" && onScreen(i)}
               <div class="view">
                 <ModbusView {tab} active={i === view.active} />
+              </div>
+            {/if}
+            {#if tab.view === "watch" && onScreen(i)}
+              <div class="view">
+                <WatchView {tab} active={i === view.active} />
               </div>
             {/if}
             {#if tab.view === "hex" && onScreen(i)}

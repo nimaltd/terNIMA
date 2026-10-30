@@ -18,7 +18,7 @@ use ternima_core::logfile::{LogSetup, Logger};
 use ternima_core::record::{self, Direction, Recorder};
 use ternima_core::replay::{self, Player};
 use ternima_core::send::{self, Pace, Stopped};
-use ternima_core::{net, probe, rtt, serial, swo};
+use ternima_core::{elf, net, probe, rtt, serial, swo};
 
 /// The most time, in ms, that lines read at once are spread over, the same
 /// as SPREAD_MS in tabs.svelte.ts, which does it for live sessions.
@@ -163,6 +163,13 @@ pub enum SessionEvent {
     /// Writing the log failed, so it was turned off.
     LogStopped {
         problem: String,
+    },
+    /// The watched variables' values, in the order the Watch view asked for
+    /// them: `null` for one that could not be read. With when they were read,
+    /// in ms since 1970.
+    Watch {
+        values: Vec<Option<f64>>,
+        at: f64,
     },
 }
 
@@ -430,6 +437,12 @@ pub fn open_rtt_session(
                 events.send(SessionEvent::RttState(state))
             }
             rtt::Event::Channels { up, down } => events.send(SessionEvent::Channels { up, down }),
+            rtt::Event::Watch(values) => {
+                let at = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_or(0.0, |since| since.as_secs_f64() * 1000.0);
+                events.send(SessionEvent::Watch { values, at })
+            }
         };
     });
     sessions.insert(id, Running::Rtt(session), shared);
@@ -709,6 +722,14 @@ pub fn close_all_sessions(sessions: State<Sessions>) {
     drop(old);
 }
 
+/// Closes every session as the app ends, each letting go of its port or
+/// probe as it does when closed. An ST-LINK left in the middle of a transfer
+/// would not open again until it is plugged in again.
+pub fn close_all(app: &AppHandle) {
+    let old = std::mem::take(&mut *app.state::<Sessions>().lock());
+    drop(old);
+}
+
 /// Sends bytes to a device. Not async, so key presses go out in the order they were typed.
 #[tauri::command]
 pub fn write_session(id: u32, data: Vec<u8>, sessions: State<Sessions>) {
@@ -854,6 +875,77 @@ pub fn reconfigure_rtt_session(id: u32, config: rtt::RttConfig, sessions: State<
             session.reconfigure(config);
         }
     });
+}
+
+/// The variables of the ELF file read last, with when the file was changed:
+/// it is read again only after the firmware is built again.
+type KnownVariables = (PathBuf, SystemTime, Arc<Vec<elf::Variable>>);
+static VARIABLES: Mutex<Option<KnownVariables>> = Mutex::new(None);
+
+/// The variables in an ELF file that can be watched.
+fn variables_in(path: &str) -> Result<Arc<Vec<elf::Variable>>, String> {
+    if path.trim().is_empty() {
+        return Err("Choose the firmware's ELF file, built with debug information.".into());
+    }
+    let path = PathBuf::from(path);
+    let modified = std::fs::metadata(&path)
+        .and_then(|metadata| metadata.modified())
+        .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
+    let mut known = VARIABLES.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((known_path, known_modified, variables)) = known.as_ref()
+        && *known_path == path
+        && *known_modified == modified
+    {
+        return Ok(variables.clone());
+    }
+    let data = std::fs::read(&path)
+        .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
+    let variables = Arc::new(elf::variables(&data)?);
+    *known = Some((path, modified, variables.clone()));
+    Ok(variables)
+}
+
+/// Every variable in an ELF file that the Watch view can read, by name.
+#[tauri::command(async)]
+pub fn elf_variables(path: String) -> Result<Vec<elf::Variable>, String> {
+    variables_in(&path).map(|variables| variables.as_ref().clone())
+}
+
+/// Reads these variables of an RTT tab's chip every `every_ms`, found by
+/// name in its ELF file, and says which of them the file has. No names stop it.
+#[tauri::command(async)]
+pub fn watch_session(
+    id: u32,
+    elf: String,
+    names: Vec<String>,
+    every_ms: u32,
+    sessions: State<Sessions>,
+) -> Result<Vec<bool>, String> {
+    let variables = if names.is_empty() {
+        Arc::new(Vec::new())
+    } else {
+        variables_in(&elf)?
+    };
+    let watch: Vec<Option<rtt::Watched>> = names
+        .iter()
+        .map(|name| {
+            variables
+                .iter()
+                .find(|variable| &variable.name == name)
+                .map(|variable| rtt::Watched {
+                    address: variable.address,
+                    kind: variable.kind,
+                })
+        })
+        .collect();
+    let found = watch.iter().map(Option::is_some).collect();
+    let every = Duration::from_millis(u64::from(every_ms.max(1)));
+    sessions.with(id, |session| {
+        if let Running::Rtt(session) = session {
+            session.watch(watch, every);
+        }
+    });
+    Ok(found)
 }
 
 #[tauri::command]

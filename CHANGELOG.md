@@ -5,6 +5,26 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Watch, a view of RTT tabs: the firmware's variables, read through the
+  probe as the chip runs, without stopping it. They are picked from a list
+  of those in the firmware's ELF file, from its debug information, or found
+  by typing part of a name: globals and statics, the members of structs as
+  `sensor.temp` and the first elements of arrays as `buf[2]`, each with its
+  type and address. Statics of one name in two source files are named as
+  GDB names them, `'uart.c'::state`. The table has each one's value, min
+  and max, read 1 to 100 times a second, and the Plot view's Read:
+  Variables draws them over time. They are found again in the ELF file
+  when new firmware is found, and read also from firmware without RTT.
+
+### Fixed
+
+- Closing terNIMA while it read RTT could leave an ST-LINK that would not
+  open again on Windows until it was unplugged. terNIMA now closes every
+  session as it closes, letting go of each port and probe. When a probe
+  does not open, the message says why, as `USB error: ...`.
+
 ## [1.1.0] - 2026-10-29
 
 ### Added

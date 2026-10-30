@@ -214,14 +214,15 @@
     follow = true;
   }
 
-  /** What the plot reads: the lines, or the values read on the Modbus line. */
+  /** What the plot reads: the lines, the values read on the Modbus line, or the watched variables. */
   function source(): (StoredLine | Sample)[] {
-    return tab.plotView.mode === "modbus" ? tab.modbus.samples : tab.textLines;
+    const mode = tab.plotView.mode;
+    return mode === "modbus" ? tab.modbus.samples : mode === "watch" ? tab.watchSamples : tab.textLines;
   }
 
   /** The number of the first item the plot reads, as Clear left it. */
   function firstPlotted(mode: PlotView["mode"]): number {
-    return mode === "modbus" ? tab.modbus.plotFrom : tab.plotFrom;
+    return mode === "modbus" ? tab.modbus.plotFrom : mode === "watch" ? tab.watchFrom : tab.plotFrom;
   }
 
   /** Reads the values in the lines: all of them again, or only the new ones. */
@@ -283,7 +284,7 @@
 
   /** A line's values, read as the mode says, or what a Modbus read got. */
   function valuesOf(item: StoredLine | Sample, mode: PlotView["mode"], regex: RegExp | null) {
-    if (mode === "modbus") {
+    if (mode === "modbus" || mode === "watch") {
       const sample = item as Sample;
       return sample.ok ? sample.values : [];
     }
@@ -306,9 +307,9 @@
   // Another way of reading the lines, or Clear, starts again from nothing: the
   // values, the cursors and the trigger's last crossing all belonged to the old ones.
   $effect(() => {
-    void [tab.plotView.mode, pattern, tab.plotFrom, tab.modbus.plotFrom];
+    void [tab.plotView.mode, pattern, tab.plotFrom, tab.modbus.plotFrom, tab.watchFrom];
     untrack(() => {
-      const from = `${tab.plotView.mode} ${pattern?.source ?? ""} ${tab.plotFrom} ${tab.modbus.plotFrom}`;
+      const from = `${tab.plotView.mode} ${pattern?.source ?? ""} ${tab.plotFrom} ${tab.modbus.plotFrom} ${tab.watchFrom}`;
       if (from !== plottedFrom) {
         plottedFrom = from;
         restart();
@@ -318,7 +319,7 @@
   });
   // New lines or Modbus values: only they need reading.
   $effect(() => {
-    void [tab.linesVersion, tab.modbus.version];
+    void [tab.linesVersion, tab.modbus.version, tab.watchVersion];
     untrack(() => refresh(false));
   });
   // Another chart, or other settings for it, draws it again at once.
@@ -1399,6 +1400,14 @@
         <code>c3</code> coil 3, <code>u2.hr0</code> unit 2's.
       </p>
       {#if !closable}<p class="waiting">Nothing read yet.</p>{/if}
+    {:else if tab.plotView.mode === "watch"}
+      <h3>{chartGuide.title}, from the firmware's variables</h3>
+      <p>{chartGuide.what}</p>
+      <p>
+        Nothing to print: add variables in the <b>Watch</b> view, by their names in the firmware's ELF file. They are
+        read through the probe as the chip runs, each a series named after its variable.
+      </p>
+      {#if !closable}<p class="waiting">No values yet.</p>{/if}
     {:else if tab.plotView.mode === "regex"}
       <h3>{chartGuide.title}, with a regex</h3>
       <p>{chartGuide.what}</p>
@@ -1443,6 +1452,9 @@
         <option value="regex">Regex</option>
         {#if tab.kind === "serial"}
           <option value="modbus">Modbus</option>
+        {/if}
+        {#if tab.kind === "rtt"}
+          <option value="watch">Variables</option>
         {/if}
       </select>
     </label>

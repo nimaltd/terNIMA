@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, PoisonError};
 
 use serde::Serialize;
-use tauri::{Manager, State, WindowEvent};
+use tauri::{Manager, RunEvent, State, WindowEvent};
 use ternima_core::settings::Settings;
 use ternima_core::workspace::Workspace;
 
@@ -159,6 +159,8 @@ fn main() {
             sessions::break_session,
             sessions::reconfigure_session,
             sessions::reconfigure_rtt_session,
+            sessions::elf_variables,
+            sessions::watch_session,
             sessions::reconfigure_swo_session,
             sessions::reconfigure_tcp_session,
             sessions::reset_target,
@@ -170,6 +172,11 @@ fn main() {
             sessions::open_replay_session,
             sessions::control_replay,
         ])
-        .run(tauri::generate_context!())
-        .expect("ternima could not start");
+        .build(tauri::generate_context!())
+        .expect("ternima could not start")
+        .run(|app, event| {
+            if let RunEvent::Exit = event {
+                sessions::close_all(app);
+            }
+        });
 }

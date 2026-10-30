@@ -287,6 +287,15 @@ export function buildMenus(app: AppActions): Menu[] {
             tab?.setView(tab.view === "modbus" ? "terminal" : "modbus");
           },
         },
+        {
+          label: "Watch",
+          enabled: () => activeTab()?.kind === "rtt",
+          checked: () => activeTab()?.view === "watch",
+          run: () => {
+            const tab = activeTab();
+            tab?.setView(tab.view === "watch" ? "terminal" : "watch");
+          },
+        },
         null,
         {
           label: "Bookmark the line",

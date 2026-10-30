@@ -6,6 +6,7 @@
 mod ansi;
 mod banner;
 pub mod detect;
+pub mod elf;
 mod hex;
 pub mod lines;
 pub mod logfile;

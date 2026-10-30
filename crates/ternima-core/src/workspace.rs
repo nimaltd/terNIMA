@@ -101,6 +101,8 @@ pub enum View {
     Plot,
     /// A Modbus master or slave, and the frames on the line, on a serial tab.
     Modbus,
+    /// The variables of an RTT tab's chip, read as it runs, by name from its ELF file.
+    Watch,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -233,6 +235,8 @@ pub enum ValueMode {
     Regex,
     /// The values read on the Modbus line of a serial tab.
     Modbus,
+    /// The variables an RTT tab's Watch view reads.
+    Watch,
 }
 
 /// What the Plot view draws.
@@ -409,6 +413,29 @@ fn is_false(value: &bool) -> bool {
 /// The most sent lines each tab keeps.
 pub const HISTORY_MAX: usize = 100;
 
+/// How often watched variables can be read, in ms: from 100 a second to one a minute.
+const WATCH_EVERY: (u32, u32) = (10, 60_000);
+
+/// The variables an RTT tab's Watch view reads, and how often.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WatchSetup {
+    /// Their names, as the ELF file has them: `counter`, `sensor.temp`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub names: Vec<String>,
+    /// How often they are read, in ms.
+    pub every_ms: u32,
+}
+
+impl Default for WatchSetup {
+    fn default() -> Self {
+        Self {
+            names: Vec::new(),
+            every_ms: 50,
+        }
+    }
+}
+
 /// The most closed tabs kept, to open again and for their devices' settings.
 pub const CLOSED_MAX: usize = 20;
 
@@ -452,6 +479,8 @@ pub struct SessionSetup {
     /// The lines sent from the send box, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub history: Vec<SentLine>,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub watch: WatchSetup,
 }
 
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {
@@ -576,6 +605,7 @@ impl Workspace {
             if !HEX_WIDTHS.contains(&session.hex_view.width) {
                 session.hex_view.width = HexView::default().width;
             }
+            session.watch.every_ms = session.watch.every_ms.clamp(WATCH_EVERY.0, WATCH_EVERY.1);
         }
         self.active = self.active.min(self.sessions.len().saturating_sub(1));
         let count = self.sessions.len();
@@ -641,6 +671,7 @@ mod tests {
             plot_view: PlotView::default(),
             modbus: ModbusSetup::default(),
             history: Vec::new(),
+            watch: WatchSetup::default(),
         }
     }
 
@@ -667,6 +698,7 @@ mod tests {
             plot_view: PlotView::default(),
             modbus: ModbusSetup::default(),
             history: Vec::new(),
+            watch: WatchSetup::default(),
         }
     }
 
@@ -932,6 +964,29 @@ mode = "tcp"
         let kept = &workspace.sessions[0].history;
         assert_eq!(kept.len(), HISTORY_MAX);
         assert_eq!(kept[0].text, "5");
+    }
+
+    #[test]
+    fn a_watch_is_kept_with_its_tab_and_read_no_faster_than_the_most() {
+        let dir = TempDir::new("workspace-watch");
+        let path = dir.file("workspace.toml");
+        let workspace = Workspace {
+            sessions: vec![SessionSetup {
+                view: View::Watch,
+                watch: WatchSetup {
+                    names: vec!["sensor.temp".into(), "counter".into()],
+                    every_ms: 2,
+                },
+                ..rtt_tab()
+            }],
+            ..Workspace::default()
+        };
+        workspace.save(&path).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("view = \"watch\""), "{text}");
+        let loaded = Workspace::load(&path);
+        assert_eq!(loaded.sessions[0].watch.names, ["sensor.temp", "counter"]);
+        assert_eq!(loaded.sessions[0].watch.every_ms, WATCH_EVERY.0);
     }
 
     #[test]

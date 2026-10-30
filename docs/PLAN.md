@@ -576,7 +576,8 @@ Done when you can find one module's errors in a busy Zephyr log in seconds.
 ### Phase 5: probe tools
 
 - [ ] Crash and address decoding from the ELF
-- [ ] Live variable watch and plot
+- [x] Live variable watch and plot: the Watch view of RTT tabs, the variables found by name
+  in the ELF's debug information and read through the probe as the chip runs
 - [ ] SVD register viewer
 - [x] SWO / ITM (done in Phase 2)
 
