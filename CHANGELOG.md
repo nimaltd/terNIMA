@@ -5,6 +5,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-30
+
 ### Added
 
 - Watch, a view of RTT tabs: the firmware's variables, read through the
@@ -380,6 +382,7 @@ yet; the README says how to open them.
   at all for 2 s, as when flow control holds it, drops the rest and stays
   open.
 
-[Unreleased]: https://github.com/nimaltd/ternima/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/nimaltd/ternima/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/nimaltd/ternima/releases/tag/v1.2.0
 [1.1.0]: https://github.com/nimaltd/ternima/releases/tag/v1.1.0
 [1.0.0]: https://github.com/nimaltd/ternima/releases/tag/v1.0.0
