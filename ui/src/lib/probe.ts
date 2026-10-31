@@ -24,13 +24,17 @@ export type RttConfig = {
   address?: string | null;
   up_channel: number;
   down_channel: number;
+  /** Only the watched variables are read, for firmware without RTT. */
+  watch_only?: boolean;
 };
 
 export type ChannelInfo = { number: number; name: string | null; size: number };
 
 export type RttState =
   | { state: "waiting"; problem: string | null }
-  | { state: "connected"; chip: string; address: number };
+  | { state: "connected"; chip: string; address: number }
+  /** Attached, reading only the watched variables. */
+  | { state: "watching"; chip: string };
 
 export const DEFAULT_RTT: RttConfig = {
   probe: null,
@@ -41,6 +45,7 @@ export const DEFAULT_RTT: RttConfig = {
   address: null,
   up_channel: 0,
   down_channel: 0,
+  watch_only: false,
 };
 
 /** SWD clock choices in kHz; 0 is the probe's own default. */
@@ -98,6 +103,8 @@ export type SwoConfig = {
   /** The ITM stimulus port shown, 0 to 31. */
   port: number;
   all_ports: boolean;
+  /** The firmware's ELF file, where the Watch view finds its variables. */
+  elf?: string | null;
 };
 
 export type SwoState =
@@ -113,6 +120,7 @@ export const DEFAULT_SWO: SwoConfig = {
   baud: 2_000_000,
   port: 0,
   all_ports: false,
+  elf: null,
 };
 
 /** SWO baud rates offered in the list. Any other number can be typed. */

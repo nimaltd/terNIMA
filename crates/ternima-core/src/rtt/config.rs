@@ -30,6 +30,14 @@ pub struct RttConfig {
     pub up_channel: usize,
     /// The channel that gets what is typed.
     pub down_channel: usize,
+    /// Only the watched variables are read, for firmware without RTT: the
+    /// control block is not looked for.
+    #[serde(skip_serializing_if = "is_false")]
+    pub watch_only: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl RttConfig {
@@ -62,7 +70,17 @@ mod tests {
         assert!(text.contains("address = \"0x20000400\""), "{text}");
         assert!(text.contains("vid = \"0483\""), "{text}");
         assert!(!text.contains("elf"), "{text}");
+        // Off, as it is for RTT, it is left out.
+        assert!(!text.contains("watch_only"), "{text}");
         assert_eq!(toml::from_str::<RttConfig>(&text).unwrap(), config);
+
+        let watching = RttConfig {
+            watch_only: true,
+            ..config
+        };
+        let text = toml::to_string(&watching).unwrap();
+        assert!(text.contains("watch_only = true"), "{text}");
+        assert_eq!(toml::from_str::<RttConfig>(&text).unwrap(), watching);
     }
 
     #[test]

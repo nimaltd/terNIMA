@@ -39,7 +39,7 @@ What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 - Serial ports with every option: any baud rate, data bits, parity, stop bits, flow control, DTR, RTS and break
 - SEGGER RTT through CMSIS-DAP, J-Link and ST-Link probes, with no vendor software needed
 - SWO through the same probes: ITM output such as printf, from one stimulus port or all of them
-- Live variables: watch and plot the firmware's globals, struct members and array elements by name from its ELF file, read through the probe as the chip runs
+- Live variables: watch and plot the firmware's globals, struct members and array elements by name from its ELF file, read as the chip runs: through the probe of an RTT or SWO tab, with or without RTT in the firmware, or through OpenOCD while you debug. Beside the terminal, or in a view of their own
 - RTT over TCP while your IDE is debugging, from J-Link or OpenOCD
 - TCP and Telnet sessions, for devices and serial bridges on the network
 - A send box with history, macros on Alt+1 to Alt+9 and sequences of them, hex sending, and sending a file
@@ -57,9 +57,9 @@ What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
-## 🐞 RTT while you debug
+## 🐞 RTT and variables while you debug
 
-A probe has one owner: while your IDE debugs through it, terNIMA cannot open it too. Read RTT from the debugger's own RTT server instead, with **RTT through J-Link or OpenOCD** under + or File > New session. The debugger keeps the probe, and both work at once.
+A probe has one owner: while your IDE debugs through it, terNIMA cannot open it too. Read RTT from the debugger's own RTT server instead, with **RTT through a debugger's server** under + or File > New session. The debugger keeps the probe, and both work at once.
 
 - **J-Link**: its software serves RTT on port 19021 while it is connected to the chip: the GDB Server your IDE starts (Cortex-Debug with `"servertype": "jlink"`), Ozone, J-Link Commander or RTT Viewer. There is nothing to set up.
 - **OpenOCD**: it serves RTT once it is told to, with its own commands, after the firmware has set RTT up. Type them in OpenOCD's telnet console, or after `monitor` in GDB's:
@@ -71,6 +71,8 @@ A probe has one owner: while your IDE debugs through it, terNIMA cannot open it 
   ```
 
   The address and size say where to look for RTT: your chip's RAM. Port 9090 then serves channel 0.
+
+  The Watch view of that tab reads the variables through OpenOCD's Tcl port, 6666 unless OpenOCD is told otherwise, as the chip runs. Nothing else is needed: a debugger attached to the same OpenOCD keeps working.
 
 ---
 

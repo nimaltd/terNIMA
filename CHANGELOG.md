@@ -5,6 +5,27 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Watch on more tabs. SWO tabs read the variables through their probe as
+  they trace. With OpenOCD, RTT through a debugger's server reads them
+  through OpenOCD's Tcl port, 6666 unless set otherwise, while a debugger
+  has the probe: the chip runs on and the debugger keeps working. J-Link's
+  server gives no way to read them. SWO and server tabs take the ELF file
+  in their settings or in the Watch view.
+- Read RTT, in an RTT tab's settings. Off, the tab reads only the watched
+  variables, for firmware without RTT: it shows Watch and Plot, and says
+  it is watching rather than looking for RTT.
+- Watch beside the terminal: View > Watch beside the terminal, or the
+  Watch view's button, shows the watched variables at the right of the
+  terminal, its hex view and its Zephyr log, so what the firmware prints
+  and its variables are in view together.
+
+### Changed
+
+- RTT through J-Link or OpenOCD is called RTT through a debugger's server,
+  under + and in File > New session.
+
 ## [1.2.0] - 2026-10-30
 
 ### Added

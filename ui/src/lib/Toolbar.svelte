@@ -40,9 +40,17 @@
     },
   ];
 
-  /** Modbus is for serial tabs, and Watch for RTT tabs, which have a probe. */
+  /**
+   * Modbus is for serial tabs, and Watch for the tabs with a probe. A tab
+   * that only watches variables has nothing for the terminal views.
+   */
   const views = $derived(
-    VIEWS.filter(({ view }) => (view !== "modbus" || tab.kind === "serial") && (view !== "watch" || tab.kind === "rtt")),
+    VIEWS.filter(
+      ({ view }) =>
+        (view !== "modbus" || tab.kind === "serial") &&
+        (view !== "watch" || tab.canWatch) &&
+        (!tab.watchOnly || view === "plot" || view === "watch"),
+    ),
   );
 
   /** How fast a recording can play, against how it was recorded. */
@@ -135,35 +143,37 @@
         {/each}
       </div>
     {:else if tab.kind === "rtt"}
-      <button class="btn target" title="RTT settings" onclick={onsettings}>
+      <button class="btn target" title={tab.watchOnly ? "Watch settings" : "RTT settings"} onclick={onsettings}>
         <span class="mono">{tab.rtt.chip || "No chip"}</span>
-        <span class="muted">RTT</span>
+        <span class="muted">{tab.watchOnly ? "Watch" : "RTT"}</span>
         <span class="muted">▾</span>
       </button>
 
       <span class="separator"></span>
 
-      <label class="option" title="The up channel shown in the terminal">
-        Channel
-        <select
-          class="field"
-          value={tab.rtt.up_channel}
-          onchange={(event) =>
-            act(() => tab.reconfigureRtt({ ...tab.rtt, up_channel: Number(event.currentTarget.value) }))}
-        >
-          {#if tab.channels && tab.channels.up.length > 0}
-            {#each tab.channels.up as channel (channel.number)}
-              <option value={channel.number}>{channelText(channel)}</option>
-            {/each}
-          {:else}
-            <option value={tab.rtt.up_channel}>{tab.rtt.up_channel}</option>
-          {/if}
-        </select>
-      </label>
+      {#if !tab.watchOnly}
+        <label class="option" title="The up channel shown in the terminal">
+          Channel
+          <select
+            class="field"
+            value={tab.rtt.up_channel}
+            onchange={(event) =>
+              act(() => tab.reconfigureRtt({ ...tab.rtt, up_channel: Number(event.currentTarget.value) }))}
+          >
+            {#if tab.channels && tab.channels.up.length > 0}
+              {#each tab.channels.up as channel (channel.number)}
+                <option value={channel.number}>{channelText(channel)}</option>
+              {/each}
+            {:else}
+              <option value={tab.rtt.up_channel}>{tab.rtt.up_channel}</option>
+            {/if}
+          </select>
+        </label>
+      {/if}
       <button
         class="btn small"
         disabled={!tab.connected}
-        title="Reset the chip through the probe, then find RTT again"
+        title={tab.watchOnly ? "Reset the chip through the probe" : "Reset the chip through the probe, then find RTT again"}
         onclick={() => act(() => tab.resetTarget())}
       >
         Reset target
@@ -252,8 +262,9 @@
       </button>
     {/if}
 
-    <!-- The Modbus view frames what it sends itself, and Watch sends nothing: the terminal's settings are not for them. -->
-    {#if tab.view !== "modbus" && tab.view !== "watch"}
+    <!-- The Modbus view frames what it sends itself, and Watch sends nothing: the terminal's settings are not for them,
+         nor for a tab that only watches variables. -->
+    {#if tab.view !== "modbus" && tab.view !== "watch" && !tab.watchOnly}
       <div class="terminal">
         {#if tab.view === "terminal" || tab.view === "hex"}
           <button class="btn small" title="Clear the screen (Ctrl+Shift+K)" onclick={() => act(() => tab.clearScreen())}>
@@ -325,7 +336,8 @@
   </div>
 
   <div class="side">
-    {#if tab.kind !== "replay"}
+    <!-- A tab that only watches variables receives nothing to log or record. -->
+    {#if tab.kind !== "replay" && !tab.watchOnly}
       <button
         class="btn small log"
         class:on={tab.log}

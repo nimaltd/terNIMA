@@ -26,6 +26,9 @@ pub struct SwoConfig {
     pub port: u8,
     /// Shows every stimulus port instead of only `port`.
     pub all_ports: bool,
+    /// The firmware's ELF file, where the Watch view finds its variables.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elf: Option<String>,
 }
 
 impl Default for SwoConfig {
@@ -39,6 +42,7 @@ impl Default for SwoConfig {
             baud: 2_000_000,
             port: 0,
             all_ports: false,
+            elf: None,
         }
     }
 }

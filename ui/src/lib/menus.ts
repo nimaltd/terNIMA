@@ -107,6 +107,8 @@ export function buildMenus(app: AppActions): Menu[] {
           })),
         ];
   const onProbe = () => activeTab()?.kind === "rtt" || activeTab()?.kind === "swo";
+  /** A tab with a terminal: one that only watches variables has none. */
+  const hasTerminalViews = () => hasTab() && activeTab()?.watchOnly !== true;
 
   return [
     {
@@ -243,14 +245,14 @@ export function buildMenus(app: AppActions): Menu[] {
         null,
         {
           label: "Terminal",
-          enabled: hasTab,
+          enabled: hasTerminalViews,
           checked: () => activeTab()?.view === "terminal",
           run: () => activeTab()?.setView("terminal"),
         },
         {
           label: "Hex",
           shortcut: keys("Ctrl+Shift+H", "Cmd+Shift+H"),
-          enabled: hasTab,
+          enabled: hasTerminalViews,
           checked: () => activeTab()?.view === "hex",
           run: () => {
             const tab = activeTab();
@@ -260,7 +262,7 @@ export function buildMenus(app: AppActions): Menu[] {
         {
           label: "Zephyr log",
           shortcut: keys("Ctrl+Shift+J", "Cmd+Shift+J"),
-          enabled: hasTab,
+          enabled: hasTerminalViews,
           checked: () => activeTab()?.view === "lines",
           run: () => {
             const tab = activeTab();
@@ -289,11 +291,22 @@ export function buildMenus(app: AppActions): Menu[] {
         },
         {
           label: "Watch",
-          enabled: () => activeTab()?.kind === "rtt",
+          enabled: () => activeTab()?.canWatch === true,
           checked: () => activeTab()?.view === "watch",
           run: () => {
             const tab = activeTab();
             tab?.setView(tab.view === "watch" ? "terminal" : "watch");
+          },
+        },
+        {
+          label: "Watch beside the terminal",
+          enabled: () => activeTab()?.canWatch === true && activeTab()?.watchOnly !== true,
+          checked: () => activeTab()?.watchBeside ?? false,
+          run: () => {
+            const tab = activeTab();
+            if (!tab) return;
+            tab.setWatchBeside(!tab.watchBeside);
+            if (tab.watchBeside && tab.view === "watch") tab.setView("terminal");
           },
         },
         null,

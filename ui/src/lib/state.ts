@@ -55,8 +55,9 @@ function tcpWaitingText(tab: Tab): string {
   }
 }
 
-/** "RTT on STM32H503RB at 0x20000400, channel 0 Terminal" */
+/** "RTT on STM32H503RB at 0x20000400, channel 0 Terminal", or "Watching variables on STM32H503RB" */
 function rttText(tab: Tab): string {
+  if (tab.watchOnly) return `Watching variables on ${tab.target} through the probe`;
   const at = tab.rttAddress === null ? "" : ` at ${hexAddress(tab.rttAddress)}`;
   const channel = tab.channels?.up.find((up) => up.number === tab.rtt.up_channel);
   const which = channel ? channelText(channel) : String(tab.rtt.up_channel);

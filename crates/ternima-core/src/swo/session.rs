@@ -13,6 +13,7 @@ use serde::Serialize;
 use super::config::SwoConfig;
 use super::itm::{ItmDecoder, ItmPacket};
 use crate::probe::{self, Target};
+use crate::watch::{Watched, Watcher};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -24,7 +25,7 @@ pub enum SwoState {
 }
 
 /// What a session tells the app.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     /// Bytes from the stimulus port shown, in the order they came.
     Data(Vec<u8>),
@@ -32,6 +33,9 @@ pub enum Event {
     /// The chip's trace FIFO overflowed and some output was lost. Told at
     /// most once a second, with how many overflows there were.
     Overflow(u32),
+    /// The watched variables' values, in their order: `None` for one that
+    /// could not be read, or is not in the firmware.
+    Watch(Vec<Option<f64>>),
 }
 
 /// Starts tracing on a chip.
@@ -48,6 +52,8 @@ pub trait SwoLink: Send {
     fn read(&mut self) -> Result<Vec<u8>, String>;
     /// Resets the chip and turns tracing on again.
     fn reset(&mut self) -> Result<(), String>;
+    /// Reads the chip's memory while it runs, as the watched variables are read.
+    fn read_memory(&mut self, address: u64, buf: &mut [u8]) -> Result<(), String>;
 }
 
 /// Real probes, through probe-rs.
@@ -125,11 +131,19 @@ impl SwoLink for ProbeRsLink {
             .map_err(|error| error.to_string())?;
         self.trace_on()
     }
+
+    fn read_memory(&mut self, address: u64, buf: &mut [u8]) -> Result<(), String> {
+        self.session
+            .core(0)
+            .and_then(|mut core| core.read_8(address, buf))
+            .map_err(|error| error.to_string())
+    }
 }
 
 enum Command {
     Reset,
     Reconfigure(SwoConfig),
+    Watch(Vec<Option<Watched>>, Duration),
     Close,
 }
 
@@ -184,6 +198,7 @@ impl Session {
             commands: receiver,
             timing,
             state: None,
+            watcher: Watcher::default(),
         };
         let thread = thread::Builder::new()
             .name("ternima-swo".into())
@@ -203,6 +218,12 @@ impl Session {
     /// Attaches again with new settings.
     pub fn reconfigure(&self, config: SwoConfig) {
         let _ = self.commands.send(Command::Reconfigure(config));
+    }
+
+    /// Reads these variables every `every` while the chip is attached;
+    /// `None` stands for one not in the firmware. An empty list stops it.
+    pub fn watch(&self, watch: Vec<Option<Watched>>, every: Duration) {
+        let _ = self.commands.send(Command::Watch(watch, every));
     }
 }
 
@@ -230,6 +251,8 @@ struct Worker {
     timing: Timing,
     /// The state last told to the app, so each change is told once.
     state: Option<SwoState>,
+    /// The variables read as the chip runs.
+    watcher: Watcher,
 }
 
 impl Worker {
@@ -280,6 +303,7 @@ impl Worker {
                     }
                     decoder = ItmDecoder::new();
                 }
+                Ok(Command::Watch(watch, every)) => self.watcher.set(watch, every),
                 Err(TryRecvError::Empty) => {}
             }
 
@@ -307,6 +331,11 @@ impl Worker {
                 self.emit(Event::Overflow(overflows));
                 overflows = 0;
                 overflow_told = Instant::now();
+            }
+
+            let read = |address, block: &mut [u8]| link.read_memory(address, block).is_ok();
+            if let Some(values) = self.watcher.read_if_due(read) {
+                self.emit(Event::Watch(values));
             }
             if raw.is_empty() {
                 thread::sleep(self.timing.idle);
@@ -337,6 +366,8 @@ impl Worker {
                 }
                 // Nothing to reset while not attached.
                 Ok(Command::Reset) => {}
+                // Kept for when the chip is attached.
+                Ok(Command::Watch(watch, every)) => self.watcher.set(watch, every),
             }
         }
     }
@@ -375,6 +406,8 @@ mod tests {
         trace: Vec<u8>,
         resets: usize,
         starts: usize,
+        /// RAM from 0x2000_0000, for the watched variables.
+        ram: Vec<u8>,
     }
 
     struct FakeBackend(Arc<Mutex<Chip>>);
@@ -406,6 +439,17 @@ mod tests {
 
         fn reset(&mut self) -> Result<(), String> {
             self.0.lock().unwrap().resets += 1;
+            Ok(())
+        }
+
+        fn read_memory(&mut self, address: u64, buf: &mut [u8]) -> Result<(), String> {
+            let chip = self.0.lock().unwrap();
+            let at = address
+                .checked_sub(0x2000_0000)
+                .map(|at| at as usize)
+                .filter(|at| at + buf.len() <= chip.ram.len())
+                .ok_or("no memory there")?;
+            buf.copy_from_slice(&chip.ram[at..at + buf.len()]);
             Ok(())
         }
     }
@@ -469,6 +513,32 @@ mod tests {
             }
         }
         data
+    }
+
+    #[test]
+    fn watched_variables_are_read_along_with_the_trace() {
+        let chip = plugged();
+        let mut ram = vec![0; 8];
+        ram[4..8].copy_from_slice(&21.5f32.to_le_bytes());
+        chip.lock().unwrap().ram = ram;
+        let (session, events) = start(&chip, config(0, false));
+        connected(&events);
+
+        session.watch(
+            vec![Some(Watched {
+                address: 0x2000_0004,
+                kind: crate::elf::Kind::F32,
+            })],
+            Duration::from_millis(5),
+        );
+        chip.lock().unwrap().trace.extend(itm(0, "hi"));
+        assert_eq!(received(&events, 2), b"hi");
+        match expect(&events, "watched values", |event| {
+            matches!(event, Event::Watch(_))
+        }) {
+            Event::Watch(values) => assert_eq!(values, [Some(21.5)]),
+            _ => unreachable!(),
+        }
     }
 
     /// ITM packets of one byte each, for `text` on `port`.

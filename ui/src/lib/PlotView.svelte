@@ -1453,7 +1453,7 @@
         {#if tab.kind === "serial"}
           <option value="modbus">Modbus</option>
         {/if}
-        {#if tab.kind === "rtt"}
+        {#if tab.canWatch}
           <option value="watch">Variables</option>
         {/if}
       </select>

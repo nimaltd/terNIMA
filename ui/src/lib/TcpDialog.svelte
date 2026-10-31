@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import Modal from "./Modal.svelte";
-  import { DEFAULT_TCP, PROTOCOLS, address, type Protocol, type TcpConfig } from "./net";
+  import { DEFAULT_TCP, PROTOCOLS, TCL_PORT, address, type Protocol, type TcpConfig } from "./net";
   import { DEFAULT_TERMINAL, type TerminalOptions } from "./serial";
   import { settings } from "./settings.svelte";
   import { addTab, changed, type Tab } from "./tabs.svelte";
@@ -27,6 +27,7 @@
   let host = $state(first.host);
   let portText = $state(first.port ? String(first.port) : "");
   let channelText = $state(String(first.channel));
+  let tclText = $state(String(first.tcl_port ?? TCL_PORT));
   let terminal: TerminalOptions = $state({ ...(start?.terminal ?? DEFAULT_TERMINAL) });
   let name = $state(start?.name ?? "");
   let error = $state("");
@@ -66,7 +67,13 @@
       error = "Enter the RTT channel: 0, 1, 2 and so on.";
       return;
     }
-    const tcp: TcpConfig = { host: host.trim(), port, protocol, channel };
+    const tclPort = protocol === "openocd" ? Number(tclText) : (first.tcl_port ?? TCL_PORT);
+    if (!Number.isInteger(tclPort) || tclPort < 1 || tclPort > 65535) {
+      error = "Enter OpenOCD's Tcl port: a whole number from 1 to 65535, 6666 unless OpenOCD is told otherwise.";
+      return;
+    }
+    // The Watch view's ELF file stays as it was.
+    const tcp: TcpConfig = { ...first, host: host.trim(), port, protocol, channel, tcl_port: tclPort };
     const sessionName = name.trim() || suggested;
 
     if (tab) {
@@ -124,6 +131,14 @@
       <label class="dlg-label" title="The RTT channel J-Link sends and types to. 0 is the terminal.">
         RTT channel
         <input class="field mono" inputmode="numeric" bind:value={channelText} oninput={() => (error = "")} />
+      </label>
+    {:else if protocol === "openocd"}
+      <label
+        class="dlg-label"
+        title="OpenOCD's Tcl server, through which the Watch view reads the variables as the chip runs: 6666 unless OpenOCD is told otherwise"
+      >
+        Tcl port, for Watch
+        <input class="field mono" inputmode="numeric" bind:value={tclText} oninput={() => (error = "")} />
       </label>
     {/if}
   </div>

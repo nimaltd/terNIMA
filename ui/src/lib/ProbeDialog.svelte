@@ -39,11 +39,11 @@
   } = $props();
 
   const KIND = untrack(() => kind);
-  const LABEL = KIND === "rtt" ? "RTT" : "SWO";
 
   // A copy of the tab's settings, taken once: nothing changes until Save.
   const start = untrack(() => tab?.setup() ?? null);
   let rtt: RttConfig = $state({ ...DEFAULT_RTT, ...start?.rtt });
+  const LABEL = $derived(KIND === "swo" ? "SWO" : rtt.watch_only ? "Watch" : "RTT");
   let swo: SwoConfig = $state({ ...DEFAULT_SWO, ...start?.swo });
   /** The settings both kinds have: which probe, which chip, and how to attach. */
   const own = KIND === "rtt" ? rtt : swo;
@@ -178,7 +178,11 @@
       ],
     });
     if (typeof path === "string") {
-      rtt.elf = path;
+      if (KIND === "rtt") {
+        rtt.elf = path;
+      } else {
+        swo.elf = path;
+      }
     }
   }
 
@@ -226,7 +230,7 @@
         error = problem;
         return;
       }
-      const config: SwoConfig = { ...swo, ...target, clock_hz: clockHz, baud };
+      const config: SwoConfig = { ...swo, ...target, clock_hz: clockHz, baud, elf: swo.elf?.trim() || null };
       save(sessionName, () => tab?.reconfigureSwo(config), JSON.stringify(config) !== JSON.stringify(start?.swo), {
         swo: config,
       });
@@ -294,7 +298,7 @@
     <!-- A probe has one owner: while an IDE debugs through it, it cannot be opened here too. -->
     <p class="dlg-hint server">
       A debugger has the probe? Read RTT from its own server instead, and keep debugging:
-      <button class="link" onclick={onserver}>RTT through J-Link or OpenOCD</button>
+      <button class="link" onclick={onserver}>RTT through a debugger's server</button>
     </p>
   {/if}
 
@@ -333,29 +337,48 @@
     <button class="btn small" disabled={!target.probe || detecting} onclick={detect}>Detect</button>
   </div>
 
-  {#if KIND === "rtt"}
-    <label class="dlg-label elf">
-      Firmware ELF file, to find RTT quickly and exactly (optional)
-      <span class="file">
-        <input class="field mono" placeholder="Without it, RAM is searched" bind:value={rtt.elf} />
-        <button class="btn" onclick={browse}>Browse...</button>
-      </span>
-    </label>
+  <label class="dlg-label elf">
+    {#if KIND === "swo"}
+      Firmware ELF file, for the variables in the Watch view (optional)
+    {:else if rtt.watch_only}
+      Firmware ELF file, for the variables in the Watch view
+    {:else}
+      Firmware ELF file, to find RTT quickly and exactly, and the variables (optional)
+    {/if}
+    <span class="file">
+      {#if KIND === "rtt"}
+        <input
+          class="field mono"
+          placeholder={rtt.watch_only ? "Or choose it in the Watch view" : "Without it, RAM is searched"}
+          bind:value={rtt.elf}
+        />
+      {:else}
+        <input class="field mono" placeholder="Or choose it in the Watch view" bind:value={swo.elf} />
+      {/if}
+      <button class="btn" onclick={browse}>Browse...</button>
+    </span>
+  </label>
 
-    <h2 class="dlg-section">RTT</h2>
+  {#if KIND === "rtt"}
+
+    {#if !rtt.watch_only}
+      <h2 class="dlg-section">RTT</h2>
+    {/if}
     <div class="dlg-grid">
-      <label class="dlg-label">
-        Up channel (shown)
-        <input class="field mono" type="number" min="0" max="15" bind:value={rtt.up_channel} />
-      </label>
-      <label class="dlg-label">
-        Down channel (typed)
-        <input class="field mono" type="number" min="0" max="15" bind:value={rtt.down_channel} />
-      </label>
-      <label class="dlg-label">
-        Control block address
-        <input class="field mono" placeholder="Search RAM" bind:value={addressText} />
-      </label>
+      {#if !rtt.watch_only}
+        <label class="dlg-label">
+          Up channel (shown)
+          <input class="field mono" type="number" min="0" max="15" bind:value={rtt.up_channel} />
+        </label>
+        <label class="dlg-label">
+          Down channel (typed)
+          <input class="field mono" type="number" min="0" max="15" bind:value={rtt.down_channel} />
+        </label>
+        <label class="dlg-label">
+          Control block address
+          <input class="field mono" placeholder="Search RAM" bind:value={addressText} />
+        </label>
+      {/if}
       <label class="dlg-label">
         SWD speed
         <select class="field" bind:value={target.speed_khz}>
@@ -423,6 +446,14 @@
       <input type="checkbox" bind:checked={target.under_reset} /> Connect under reset
     </label>
     {#if KIND === "rtt"}
+      <label class="dlg-check" title="Off, only the variables in the Watch view are read: for firmware without RTT">
+        <input
+          type="checkbox"
+          checked={!rtt.watch_only}
+          onchange={(event) => (rtt.watch_only = !event.currentTarget.checked)}
+        />
+        Read RTT
+      </label>
       <label class="dlg-check" title="Show what you type, for firmware that does not echo it">
         <input type="checkbox" bind:checked={terminal.local_echo} /> Local echo
       </label>

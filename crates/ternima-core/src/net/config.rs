@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::openocd::TCL_PORT;
+
 /// What is at the other end of the connection.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -54,10 +56,21 @@ pub struct TcpConfig {
     /// own choice, so nothing is asked for then. The other protocols leave it alone.
     #[serde(skip_serializing_if = "is_zero")]
     pub channel: usize,
+    /// Where OpenOCD's Tcl server listens on `host`, through which the Watch
+    /// view reads the variables. The other protocols leave it alone.
+    #[serde(skip_serializing_if = "is_tcl_port")]
+    pub tcl_port: u16,
+    /// The firmware's ELF file, where the Watch view finds its variables.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elf: Option<String>,
 }
 
 fn is_zero(value: &usize) -> bool {
     *value == 0
+}
+
+fn is_tcl_port(port: &u16) -> bool {
+    *port == TCL_PORT
 }
 
 impl Default for TcpConfig {
@@ -67,6 +80,8 @@ impl Default for TcpConfig {
             port: 0,
             protocol: Protocol::Raw,
             channel: 0,
+            tcl_port: TCL_PORT,
+            elf: None,
         }
     }
 }

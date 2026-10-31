@@ -252,20 +252,66 @@ export class Tab {
     }
     this.history = setup.history ?? [];
     this.watch = { ...DEFAULT_WATCH, ...setup.watch };
-    // The Watch view reads through a probe: it is on RTT tabs only.
-    if (this.kind !== "rtt") {
+    // The Watch view reads through a probe: it is on the tabs that have one.
+    if (!this.canWatch) {
       if (this.view === "watch") this.view = "terminal";
       if (this.plotView.mode === "watch") this.plotView.mode = "auto";
     }
+    this.onlyVariables();
   }
 
   get connected(): boolean {
     return this.status?.state === "connected";
   }
 
-  /** Whether the tab can send: SWO only receives, and a recording only plays back. */
+  /** An RTT tab that reads only the watched variables, for firmware without RTT. */
+  get watchOnly(): boolean {
+    return this.kind === "rtt" && this.rtt.watch_only === true;
+  }
+
+  /**
+   * Whether the tab reaches the chip's memory, for the Watch view: RTT and
+   * SWO tabs through their probe, and OpenOCD's RTT server through its Tcl port.
+   */
+  get canWatch(): boolean {
+    return this.kind === "rtt" || this.kind === "swo" || (this.kind === "tcp" && this.tcp.protocol === "openocd");
+  }
+
+  /** The firmware's ELF file, where the Watch view finds the variables. */
+  get elf(): string | null {
+    if (this.kind === "rtt") return this.rtt.elf ?? null;
+    if (this.kind === "swo") return this.swo.elf ?? null;
+    if (this.kind === "tcp") return this.tcp.elf ?? null;
+    return null;
+  }
+
+  /** Chooses the firmware's ELF file. RTT also finds its control block in it. */
+  setElf(path: string): void {
+    if (this.kind === "rtt") {
+      this.reconfigureRtt({ ...this.rtt, elf: path });
+    } else if (this.kind === "swo" || this.kind === "tcp") {
+      // Only the Watch view reads it: the session goes on as it is.
+      if (this.kind === "swo") this.swo = { ...this.swo, elf: path };
+      else this.tcp = { ...this.tcp, elf: path };
+      this.sendWatch();
+      changed();
+    }
+  }
+
+  /**
+   * Whether the tab can send: SWO only receives, a recording only plays
+   * back, and a tab that only watches variables has no channel to send to.
+   */
   get takesInput(): boolean {
-    return this.kind !== "swo" && this.kind !== "replay";
+    return this.kind !== "swo" && this.kind !== "replay" && !this.watchOnly;
+  }
+
+  /** A tab that only watches variables shows them, as a table or plotted: it has no terminal. */
+  private onlyVariables(): void {
+    if (this.watchOnly) {
+      if (this.view !== "plot") this.view = "watch";
+      this.plotView.mode = "watch";
+    }
   }
 
   /** Why the session cannot connect, if that is the case now. */
@@ -294,9 +340,9 @@ export class Tab {
       case "rtt":
         return $state.snapshot({ ...common, rtt: this.rtt, watch: this.watch });
       case "swo":
-        return $state.snapshot({ ...common, swo: this.swo });
+        return $state.snapshot({ ...common, swo: this.swo, watch: this.watch });
       case "tcp":
-        return $state.snapshot({ ...common, tcp: this.tcp });
+        return $state.snapshot({ ...common, tcp: this.tcp, watch: this.watch });
       case "replay":
         return $state.snapshot({ ...common, replay: this.replay });
       default:
@@ -331,7 +377,8 @@ export class Tab {
 
   /** Shows the terminal or another view. */
   setView(view: View): void {
-    this.view = view;
+    // Without a terminal, its views are the Watch view: as Plot toggled off.
+    this.view = this.watchOnly && view !== "plot" ? "watch" : view;
     this.listenForModbus();
     changed();
   }
@@ -385,6 +432,17 @@ export class Tab {
     changed();
   }
 
+  /** Whether the watched variables show beside the terminal, its hex view and its log. */
+  get watchBeside(): boolean {
+    return this.canWatch && !this.watchOnly && this.watch.beside === true;
+  }
+
+  /** Shows the watched variables beside the terminal too, or not. */
+  setWatchBeside(on: boolean): void {
+    this.watch.beside = on;
+    changed();
+  }
+
   /** Starts the smallest and largest values again, from the next ones read. */
   resetWatchRange(): void {
     this.watchRange = [];
@@ -395,7 +453,7 @@ export class Tab {
    * again, as after the firmware was built anew; and keeps whether each was found.
    */
   sendWatch(): void {
-    if (this.kind !== "rtt" || !this.running) {
+    if (!this.canWatch || !this.running) {
       return;
     }
     const names = $state.snapshot(this.watch.names);
@@ -403,7 +461,7 @@ export class Tab {
     this.watchSeries = shortNames(names);
     this.watchValues = [];
     this.watchRange = [];
-    invoke<boolean[]>("watch_session", { id: this.id, elf: this.rtt.elf ?? "", names, everyMs: this.watch.every_ms })
+    invoke<boolean[]>("watch_session", { id: this.id, elf: this.elf ?? "", names, everyMs: this.watch.every_ms })
       .then((found) => {
         this.watchFound = found;
         this.watchProblem = null;
@@ -812,6 +870,7 @@ export class Tab {
     const channelBefore = this.rtt.up_channel;
     const elfBefore = this.rtt.elf;
     this.rtt = rtt;
+    this.onlyVariables();
     if (this.running) {
       void invoke("reconfigure_rtt_session", { id: this.id, config: $state.snapshot(rtt) });
       if (rtt.elf !== elfBefore) {
@@ -827,9 +886,13 @@ export class Tab {
 
   /** Changes an SWO session's settings; a running session attaches again at once. */
   reconfigureSwo(swo: SwoConfig): void {
+    const elfBefore = this.swo.elf;
     this.swo = swo;
     if (this.running) {
       void invoke("reconfigure_swo_session", { id: this.id, config: $state.snapshot(swo) });
+      if (swo.elf !== elfBefore) {
+        this.sendWatch();
+      }
     }
     changed();
   }
@@ -837,8 +900,17 @@ export class Tab {
   /** Changes where a TCP session connects; a running session connects again at once. */
   reconfigureTcp(tcp: TcpConfig): void {
     this.tcp = tcp;
+    // Another protocol may have no way to the chip's memory.
+    if (!this.canWatch) {
+      if (this.view === "watch") this.view = "terminal";
+      if (this.plotView.mode === "watch") this.plotView.mode = "auto";
+    }
     if (this.running) {
       void invoke("reconfigure_tcp_session", { id: this.id, config: $state.snapshot(tcp) });
+      // Read again where the settings say now.
+      if (this.watch.names.length > 0) {
+        this.sendWatch();
+      }
     }
     changed();
   }
@@ -1185,10 +1257,14 @@ export class Tab {
       case "watch":
         this.onWatched(event.values, event.at);
         return;
+      case "watch_problem":
+        this.watchProblem = event.problem;
+        return;
       case "rtt_state":
-        if (event.state === "connected") {
-          this.rttAddress = event.address;
-          this.onConnected(event.chip, `${event.chip}, RTT at ${hexAddress(event.address)}`);
+        if (event.state === "connected" || event.state === "watching") {
+          this.rttAddress = event.state === "connected" ? event.address : null;
+          const what = event.state === "connected" ? `RTT at ${hexAddress(event.address)}` : "variables only";
+          this.onConnected(event.chip, `${event.chip}, ${what}`);
           // New firmware may have moved them: found in its ELF file again.
           if (this.watch.names.length > 0) {
             this.sendWatch();
@@ -1200,6 +1276,9 @@ export class Tab {
       case "swo_state":
         if (event.state === "connected") {
           this.onConnected(event.chip, `${event.chip}, SWO at ${hzText(event.baud)}`);
+          if (this.watch.names.length > 0) {
+            this.sendWatch();
+          }
         } else {
           this.onWaiting(event.problem);
         }
@@ -1226,7 +1305,8 @@ export class Tab {
   private onConnected(target: string, description: string): void {
     const now = Date.now();
     if (this.resetting) {
-      this.note(this.kind === "rtt" ? "found RTT again after the reset" : "SWO on again after the reset");
+      const again = this.kind === "swo" ? "SWO on again" : this.watchOnly ? "watching again" : "found RTT again";
+      this.note(`${again} after the reset`);
     } else if (this.lostAt !== null) {
       this.note(`reconnected at ${clock(now)}, after ${duration(now - this.lostAt)}`);
     } else {

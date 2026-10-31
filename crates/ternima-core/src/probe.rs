@@ -100,7 +100,7 @@ fn find_and_open(id: Option<&ProbeId>, speed_khz: u32) -> Result<Probe, Option<S
     let mut probe = info.open().map_err(|error| {
         Some(format!(
             "Could not open {}: {}. If a debugger has it open, close that first, \
-             or read RTT through the debugger's own RTT server: RTT through J-Link or OpenOCD, \
+             or read RTT through its own RTT server: RTT through a debugger's server, \
              under + or File > New session. If nothing has it open, unplug it and plug it in again.",
             info.identifier,
             with_causes(&error)

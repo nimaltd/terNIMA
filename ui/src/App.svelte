@@ -23,6 +23,7 @@
   import Terminal from "./lib/Terminal.svelte";
   import Toolbar from "./lib/Toolbar.svelte";
   import UpdateDialog from "./lib/UpdateDialog.svelte";
+  import WatchPanel from "./lib/WatchPanel.svelte";
   import WatchView from "./lib/WatchView.svelte";
   import { buildMenus, isEnabled, itemForKey, macroForKey, menuCommands, menuForAltKey } from "./lib/menus";
   import type { Command } from "./lib/palette";
@@ -369,6 +370,8 @@
       {/if}
       <!-- Every tab keeps its terminal, so its scrollback stays while another tab is in front. -->
       {#each tabs as tab, i (tab.id)}
+        <!-- The watched variables beside the terminal, its hex view and its log, so both are in view. -->
+        {@const beside = tab.watchBeside && (tab.view === "terminal" || tab.view === "hex" || tab.view === "lines")}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
           class="slot"
@@ -382,7 +385,7 @@
           {#if onScreen(i)}
             <Toolbar {tab} onsettings={() => openSettings(tab)} />
           {/if}
-          <div class="layer">
+          <div class="layer" class:beside>
             <!-- The terminal stays while another view is shown, so nothing it showed is lost. -->
             <div class="view" class:hidden={tab.view !== "terminal"}>
               <Terminal {tab} active={i === view.active && tab.view === "terminal"} {isAppKey} />
@@ -414,6 +417,9 @@
                   <Terminal {tab} hex active={i === view.active} {isAppKey} />
                 </div>
               </div>
+            {/if}
+            {#if beside && onScreen(i)}
+              <WatchPanel {tab} />
             {/if}
           </div>
           {#if onScreen(i) && settings.send_box && tab.takesInput && tab.view !== "modbus"}
@@ -581,6 +587,17 @@
 
   .view {
     height: 100%;
+  }
+
+  /* The watched variables at the right: the view takes the rest of the room. */
+  .layer.beside {
+    display: flex;
+    gap: 8px;
+  }
+
+  .layer.beside > .view {
+    flex: 1;
+    min-width: 0;
   }
 
   .view.hidden {

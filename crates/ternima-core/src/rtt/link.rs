@@ -56,6 +56,9 @@ pub trait RttLink: Send {
     fn reset(&mut self) -> Result<(), LinkProblem>;
     /// Reads the chip's memory while it runs, as the watched variables are read.
     fn read_memory(&mut self, address: u64, buf: &mut [u8]) -> Result<(), LinkProblem>;
+    /// Whether the chip can still be reached through the probe, for a
+    /// session that only reads variables and has no control block to check.
+    fn reachable(&mut self) -> Result<(), LinkProblem>;
 }
 
 /// Real probes, through probe-rs.
@@ -148,6 +151,11 @@ impl RttLink for ProbeRsLink {
     fn read_memory(&mut self, address: u64, buf: &mut [u8]) -> Result<(), LinkProblem> {
         let mut core = self.session.core(0).map_err(lost)?;
         core.read_8(address, buf).map_err(lost)
+    }
+
+    fn reachable(&mut self) -> Result<(), LinkProblem> {
+        let mut core = self.session.core(0).map_err(lost)?;
+        core.status().map(|_| ()).map_err(lost)
     }
 }
 

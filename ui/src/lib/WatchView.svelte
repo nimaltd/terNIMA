@@ -5,6 +5,7 @@
   import { elfVariables, type Variable } from "./serial";
   import { fileName, type Tab } from "./tabs.svelte";
   import { clearActiveTerminal, setActiveTerminal, type TerminalActions } from "./terminal-actions";
+  import { valueText } from "./watch";
 
   let {
     tab,
@@ -65,7 +66,7 @@
 
   // The file's variables, read again when another file is chosen.
   $effect(() => {
-    const path = tab.rtt.elf ?? "";
+    const path = tab.elf ?? "";
     untrack(() => void read(path));
   });
 
@@ -92,21 +93,21 @@
       title: "The firmware's ELF file",
       multiple: false,
       directory: false,
-      defaultPath: tab.rtt.elf || undefined,
+      defaultPath: tab.elf || undefined,
       filters: [
         { name: "ELF files", extensions: ["elf", "axf", "out"] },
         { name: "All files", extensions: ["*"] },
       ],
     });
     if (typeof path === "string") {
-      tab.reconfigureRtt({ ...tab.rtt, elf: path });
+      tab.setElf(path);
     }
     search?.focus();
   }
 
   /** Reads the file again, as after the firmware was built anew, and finds the variables in it again. */
   function reload() {
-    void read(tab.rtt.elf ?? "");
+    void read(tab.elf ?? "");
     tab.sendWatch();
   }
 
@@ -156,25 +157,9 @@
     if (to instanceof Node && !box.contains(to)) listing = false;
   }
 
-  /**
-   * A value as its kind is written: true or false, a whole number, or a
-   * float with the decimals its row keeps. A space stands where a minus sign
-   * would be, so the digits stay where they are as values come.
-   */
+  /** A value of a row as its kind is written, with the decimals the row keeps. */
   function shown(value: number | null | undefined, variable: Variable | undefined, index: number): string {
-    if (value === null || value === undefined) return "";
-    if (variable?.kind === "bool") return value ? "true" : "false";
-    const float = variable?.kind === "f32" || variable?.kind === "f64";
-    const text = float ? value.toFixed(decimals(index, value)) : String(value);
-    return text.startsWith("-") ? text : `\u00a0${text}`;
-  }
-
-  /** A float's decimals: about seven digits in all, from the largest it has been, so they do not change as it moves. */
-  function decimals(index: number, value: number): number {
-    const range = tab.watchRange[index];
-    const largest = Math.max(Math.abs(value), range ? Math.max(Math.abs(range.min), Math.abs(range.max)) : 0);
-    const whole = largest >= 1 ? Math.floor(Math.log10(largest)) + 1 : 1;
-    return Math.max(0, Math.min(6, 7 - whole));
+    return valueText(value, variable?.kind, tab.watchRange[index]);
   }
 
   function hex(address: number): string {
@@ -223,9 +208,9 @@
 
 <div class="watchview">
   <div class="bar">
-    <span class="file mono" title={tab.rtt.elf || "No ELF file chosen"}>{tab.rtt.elf ? fileName(tab.rtt.elf) : "No ELF file"}</span>
-    <button class="btn small" onclick={chooseElf}>{tab.rtt.elf ? "Another ELF..." : "Choose the ELF..."}</button>
-    {#if tab.rtt.elf}
+    <span class="file mono" title={tab.elf || "No ELF file chosen"}>{tab.elf ? fileName(tab.elf) : "No ELF file"}</span>
+    <button class="btn small" onclick={chooseElf}>{tab.elf ? "Another ELF..." : "Choose the ELF..."}</button>
+    {#if tab.elf}
       <button class="btn small" title="Read the ELF file again, after the firmware was built anew" onclick={reload}>Reload</button>
     {/if}
 
@@ -312,6 +297,19 @@
     >
       Plot them
     </button>
+    {#if !tab.watchOnly}
+      <button
+        class="btn small"
+        disabled={tab.watch.names.length === 0}
+        title="Show them beside the terminal too, with what the firmware prints"
+        onclick={() => {
+          tab.setWatchBeside(true);
+          tab.setView("terminal");
+        }}
+      >
+        Beside the terminal
+      </button>
+    {/if}
   </div>
 
   {#if problem ?? tab.watchProblem}
@@ -353,7 +351,7 @@
       </table>
     {:else}
       <div class="empty">
-        {#if !tab.rtt.elf}
+        {#if !tab.elf}
           <p>Choose the firmware's ELF file, built with debug information (-g), to watch its variables.</p>
           <button class="btn" onclick={chooseElf}>Choose the ELF file...</button>
         {:else if reading}
@@ -364,7 +362,7 @@
             statics, a struct's members as <code>sensor.temp</code>, an array's elements as <code>buf[2]</code>.
           </p>
           <p class="muted">
-            They are read through the probe as the chip runs, without stopping it, as often as Every says, and Plot
+            They are read as the chip runs, without stopping it, as often as Every says, and Plot
             them draws them over time.
           </p>
         {/if}

@@ -11,6 +11,7 @@ mod hex;
 pub mod lines;
 pub mod logfile;
 pub mod net;
+pub mod openocd;
 pub mod probe;
 pub mod record;
 pub mod replay;
@@ -20,6 +21,7 @@ pub mod serial;
 pub mod settings;
 pub mod swo;
 mod tomlfile;
+pub mod watch;
 pub mod workspace;
 
 pub use banner::{Background, welcome_banner};

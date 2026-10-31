@@ -18,7 +18,7 @@ use ternima_core::logfile::{LogSetup, Logger};
 use ternima_core::record::{self, Direction, Recorder};
 use ternima_core::replay::{self, Player};
 use ternima_core::send::{self, Pace, Stopped};
-use ternima_core::{elf, net, probe, rtt, serial, swo};
+use ternima_core::{elf, net, openocd, probe, rtt, serial, swo, watch};
 
 /// The most time, in ms, that lines read at once are spread over, the same
 /// as SPREAD_MS in tabs.svelte.ts, which does it for live sessions.
@@ -72,6 +72,16 @@ struct Entry {
     log: SharedLog,
     /// Set while a file is being sent; setting the flag stops it.
     sending: Option<Arc<AtomicBool>>,
+    /// A TCP session's settings and its page's events, for its Watch view.
+    tcp: Option<TcpWatch>,
+}
+
+/// What a TCP tab's Watch view reads through: OpenOCD's Tcl server, on the
+/// host its RTT server is on, from when it watches.
+struct TcpWatch {
+    config: net::TcpConfig,
+    events: Channel<SessionEvent>,
+    openocd: Option<openocd::Session>,
 }
 
 /// The running sessions, by the number the UI gave each.
@@ -116,6 +126,7 @@ impl Sessions {
             running,
             log,
             sending: None,
+            tcp: None,
         };
         let old = self.lock().insert(id, entry);
         drop(old);
@@ -170,6 +181,10 @@ pub enum SessionEvent {
     Watch {
         values: Vec<Option<f64>>,
         at: f64,
+    },
+    /// Why the watched variables cannot be read now, or `null` once they can.
+    WatchProblem {
+        problem: Option<String>,
     },
 }
 
@@ -431,18 +446,17 @@ pub fn open_rtt_session(
                     rtt::RttState::Connected { chip, address } => {
                         Some(format!("{chip}, RTT at {address:#010x}"))
                     }
+                    rtt::RttState::Watching { chip } => Some(format!("{chip}, variables only")),
                     rtt::RttState::Waiting { .. } => None,
                 };
                 log_state(&log, &events, connected_to);
                 events.send(SessionEvent::RttState(state))
             }
             rtt::Event::Channels { up, down } => events.send(SessionEvent::Channels { up, down }),
-            rtt::Event::Watch(values) => {
-                let at = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map_or(0.0, |since| since.as_secs_f64() * 1000.0);
-                events.send(SessionEvent::Watch { values, at })
-            }
+            rtt::Event::Watch(values) => events.send(SessionEvent::Watch {
+                values,
+                at: now_ms(),
+            }),
         };
     });
     sessions.insert(id, Running::Rtt(session), shared);
@@ -481,6 +495,10 @@ pub fn open_swo_session(
                 events.send(SessionEvent::SwoState(state))
             }
             swo::Event::Overflow(count) => events.send(SessionEvent::Overflow { count }),
+            swo::Event::Watch(values) => events.send(SessionEvent::Watch {
+                values,
+                at: now_ms(),
+            }),
         };
     });
     sessions.insert(id, Running::Swo(session), shared);
@@ -502,6 +520,11 @@ pub fn open_tcp_session(
     let (shared, status) = new_log(&app, log);
     let log = shared.clone();
     let mut splitter = LineSplitter::default();
+    let watch = TcpWatch {
+        config: config.clone(),
+        events: events.clone(),
+        openocd: None,
+    };
     let session = net::Session::start(config, move |event| {
         let _ = match event {
             net::Event::Data(bytes) => {
@@ -522,6 +545,9 @@ pub fn open_tcp_session(
         };
     });
     sessions.insert(id, Running::Tcp(session), shared);
+    if let Some(entry) = sessions.lock().get_mut(&id) {
+        entry.tcp = Some(watch);
+    }
     status
 }
 
@@ -911,7 +937,7 @@ pub fn elf_variables(path: String) -> Result<Vec<elf::Variable>, String> {
     variables_in(&path).map(|variables| variables.as_ref().clone())
 }
 
-/// Reads these variables of an RTT tab's chip every `every_ms`, found by
+/// Reads these variables of a tab's chip every `every_ms`, found by
 /// name in its ELF file, and says which of them the file has. No names stop it.
 #[tauri::command(async)]
 pub fn watch_session(
@@ -926,13 +952,13 @@ pub fn watch_session(
     } else {
         variables_in(&elf)?
     };
-    let watch: Vec<Option<rtt::Watched>> = names
+    let watch: Vec<Option<watch::Watched>> = names
         .iter()
         .map(|name| {
             variables
                 .iter()
                 .find(|variable| &variable.name == name)
-                .map(|variable| rtt::Watched {
+                .map(|variable| watch::Watched {
                     address: variable.address,
                     kind: variable.kind,
                 })
@@ -940,12 +966,38 @@ pub fn watch_session(
         .collect();
     let found = watch.iter().map(Option::is_some).collect();
     let every = Duration::from_millis(u64::from(every_ms.max(1)));
-    sessions.with(id, |session| {
-        if let Running::Rtt(session) = session {
-            session.watch(watch, every);
+    if let Some(entry) = sessions.lock().get_mut(&id) {
+        match (&entry.running, &mut entry.tcp) {
+            (Running::Rtt(session), _) => session.watch(watch, every),
+            (Running::Swo(session), _) => session.watch(watch, every),
+            (Running::Tcp(_), Some(tcp)) if tcp.config.protocol == net::Protocol::Openocd => {
+                let events = tcp.events.clone();
+                let reader = tcp.openocd.get_or_insert_with(|| {
+                    openocd::Session::start(&tcp.config.host, tcp.config.tcl_port, move |event| {
+                        let _ = match event {
+                            openocd::Event::Watch(values) => events.send(SessionEvent::Watch {
+                                values,
+                                at: now_ms(),
+                            }),
+                            openocd::Event::Problem(problem) => {
+                                events.send(SessionEvent::WatchProblem { problem })
+                            }
+                        };
+                    })
+                });
+                reader.watch(watch, every);
+            }
+            _ => {}
         }
-    });
+    }
     Ok(found)
+}
+
+/// Now, in ms since 1970, as the page keeps time.
+fn now_ms() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0.0, |since| since.as_secs_f64() * 1000.0)
 }
 
 #[tauri::command]
@@ -959,11 +1011,20 @@ pub fn reconfigure_swo_session(id: u32, config: swo::SwoConfig, sessions: State<
 
 #[tauri::command]
 pub fn reconfigure_tcp_session(id: u32, config: net::TcpConfig, sessions: State<Sessions>) {
-    sessions.with(id, |session| {
-        if let Running::Tcp(session) = session {
-            session.reconfigure(config);
-        }
+    let mut all = sessions.lock();
+    let Some(entry) = all.get_mut(&id) else {
+        return;
+    };
+    if let Running::Tcp(session) = &entry.running {
+        session.reconfigure(config.clone());
+    }
+    // The Watch view's reader starts again where the settings say, when it is next told what to read.
+    let old = entry.tcp.as_mut().and_then(|tcp| {
+        tcp.config = config;
+        tcp.openocd.take()
     });
+    drop(all);
+    drop(old);
 }
 
 /// Resets the chip of an RTT or SWO session.

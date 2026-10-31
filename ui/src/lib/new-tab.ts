@@ -31,8 +31,8 @@ export const NEW_TABS: NewTab[] = [
   {
     kind: "tcp",
     protocol: "jlink",
-    label: "RTT through J-Link or OpenOCD",
-    detail: "From the RTT server they open, while a debugger has the probe",
+    label: "RTT through a debugger's server",
+    detail: "J-Link or OpenOCD, while it debugs the chip",
   },
   {
     kind: "swo",

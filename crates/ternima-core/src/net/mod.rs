@@ -6,4 +6,5 @@ mod session;
 mod telnet;
 
 pub use config::{Protocol, TcpConfig};
+pub(crate) use session::addresses;
 pub use session::{Event, NetState, Session};

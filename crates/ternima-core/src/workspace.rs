@@ -416,7 +416,7 @@ pub const HISTORY_MAX: usize = 100;
 /// How often watched variables can be read, in ms: from 100 a second to one a minute.
 const WATCH_EVERY: (u32, u32) = (10, 60_000);
 
-/// The variables an RTT tab's Watch view reads, and how often.
+/// The variables a tab's Watch view reads, and how often.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WatchSetup {
@@ -425,6 +425,9 @@ pub struct WatchSetup {
     pub names: Vec<String>,
     /// How often they are read, in ms.
     pub every_ms: u32,
+    /// They are shown beside the terminal too.
+    #[serde(skip_serializing_if = "is_false")]
+    pub beside: bool,
 }
 
 impl Default for WatchSetup {
@@ -432,6 +435,7 @@ impl Default for WatchSetup {
         Self {
             names: Vec::new(),
             every_ms: 50,
+            beside: false,
         }
     }
 }
@@ -976,6 +980,7 @@ mode = "tcp"
                 watch: WatchSetup {
                     names: vec!["sensor.temp".into(), "counter".into()],
                     every_ms: 2,
+                    beside: true,
                 },
                 ..rtt_tab()
             }],
@@ -987,6 +992,7 @@ mode = "tcp"
         let loaded = Workspace::load(&path);
         assert_eq!(loaded.sessions[0].watch.names, ["sensor.temp", "counter"]);
         assert_eq!(loaded.sessions[0].watch.every_ms, WATCH_EVERY.0);
+        assert!(loaded.sessions[0].watch.beside);
     }
 
     #[test]

@@ -198,9 +198,11 @@ export type WatchSetup = {
   names: string[];
   /** How often they are read, in ms. */
   every_ms: number;
+  /** They are shown beside the terminal too. */
+  beside?: boolean;
 };
 
-export const DEFAULT_WATCH: WatchSetup = { names: [], every_ms: 50 };
+export const DEFAULT_WATCH: WatchSetup = { names: [], every_ms: 50, beside: false };
 
 export type VariableKind = "bool" | "u8" | "i8" | "u16" | "i16" | "u32" | "i32" | "u64" | "i64" | "f32" | "f64";
 
@@ -248,6 +250,8 @@ export type SessionEvent =
   | { kind: "text_lines"; lines: LogLine[]; at: number }
   /** The watched variables' values, in their order, with when they were read. */
   | { kind: "watch"; values: (number | null)[]; at: number }
+  /** Why the watched variables cannot be read now, or null once they can. */
+  | { kind: "watch_problem"; problem: string | null }
   | {
       kind: "replayed";
       pieces: { sent: boolean; bytes: number[]; at: number }[];

@@ -10,19 +10,7 @@ use serde::Serialize;
 
 use super::config::RttConfig;
 use super::link::{ChannelInfo, LinkProblem, RttBackend, RttLink};
-use crate::elf::Kind;
-
-/// Watched variables this close to one another are read in one go.
-const BLOCK_GAP: u64 = 32;
-/// The most bytes read in one go.
-const BLOCK_MAX: u64 = 1024;
-
-/// A variable read from the chip as it runs, where its firmware keeps it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Watched {
-    pub address: u64,
-    pub kind: Kind,
-}
+use crate::watch::{Watched, Watcher};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -31,6 +19,8 @@ pub enum RttState {
     Waiting { problem: Option<String> },
     /// Reading the control block at `address` on `chip`.
     Connected { chip: String, address: u64 },
+    /// Attached to `chip`, reading only the watched variables.
+    Watching { chip: String },
 }
 
 /// What a session tells the app.
@@ -111,9 +101,7 @@ impl Session {
             commands: receiver,
             timing,
             state: None,
-            watch: Vec::new(),
-            watch_every: Duration::from_millis(50),
-            watch_due: Instant::now(),
+            watcher: Watcher::default(),
         };
         let thread = thread::Builder::new()
             .name("ternima-rtt".into())
@@ -195,9 +183,7 @@ struct Worker {
     /// The state last told to the app, so each change is told once.
     state: Option<RttState>,
     /// The variables read as the chip runs, how often, and when next.
-    watch: Vec<Option<Watched>>,
-    watch_every: Duration,
-    watch_due: Instant,
+    watcher: Watcher,
 }
 
 impl Worker {
@@ -236,6 +222,9 @@ impl Worker {
     /// Finds the control block, reads it, and finds it again after a reset,
     /// until the probe is lost or the session ends.
     fn serve(&mut self, mut link: Box<dyn RttLink>) -> Ended {
+        if self.config.watch_only {
+            return self.serve_watch(link.as_mut());
+        }
         loop {
             let attached = match link.find(&self.config) {
                 Ok(attached) => attached,
@@ -284,6 +273,39 @@ impl Worker {
                 Pumped::Search => self.set_state(RttState::Waiting {
                     problem: Some("Looking for the RTT control block again.".into()),
                 }),
+            }
+        }
+    }
+
+    /// Reads only the watched variables, for firmware without RTT, until the
+    /// probe is lost or the session ends.
+    fn serve_watch(&mut self, link: &mut dyn RttLink) -> Ended {
+        let watching = RttState::Watching {
+            chip: self.config.chip.trim().to_string(),
+        };
+        self.set_state(watching.clone());
+        loop {
+            match self.wait_watching(link, self.timing.check) {
+                Waited::Stop => return Ended::Closed,
+                Waited::Reopen => return Ended::Reopen,
+                Waited::Reset => {
+                    if let Err(LinkProblem::Lost(problem)) = link.reset() {
+                        self.set_state(RttState::Waiting {
+                            problem: Some(problem),
+                        });
+                        return Ended::Lost;
+                    }
+                    // Told again, so the app knows the reset is done.
+                    self.state = None;
+                    self.set_state(watching.clone());
+                }
+                Waited::Go => {}
+            }
+            if let Err(LinkProblem::Lost(problem)) = link.reachable() {
+                self.set_state(RttState::Waiting {
+                    problem: Some(problem),
+                });
+                return Ended::Lost;
             }
         }
     }
@@ -365,27 +387,18 @@ impl Worker {
                     self.config = config;
                     return Some(Pumped::Reopen);
                 }
-                Command::Watch(watch, every) => self.set_watch(watch, every),
+                Command::Watch(watch, every) => self.watcher.set(watch, every),
                 Command::Close => return Some(Pumped::Closed),
             }
         }
     }
 
-    fn set_watch(&mut self, watch: Vec<Option<Watched>>, every: Duration) {
-        self.watch = watch;
-        self.watch_every = every.max(Duration::from_millis(1));
-        self.watch_due = Instant::now();
-    }
-
     /// Reads the watched variables when it is their time, and tells their values.
     fn watch_now(&mut self, link: &mut dyn RttLink) {
-        if self.watch.is_empty() || Instant::now() < self.watch_due {
-            return;
+        let read = |address, block: &mut [u8]| link.read_memory(address, block).is_ok();
+        if let Some(values) = self.watcher.read_if_due(read) {
+            self.emit(Event::Watch(values));
         }
-        // On time, but without catching up after a stall.
-        self.watch_due = (self.watch_due + self.watch_every).max(Instant::now());
-        let values = read_watched(link, &self.watch);
-        self.emit(Event::Watch(values));
     }
 
     /// Waits for the control block to come, still reading the watched
@@ -399,8 +412,8 @@ impl Worker {
                 return Waited::Go;
             }
             let mut left = until - now;
-            if !self.watch.is_empty() {
-                left = left.min(self.watch_due.saturating_duration_since(now));
+            if let Some(next) = self.watcher.next_in() {
+                left = left.min(next);
             }
             match self.commands.recv_timeout(left) {
                 Err(RecvTimeoutError::Timeout) => {}
@@ -410,7 +423,7 @@ impl Worker {
                     return Waited::Reopen;
                 }
                 Ok(Command::Reset) => return Waited::Reset,
-                Ok(Command::Watch(watch, every)) => self.set_watch(watch, every),
+                Ok(Command::Watch(watch, every)) => self.watcher.set(watch, every),
                 // Nothing to send it to.
                 Ok(Command::Write(_)) => {}
             }
@@ -448,7 +461,7 @@ impl Worker {
                 }
                 Ok(Command::Reset) => return Waited::Reset,
                 // Kept for when the chip is attached.
-                Ok(Command::Watch(watch, every)) => self.set_watch(watch, every),
+                Ok(Command::Watch(watch, every)) => self.watcher.set(watch, every),
                 // Nothing to send it to.
                 Ok(Command::Write(_)) => {}
             }
@@ -467,49 +480,13 @@ impl Worker {
     }
 }
 
-/// Reads the watched variables: those close to one another in one block, and
-/// each that could not be read as `None`.
-fn read_watched(link: &mut dyn RttLink, watch: &[Option<Watched>]) -> Vec<Option<f64>> {
-    let mut values = vec![None; watch.len()];
-    let mut order: Vec<(usize, Watched)> = watch
-        .iter()
-        .enumerate()
-        .filter_map(|(index, watched)| watched.map(|watched| (index, watched)))
-        .collect();
-    order.sort_by_key(|(_, watched)| watched.address);
-
-    let mut first = 0;
-    while first < order.len() {
-        let start = order[first].1.address;
-        let mut end = start + order[first].1.kind.size() as u64;
-        let mut last = first;
-        while let Some(&(_, next)) = order.get(last + 1) {
-            let next_end = next.address + next.kind.size() as u64;
-            if next.address > end + BLOCK_GAP || next_end - start > BLOCK_MAX {
-                break;
-            }
-            end = end.max(next_end);
-            last += 1;
-        }
-        let mut block = vec![0; (end - start) as usize];
-        // A variable the chip cannot give, as one whose firmware changed, has no value.
-        if link.read_memory(start, &mut block).is_ok() {
-            for &(index, watched) in &order[first..=last] {
-                let at = (watched.address - start) as usize;
-                values[index] = Some(watched.kind.decode(&block[at..at + watched.kind.size()]));
-            }
-        }
-        first = last + 1;
-    }
-    values
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
 
     use super::super::link::Attached;
     use super::*;
+    use crate::elf::Kind;
 
     const FAST: Timing = Timing {
         retry: Duration::from_millis(20),
@@ -625,6 +602,10 @@ mod tests {
                 .ok_or_else(|| LinkProblem::Lost("no memory there".into()))?;
             buf.copy_from_slice(&chip.ram[at..at + buf.len()]);
             Ok(())
+        }
+
+        fn reachable(&mut self) -> Result<(), LinkProblem> {
+            self.chip().map(|_| ())
         }
     }
 
@@ -875,6 +856,70 @@ mod tests {
 
         session.watch(watch_all(), Duration::from_millis(5));
         assert_eq!(watched(&events)[1], Some(1000.0));
+    }
+
+    fn watching(events: &Receiver<Event>) -> String {
+        match expect(events, "watching", |event| {
+            matches!(event, Event::State(RttState::Watching { .. }))
+        }) {
+            Event::State(RttState::Watching { chip }) => chip,
+            _ => unreachable!(),
+        }
+    }
+
+    fn watch_only() -> RttConfig {
+        RttConfig {
+            watch_only: true,
+            ..config()
+        }
+    }
+
+    #[test]
+    fn with_rtt_off_only_the_watched_variables_are_read() {
+        // A control block is there, but it is not looked for.
+        let chip = plugged_chip(Some(0x2000_0400));
+        chip.lock().unwrap().ram = ram();
+        chip.lock().unwrap().up.extend_from_slice(b"hello");
+        let (session, events) = start(&chip, watch_only());
+        assert_eq!(watching(&events), "STM32H503RB");
+
+        session.watch(watch_all(), Duration::from_millis(5));
+        assert_eq!(
+            watched(&events),
+            [Some(-2.0), Some(1000.0), None, Some(21.5)]
+        );
+        thread::sleep(Duration::from_millis(50));
+        assert!(
+            events
+                .try_iter()
+                .all(|event| matches!(event, Event::Watch(_))),
+            "nothing but values"
+        );
+        assert_eq!(chip.lock().unwrap().up, b"hello");
+    }
+
+    #[test]
+    fn with_rtt_off_the_probe_is_found_again_after_it_is_unplugged() {
+        let chip = plugged_chip(None);
+        let (_session, events) = start(&chip, watch_only());
+        watching(&events);
+
+        chip.lock().unwrap().plugged = false;
+        assert_eq!(waiting(&events).as_deref(), Some("probe unplugged"));
+        chip.lock().unwrap().plugged = true;
+        watching(&events);
+        assert_eq!(chip.lock().unwrap().attaches, 2);
+    }
+
+    #[test]
+    fn with_rtt_off_a_reset_says_it_is_watching_again() {
+        let chip = plugged_chip(None);
+        let (session, events) = start(&chip, watch_only());
+        watching(&events);
+
+        session.reset();
+        watching(&events);
+        assert_eq!(chip.lock().unwrap().resets, 1);
     }
 
     #[test]

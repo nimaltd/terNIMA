@@ -170,19 +170,9 @@ impl Worker {
         if let Some(problem) = self.config.problem() {
             return Err(Some(problem));
         }
-        let host = self
-            .config
-            .host
-            .trim()
-            .trim_start_matches('[')
-            .trim_end_matches(']');
-        let mut addresses: Vec<SocketAddr> = (host, self.config.port)
-            .to_socket_addrs()
-            .map_err(|error| Some(format!("Cannot find the host {host}: {error}")))?
-            .collect();
-        // IPv4 first: J-Link, OpenOCD and most devices listen there, and on
-        // Windows a refused connection to localhost's IPv6 address takes seconds.
-        addresses.sort_by_key(SocketAddr::is_ipv6);
+        let host = self.config.host.trim();
+        let addresses = addresses(host, self.config.port)
+            .map_err(|error| Some(format!("Cannot find the host {host}: {error}")))?;
 
         let mut last = None;
         for address in addresses {
@@ -346,6 +336,16 @@ fn is_not_there(error: &io::Error) -> bool {
     )
 }
 
+/// Where a host is, IPv4 first: J-Link, OpenOCD and most devices listen
+/// there, and on Windows a refused connection to localhost's IPv6 address
+/// takes seconds.
+pub(crate) fn addresses(host: &str, port: u16) -> io::Result<Vec<SocketAddr>> {
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    let mut addresses: Vec<SocketAddr> = (host, port).to_socket_addrs()?.collect();
+    addresses.sort_by_key(SocketAddr::is_ipv6);
+    Ok(addresses)
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::TcpListener;
@@ -371,7 +371,7 @@ mod tests {
             host: "127.0.0.1".into(),
             port,
             protocol,
-            channel: 0,
+            ..TcpConfig::default()
         }
     }
 
