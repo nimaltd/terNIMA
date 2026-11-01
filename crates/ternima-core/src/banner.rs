@@ -98,9 +98,10 @@ pub fn welcome_banner(background: Background) -> String {
         out,
         "  {CYAN}v{VERSION}{RESET}  serial, RTT and Zephyr terminal\r\n"
     );
+    let _ = write!(out, "  {DIM}https://github.com/nimaltd/ternima{RESET}\r\n");
     let _ = write!(
         out,
-        "  {DIM}https://github.com/nimaltd/ternima{RESET}\r\n\r\n"
+        "  {DIM}Help: https://nimaltd.github.io/ternima/help/{RESET}\r\n\r\n"
     );
 
     // The 16 basic colors, normal and bright.

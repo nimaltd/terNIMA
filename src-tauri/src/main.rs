@@ -164,6 +164,7 @@ fn main() {
             sessions::reconfigure_session,
             sessions::reconfigure_rtt_session,
             sessions::elf_variables,
+            sessions::code_places,
             sessions::watch_session,
             sessions::reconfigure_swo_session,
             sessions::reconfigure_tcp_session,

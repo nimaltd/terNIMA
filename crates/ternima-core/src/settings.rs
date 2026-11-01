@@ -190,6 +190,8 @@ pub struct Settings {
     pub font_size: u8,
     /// Shows a line under each terminal to type a whole command and send it at once.
     pub send_box: bool,
+    /// Shows where code addresses are under the lines that have them, from the tab's ELF file.
+    pub decode_addresses: bool,
     pub startup: StartupSettings,
     pub log: LogSettings,
     pub mouse: MouseSettings,
@@ -211,6 +213,7 @@ impl Default for Settings {
             theme: Theme::System,
             font_size: FONT_SIZE_DEFAULT,
             send_box: true,
+            decode_addresses: true,
             startup: StartupSettings::default(),
             log: LogSettings::default(),
             mouse: MouseSettings::default(),
@@ -264,6 +267,7 @@ mod tests {
             theme: Theme::Light,
             font_size: 18,
             send_box: false,
+            decode_addresses: false,
             startup: StartupSettings {
                 restore_tabs: true,
                 reconnect: false,

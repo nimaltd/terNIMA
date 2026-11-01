@@ -37,6 +37,9 @@ pub struct SerialConfig {
     pub dtr: bool,
     /// The RTS line's state, when flow control is not using it.
     pub rts: bool,
+    /// The firmware's ELF file, to show where code addresses in the output are.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elf: Option<String>,
 }
 
 impl Default for SerialConfig {
@@ -49,6 +52,7 @@ impl Default for SerialConfig {
             flow: FlowControl::None,
             dtr: true,
             rts: true,
+            elf: None,
         }
     }
 }

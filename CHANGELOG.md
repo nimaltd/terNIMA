@@ -7,6 +7,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Crash decoding. In a tab with the firmware's ELF file, a code address in the
+  output, as in a Zephyr fatal error, a HardFault or an ESP32 backtrace, gets
+  its function, file and line under its line in the terminal, and at the end
+  of the line in the Lines view. Only addresses inside the ELF file's functions
+  count. It needs no probe: serial tabs have an ELF file now too, in their
+  settings. Settings > Crashes turns it off.
+- Help > terNIMA help opens the help pages on the website. The welcome text,
+  the About box and the README link to them too.
 - SSH, under + and in File > New session: a shell on a Linux board or a
   server, in a real terminal, so `vim`, `htop` and colors work and the size
   follows the tab. Log in with a key file, OpenSSH's or PuTTY's, with the
@@ -25,6 +33,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - While a full-screen program such as `vim` or `htop` has the screen of any
   tab, it gets the function keys, Alt with a key, and Ctrl+V. Ctrl+Shift
   with a key and Ctrl+Tab stay terNIMA's.
+
+### Fixed
+
+- The time connected in the status bar no longer shows -1:-1:-1 for a moment
+  right after a reconnect.
 
 ## [1.3.0] - 2026-10-31
 

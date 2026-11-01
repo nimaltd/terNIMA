@@ -82,6 +82,8 @@ export type Settings = {
   font_size: number;
   /** Shows a line under each terminal to type a whole command and send it at once. */
   send_box: boolean;
+  /** Shows where code addresses are under the lines that have them, from the tab's ELF file. */
+  decode_addresses: boolean;
   startup: StartupSettings;
   log: LogSettings;
   mouse: MouseSettings;
@@ -103,6 +105,7 @@ export const settings: Settings = $state({
   theme: "system",
   font_size: FONT_SIZE_DEFAULT,
   send_box: true,
+  decode_addresses: true,
   startup: { restore_tabs: true, reconnect: true, restore_window: true },
   log: { new_tabs: false, folder: "", format: "text", timestamps: true },
   mouse: { select_copies: true, right_click_pastes: true },

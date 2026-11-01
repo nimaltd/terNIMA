@@ -37,6 +37,8 @@ export type SerialConfig = {
   flow: FlowControl;
   dtr: boolean;
   rts: boolean;
+  /** The firmware's ELF file, to show where code addresses in the output are. */
+  elf?: string | null;
 };
 
 export type LineEnding = "cr" | "lf" | "crlf";

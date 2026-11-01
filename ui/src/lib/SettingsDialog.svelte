@@ -20,6 +20,7 @@
   // A copy of the settings: nothing changes until Save.
   let theme: ThemeChoice = $state(settings.theme);
   let fontSize = $state(settings.font_size);
+  let decodeAddresses = $state(settings.decode_addresses);
   let startup: StartupSettings = $state({ ...settings.startup });
   let log: LogSettings = $state({ ...settings.log });
   let mouse: MouseSettings = $state({ ...settings.mouse });
@@ -51,6 +52,7 @@
     updateSettings({
       theme,
       font_size: fontSize,
+      decode_addresses: decodeAddresses,
       startup: { ...startup },
       log: { ...log, folder: log.folder.trim() },
       mouse: { ...mouse },
@@ -88,6 +90,17 @@
     </label>
     <label class="dlg-check">
       <input type="checkbox" bind:checked={mouse.right_click_pastes} /> A right-click pastes
+    </label>
+  </div>
+
+  <h2 class="dlg-section">Crashes</h2>
+  <p class="dlg-hint">
+    In a tab with the firmware's ELF file, a code address in the output, as in a crash dump, gets its function, file
+    and line under it.
+  </p>
+  <div class="dlg-checks">
+    <label class="dlg-check">
+      <input type="checkbox" bind:checked={decodeAddresses} /> Show where code addresses are
     </label>
   </div>
 

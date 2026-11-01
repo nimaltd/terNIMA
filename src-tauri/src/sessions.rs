@@ -18,7 +18,7 @@ use ternima_core::logfile::{LogSetup, Logger};
 use ternima_core::record::{self, Direction, Recorder};
 use ternima_core::replay::{self, Player};
 use ternima_core::send::{self, Pace, Stopped};
-use ternima_core::{elf, net, openocd, probe, rtt, serial, ssh, swo, watch};
+use ternima_core::{code, elf, net, openocd, probe, rtt, serial, ssh, swo, watch};
 
 /// The most time, in ms, that lines read at once are spread over, the same
 /// as SPREAD_MS in tabs.svelte.ts, which does it for live sessions.
@@ -1016,6 +1016,53 @@ fn variables_in(path: &str) -> Result<Arc<Vec<elf::Variable>>, String> {
 #[tauri::command(async)]
 pub fn elf_variables(path: String) -> Result<Vec<elf::Variable>, String> {
     variables_in(&path).map(|variables| variables.as_ref().clone())
+}
+
+type KnownCode = (PathBuf, SystemTime, Arc<code::CodeMap>);
+/// The ELF files read lately: a few tabs may each have their own.
+static CODE: Mutex<Vec<KnownCode>> = Mutex::new(Vec::new());
+const CODE_FILES_MAX: usize = 4;
+
+/// The code in an ELF file, read again when the file changes.
+fn code_in(path: &str) -> Result<Arc<code::CodeMap>, String> {
+    let path = PathBuf::from(path);
+    let modified = std::fs::metadata(&path)
+        .and_then(|metadata| metadata.modified())
+        .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
+    let mut known = CODE.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((_, _, map)) = known
+        .iter()
+        .find(|(known_path, known_modified, _)| *known_path == path && *known_modified == modified)
+    {
+        return Ok(map.clone());
+    }
+    let data = std::fs::read(&path)
+        .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
+    let map = Arc::new(
+        code::CodeMap::new(&data).map_err(|problem| format!("{}: {problem}", path.display()))?,
+    );
+    known.retain(|(known_path, _, _)| *known_path != path);
+    known.truncate(CODE_FILES_MAX - 1);
+    known.insert(0, (path, modified, map.clone()));
+    Ok(map)
+}
+
+/// Where these addresses, written as `0x08001234` or `08001234`, are in an ELF file's code: none for what is not code.
+#[tauri::command(async)]
+pub fn code_places(
+    elf: String,
+    addresses: Vec<String>,
+) -> Result<Vec<Option<code::CodePlace>>, String> {
+    let map = code_in(&elf)?;
+    Ok(addresses
+        .iter()
+        .map(|address| {
+            let digits = address.trim_start_matches("0x").trim_start_matches("0X");
+            u64::from_str_radix(digits, 16)
+                .ok()
+                .and_then(|address| map.place(address))
+        })
+        .collect())
 }
 
 /// Reads these variables of a tab's chip every `every_ms`, found by

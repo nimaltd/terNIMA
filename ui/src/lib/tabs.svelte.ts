@@ -50,6 +50,7 @@ import {
   type View,
   type WatchSetup,
 } from "./serial";
+import { codeAddresses, placeText, type CodePlace } from "./addresses";
 import { settings, type Macro, type Sequence } from "./settings.svelte";
 import { DEFAULT_SSH, sshTarget, type SshAnswer, type SshConfig, type SshQuestion } from "./ssh";
 import { bytes as byteText } from "./state";
@@ -84,6 +85,12 @@ const RECENT_MAX = 256 * 1024;
 const RTT_FILE_RATE = 1000;
 /** The most lines a tab keeps for its Lines view; a tenth of them go when there are more. */
 const LINES_MAX = 100_000;
+/** How long an address looked up is kept: the ELF file may be built again. */
+const PLACES_KEEP_MS = 5000;
+/** The most of a line without an end that is kept to look for addresses in. */
+const PART_LINE_MAX = 4096;
+/** One character to a byte, so a place in the text is the same place in the bytes. */
+const LATIN1 = new TextDecoder("latin1");
 /** The most time, in ms, that lines read at once are spread over. */
 const SPREAD_MS = 200;
 /** The most watched values a tab keeps for the plot; a tenth of them go when there are more. */
@@ -288,11 +295,22 @@ export class Tab {
 
   /** The firmware's ELF file, where the Watch view finds the variables. */
   get elf(): string | null {
+    if (this.kind === "serial") return this.serial.elf ?? null;
     if (this.kind === "rtt") return this.rtt.elf ?? null;
     if (this.kind === "swo") return this.swo.elf ?? null;
     if (this.kind === "tcp") return this.tcp.elf ?? null;
     return null;
   }
+
+  /** The end of the output that has no line end yet, to look for code addresses in. */
+  private partLine = "";
+  /** What waits to go to the terminal while the addresses of a line before it are looked up. */
+  private held: Uint8Array[] | null = null;
+  /** The addresses looked up lately, with what goes under their lines; null for what is not code. */
+  private places = new Map<string, string | null>();
+  private placesFrom: { elf: string; at: number } | null = null;
+  /** An ELF file already reported as unreadable, to say so once. */
+  private placesProblem: string | null = null;
 
   /** Chooses the firmware's ELF file. RTT also finds its control block in it. */
   setElf(path: string): void {
@@ -600,8 +618,10 @@ export class Tab {
     lines.forEach((line, index) => {
       // A recording knows when each line came.
       const when = times?.[index] ?? at - (lines.length - 1 - index) * step;
-      this.textLines.push({ ...line, n: this.nextLine++, at: when });
+      const stored: StoredLine = { ...line, n: this.nextLine++, at: when };
+      this.textLines.push(stored);
       this.count(line, 1);
+      this.placesInLine(stored);
     });
     this.trimLines();
   }
@@ -816,6 +836,7 @@ export class Tab {
   /** Clears what the tab shows, for a recording that starts again. */
   private clearViews(): void {
     this.write("\x1bc");
+    this.partLine = "";
     this.recent = [];
     this.recentBytes = 0;
     this.layOutHex();
@@ -1240,10 +1261,118 @@ export class Tab {
     }
     this.lastReceived = at;
     this.sentSince = false;
-    this.write(bytes);
+    this.show(bytes);
     this.keepForHex(false, bytes, at);
     this.modbus.receive(bytes, at);
     this.hearModbus(false, bytes, at);
+  }
+
+  /**
+   * Writes received bytes to the terminal, with where their code addresses are
+   * under the lines that have them. What comes after such a line waits for the
+   * answer, so the answer goes right under it.
+   */
+  private show(bytes: Uint8Array): void {
+    if (this.held) {
+      this.held.push(bytes);
+      return;
+    }
+    const elf = settings.decode_addresses ? this.elf : null;
+    if (!elf) {
+      this.write(bytes);
+      return;
+    }
+    const text = LATIN1.decode(bytes);
+    let written = 0;
+    let start = 0;
+    for (let end = text.indexOf("\n"); end >= 0; end = text.indexOf("\n", start)) {
+      const addresses = codeAddresses(this.partLine + text.slice(start, end));
+      this.partLine = "";
+      start = end + 1;
+      if (addresses.length === 0) {
+        continue;
+      }
+      const places = this.lookUp(elf, addresses);
+      if (places instanceof Promise) {
+        this.write(bytes.subarray(written, start));
+        this.held = [bytes.subarray(start)];
+        void places.then((found) => {
+          this.writePlaces(found);
+          const held = this.held ?? [];
+          this.held = null;
+          held.forEach((piece) => this.show(piece));
+        });
+        return;
+      }
+      if (places.length > 0) {
+        this.write(bytes.subarray(written, start));
+        written = start;
+        this.writePlaces(places);
+      }
+    }
+    this.partLine = (this.partLine + text.slice(start)).slice(-PART_LINE_MAX);
+    if (written < bytes.length) {
+      this.write(bytes.subarray(written));
+    }
+  }
+
+  private writePlaces(places: string[]): void {
+    for (const place of places) {
+      this.write(`\r\x1b[2m  ${place}\x1b[0m\r\n`);
+    }
+  }
+
+  /** What goes under a line with these addresses: at once if they were looked up lately. */
+  private lookUp(elf: string, addresses: string[]): string[] | Promise<string[]> {
+    const now = Date.now();
+    if (this.placesFrom?.elf !== elf || now - this.placesFrom.at > PLACES_KEEP_MS) {
+      this.places.clear();
+      this.placesFrom = { elf, at: now };
+    }
+    const known = () => addresses.flatMap((address) => this.places.get(address) ?? []);
+    const unknown = addresses.filter((address) => !this.places.has(address));
+    if (unknown.length === 0) {
+      return known();
+    }
+    return invoke<(CodePlace | null)[]>("code_places", { elf, addresses: unknown })
+      .then((found) => {
+        unknown.forEach((address, index) => {
+          const place = found[index];
+          this.places.set(address, place ? placeText(address, place) : null);
+        });
+        return known();
+      })
+      .catch((error) => {
+        unknown.forEach((address) => this.places.set(address, null));
+        if (this.placesProblem !== elf) {
+          this.placesProblem = elf;
+          this.note(String(error));
+        }
+        return known();
+      });
+  }
+
+  /** In the Lines view, where a line's code addresses are goes at its end. */
+  private placesInLine(line: StoredLine): void {
+    const elf = settings.decode_addresses ? this.elf : null;
+    const addresses = elf ? codeAddresses(line.text) : [];
+    if (!elf || addresses.length === 0) {
+      return;
+    }
+    const add = (places: string[]) => {
+      if (places.length > 0) {
+        const end = `  ${places.join("  ")}`;
+        line.text += end;
+        line.message += end;
+        this.linesVersion++;
+      }
+    };
+    const places = this.lookUp(elf, addresses);
+    if (places instanceof Promise) {
+      void places.then(add);
+    } else {
+      add(places);
+    }
   }
 
   /** Keeps bytes for the hex view, and shows them there if it is open. */

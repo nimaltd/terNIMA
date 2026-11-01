@@ -39,6 +39,7 @@
       Apache License 2.0
     </p>
     <div class="buttons">
+      <button onclick={() => openUrl("https://nimaltd.github.io/ternima/help/")}>Help</button>
       <button onclick={() => openUrl("https://github.com/nimaltd/ternima")}>GitHub</button>
       <button class="primary" onclick={onclose}>Close</button>
     </div>

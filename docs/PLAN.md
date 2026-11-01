@@ -594,7 +594,8 @@ Done when you can find one module's errors in a busy Zephyr log in seconds.
 
 ### Phase 5: probe tools
 
-- [ ] Crash and address decoding from the ELF
+- [x] Crash and address decoding from the ELF: in the terminal and the Lines view, on every
+  kind of tab with an ELF file, serial too
 - [x] Live variable watch and plot: the Watch view of RTT tabs, the variables found by name
   in the ELF's debug information and read through the probe as the chip runs
 - [ ] SVD register viewer
@@ -623,7 +624,8 @@ Done when you can find one module's errors in a busy Zephyr log in seconds.
 - [ ] Code signing on Windows and macOS
 - [ ] Portable `.zip` for Windows
 - [ ] Auto update
-- [ ] User guide
+- [x] User guide: the help pages on the website, linked from the Help menu, the welcome text,
+  the About box and the README
 - [ ] winget, Homebrew and Flathub
 - [ ] Command line mode: `ternima --port COM3 -b 115200`
 - [ ] Scripting (Rhai or Lua) and triggers (on a pattern: beep, notify, send a command)

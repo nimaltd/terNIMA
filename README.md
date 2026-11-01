@@ -34,12 +34,19 @@ What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## 📖 Help
+
+How to use every part of terNIMA, step by step and with pictures, is in the **[help](https://nimaltd.github.io/ternima/help/)**. In the app, it is Help > terNIMA help.
+
+---
+
 ## ✨ What it does
 
 - Serial ports with every option: any baud rate, data bits, parity, stop bits, flow control, DTR, RTS and break
 - SEGGER RTT through CMSIS-DAP, J-Link and ST-Link probes, with no vendor software needed
 - SWO through the same probes: ITM output such as printf, from one stimulus port or all of them
 - Live variables: watch and plot the firmware's globals, struct members and array elements by name from its ELF file, read as the chip runs: through the probe of an RTT or SWO tab, with or without RTT in the firmware, or through OpenOCD while you debug. Beside the terminal, or in a view of their own
+- Crash decoding: under a code address in the output, as in a Zephyr fatal error, a HardFault or an ESP32 backtrace, the function, file and line from the ELF file, on plain serial too
 - RTT over TCP while your IDE is debugging, from J-Link or OpenOCD
 - TCP and Telnet sessions, for devices and serial bridges on the network
 - SSH sessions in a real terminal, for a shell on a Linux board or a server, with `vim` and `htop`: log in with a key file, the SSH agent or a password that is never saved, with the server's key checked against `known_hosts`

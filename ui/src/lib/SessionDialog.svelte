@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
+  import { open } from "@tauri-apps/plugin-dialog";
   import Modal from "./Modal.svelte";
   import {
     BAUD_RATES,
@@ -106,6 +107,21 @@
     return listed && !ports.some((listedPort) => listedPort.name === port.name);
   }
 
+  async function browse() {
+    const path = await open({
+      title: "The firmware's ELF file",
+      multiple: false,
+      directory: false,
+      filters: [
+        { name: "ELF files", extensions: ["elf", "axf", "out"] },
+        { name: "All files", extensions: ["*"] },
+      ],
+    });
+    if (typeof path === "string") {
+      serial.elf = path;
+    }
+  }
+
   function submit() {
     const baud = Number(baudText);
     if (!Number.isInteger(baud) || baud <= 0) {
@@ -118,6 +134,7 @@
       return;
     }
     serial.baud = baud;
+    serial.elf = serial.elf?.trim() || null;
     const portId: PortId = { name: port.name, usb: port.usb };
     const sessionName = name.trim() || port.name;
 
@@ -272,6 +289,14 @@
     </label>
   </div>
 
+  <label class="dlg-label elf">
+    Firmware ELF file, to show where the addresses of a crash are (optional)
+    <span class="file">
+      <input class="field mono" placeholder="No file" bind:value={serial.elf} />
+      <button class="btn" onclick={browse}>Browse...</button>
+    </span>
+  </label>
+
   <label class="dlg-label tab-name">
     Tab name
     <input class="field" bind:value={name} oninput={() => (nameTyped = true)} placeholder={selected ?? ""} />
@@ -317,7 +342,18 @@
     text-overflow: ellipsis;
   }
 
-  .tab-name {
+  .tab-name,
+  .elf {
     margin-top: 14px;
+  }
+
+  .file {
+    display: flex;
+    gap: 8px;
+  }
+
+  .file input {
+    flex: 1;
+    min-width: 0;
   }
 </style>

@@ -72,6 +72,7 @@ export type AppActions = {
 };
 
 const GITHUB = "https://github.com/nimaltd/ternima";
+const HELP = "https://nimaltd.github.io/ternima/help/";
 /** The closed tabs the File menu lists; it keeps more, for their devices' settings. */
 const CLOSED_SHOWN = 5;
 
@@ -459,6 +460,7 @@ export function buildMenus(app: AppActions): Menu[] {
     {
       title: "Help",
       items: [
+        { label: "terNIMA help", run: () => void openUrl(HELP) },
         { label: "terNIMA on GitHub", run: () => void openUrl(GITHUB) },
         { label: "Report a bug...", run: () => void openUrl(`${GITHUB}/issues/new`) },
         { label: "Check for updates...", run: app.checkUpdates },

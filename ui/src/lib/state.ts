@@ -104,7 +104,7 @@ export function bytes(count: number): string {
 
 /** "00:12:31" */
 export function elapsed(ms: number): string {
-  const seconds = Math.floor(ms / 1000);
+  const seconds = Math.max(0, Math.floor(ms / 1000));
   const two = (n: number) => String(n).padStart(2, "0");
   return `${two(Math.floor(seconds / 3600))}:${two(Math.floor(seconds / 60) % 60)}:${two(seconds % 60)}`;
 }
