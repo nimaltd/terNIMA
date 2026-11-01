@@ -131,6 +131,20 @@ Other options we looked at:
 
 - Plain TCP client and Telnet, for ser2net, ESP-Link and other network bridges
 
+### SSH
+
+- A shell on a Linux board or a server, as a session kind of its own, so log, record,
+  macros, find and split view work as on any tab
+- A real terminal: `xterm-256color` at the tab's size, told again as the tab changes
+- Logging in: a key file (OpenSSH or PuTTY), the SSH agent (`SSH_AUTH_SOCK`, on Windows
+  OpenSSH's named pipe or Pageant), or a password, also when the server asks through
+  keyboard-interactive. A password or a passphrase is asked each time and never kept
+- The server's key is checked against `~/.ssh/known_hosts`, shared with `ssh`: a new key
+  is shown and asked about first, a changed key is refused. A login that fails is not
+  tried again by itself, as that could lock the account
+- Built on `russh`, pure Rust on tokio with `ring` for its crypto, so it builds alike on
+  all three OSes. `ssh2` needs libssh2 and OpenSSL
+
 ---
 
 ## Views
@@ -395,6 +409,7 @@ keyboard and send box -> session task -> transport -> device
 |---|---|
 | Serial ports | `serialport` |
 | Probes, RTT, memory | `probe-rs` |
+| SSH | `russh`, with `ring` |
 | ELF and debug info | `object`, `gimli`, `addr2line` |
 | Config | `serde`, `toml` |
 | Async | `tokio` (comes with Tauri) |
@@ -536,6 +551,10 @@ Done when it replaces PuTTY or Tera Term for everyday UART work.
 - [x] Plain TCP and Telnet sessions, waiting for the other end and connecting again when
   it comes back. Telnet answers the option talk (echo and no go ahead yes, the rest no)
   and keeps it out of the terminal
+- [x] SSH sessions in a real terminal: key file, agent or password, `known_hosts` checked,
+  connecting again by itself. Tried on OpenSSH 9.6 in WSL, with `vim`, `htop` and resizing,
+  and on one set to offer only old algorithms. The agent was tried through a stand-in on
+  OpenSSH's own pipe: Windows' service needs an administrator to turn on
 - [x] Split view: two tabs side by side or one above the other, with a line to drag between
   them, kept in `workspace.toml`
 - [x] Find in the terminal output: next and previous, match case, whole word, regex, and a

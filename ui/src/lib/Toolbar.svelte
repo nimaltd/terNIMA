@@ -2,6 +2,7 @@
   import { address, protocolText } from "./net";
   import { channelText, hzText } from "./probe";
   import { PAUSES, pauseText, summary, type LineEnding, type ModemLines, type View } from "./serial";
+  import { sshTarget } from "./ssh";
   import { playTime } from "./state";
   import { changed, fileName, type Tab } from "./tabs.svelte";
   import { activeTerminal } from "./terminal-actions";
@@ -184,6 +185,12 @@
         <span class="muted">{protocolText(tab.tcp)}</span>
         <span class="muted">▾</span>
       </button>
+    {:else if tab.kind === "ssh"}
+      <button class="btn target" title="SSH settings" onclick={onsettings}>
+        <span class="mono">{sshTarget(tab.ssh)}</span>
+        <span class="muted">SSH</span>
+        <span class="muted">▾</span>
+      </button>
     {:else if tab.kind === "replay"}
       <button class="btn target" title={`${tab.replay.path}: click to play another recording`} onclick={onsettings}>
         <span class="mono file">{fileName(tab.replay.path)}</span>
@@ -281,27 +288,32 @@
           >
             Scroll lock
           </button>
-          <span class="separator"></span>
+          {#if tab.kind !== "ssh" || tab.view === "hex"}
+            <span class="separator"></span>
+          {/if}
         {/if}
-        <label
-          class="option"
-          title="Starts a new line when data comes after a pause this long, so each message starts on its own line. Not after what you type, so a shell's echo stays on its line. Only the view changes."
-        >
-          New line after
-          <select
-            class="field"
-            value={String(tab.terminal.pause_ms)}
-            onchange={(event) => act(() => tab.setPause(Number(event.currentTarget.value)))}
+        <!-- A real terminal keeps its own lines: on an SSH tab, this is only for the hex view. -->
+        {#if tab.kind !== "ssh" || tab.view === "hex"}
+          <label
+            class="option"
+            title="Starts a new line when data comes after a pause this long, so each message starts on its own line. Not after what you type, so a shell's echo stays on its line. Only the view changes."
           >
-            {#each [...new Set([...PAUSES, tab.terminal.pause_ms])].sort((a, b) => a - b) as ms (ms)}
-              <option value={String(ms)}>{pauseText(ms)}</option>
-            {/each}
-          </select>
-        </label>
+            New line after
+            <select
+              class="field"
+              value={String(tab.terminal.pause_ms)}
+              onchange={(event) => act(() => tab.setPause(Number(event.currentTarget.value)))}
+            >
+              {#each [...new Set([...PAUSES, tab.terminal.pause_ms])].sort((a, b) => a - b) as ms (ms)}
+                <option value={String(ms)}>{pauseText(ms)}</option>
+              {/each}
+            </select>
+          </label>
+        {/if}
 
         {#if tab.kind === "swo"}
           <span class="muted" title="SWO only comes from the chip">Output only</span>
-        {:else if tab.kind !== "replay"}
+        {:else if tab.kind !== "replay" && tab.kind !== "ssh"}
           <label class="option" title="What the Enter key sends">
             Enter
             <select

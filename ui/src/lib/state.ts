@@ -2,6 +2,7 @@
 
 import { address, protocolText } from "./net";
 import { channelText, hexAddress, hzText } from "./probe";
+import { sshTarget } from "./ssh";
 import type { Tab } from "./tabs.svelte";
 
 export type Look = "connected" | "waiting" | "problem" | "stopped";
@@ -18,6 +19,7 @@ export function stateText(tab: Tab): string {
       if (tab.kind === "rtt") return rttText(tab);
       if (tab.kind === "swo") return swoText(tab);
       if (tab.kind === "tcp") return `Connected to ${tab.target}, ${protocolText(tab.tcp)}`;
+      if (tab.kind === "ssh") return `Connected to ${tab.target}, SSH`;
       if (tab.kind === "replay") return replayText(tab);
       return `Connected to ${tab.target}`;
     case "problem":
@@ -36,6 +38,10 @@ function waitingText(tab: Tab): string {
       return `Waiting for ${tab.port.name}: plug it in and terNIMA connects by itself`;
     case "tcp":
       return tcpWaitingText(tab);
+    case "ssh":
+      return tab.question
+        ? `Waiting for you to answer, to connect to ${sshTarget(tab.ssh)}`
+        : `Waiting for ${address(tab.ssh)} to answer: terNIMA connects by itself`;
     case "replay":
       return "Opening the recording";
     default:

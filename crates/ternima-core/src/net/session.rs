@@ -325,7 +325,7 @@ fn is_quiet(error: &io::Error) -> bool {
 }
 
 /// Errors that only mean nothing listens there yet, which is waited out.
-fn is_not_there(error: &io::Error) -> bool {
+pub(crate) fn is_not_there(error: &io::Error) -> bool {
     matches!(
         error.kind(),
         ErrorKind::ConnectionRefused

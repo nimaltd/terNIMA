@@ -17,6 +17,8 @@
   import SendBar from "./lib/SendBar.svelte";
   import SessionDialog from "./lib/SessionDialog.svelte";
   import SettingsDialog from "./lib/SettingsDialog.svelte";
+  import SshDialog from "./lib/SshDialog.svelte";
+  import SshQuestion from "./lib/SshQuestion.svelte";
   import StatusBar from "./lib/StatusBar.svelte";
   import TabBar from "./lib/TabBar.svelte";
   import TcpDialog from "./lib/TcpDialog.svelte";
@@ -53,6 +55,16 @@
    * settings. A new TCP session can start with a protocol picked.
    */
   let dialog: { kind: SessionKind; tab: Tab | null; protocol?: Protocol } | null = $state(null);
+  /** Whether one of the app's own dialogs is open, which has the keyboard. */
+  const dialogOpen = $derived(
+    aboutOpen || settingsOpen || macrosOpen || highlightsOpen || palette !== null || dialog !== null || updateCheck !== null,
+  );
+  /**
+   * The tab in front when its SSH session asks something. A tab behind it
+   * waits until it comes in front, so what is being typed in another tab
+   * never lands in a password box.
+   */
+  const asking = $derived(activeTab()?.question ? activeTab() : undefined);
   let menuBar: MenuBar;
   let pane: HTMLElement;
   /** Whether the line between the two panes of a split view is being dragged. */
@@ -243,7 +255,7 @@
   });
 
   function onkeydown(event: KeyboardEvent) {
-    if (aboutOpen || settingsOpen || macrosOpen || highlightsOpen || palette || dialog || updateCheck) {
+    if (dialogOpen || asking || forProgram(event)) {
       return;
     }
     const item = itemForKey(menus, event);
@@ -281,12 +293,21 @@
     }
   }
 
+  /**
+   * Keys that a full-screen program such as vim or htop reads itself, in place
+   * of the app: the function keys, and Alt with a key. Ctrl+Shift and Ctrl+Tab
+   * stay the app's, so there is always a way out of the program.
+   */
+  function forProgram(event: KeyboardEvent): boolean {
+    const inTerminal = event.target instanceof Element && event.target.closest(".xterm") !== null;
+    return inTerminal && activeTerminal()?.fullScreen?.() === true && (event.altKey || /^F\d+$/.test(event.key));
+  }
+
   /** Keys the app uses itself, which the terminal must not send to the device. */
   function isAppKey(event: KeyboardEvent): boolean {
     return (
-      itemForKey(menus, event) !== null ||
-      macroForKey(event) !== null ||
-      menuForAltKey(menus, event) !== null
+      !forProgram(event) &&
+      (itemForKey(menus, event) !== null || macroForKey(event) !== null || menuForAltKey(menus, event) !== null)
     );
   }
 
@@ -463,8 +484,23 @@
   />
 {:else if dialog?.kind === "tcp"}
   <TcpDialog tab={dialog.tab} protocol={dialog.protocol} onclose={closeDialog} />
+{:else if dialog?.kind === "ssh"}
+  <SshDialog tab={dialog.tab} onclose={closeDialog} />
 {:else if dialog}
   <SessionDialog tab={dialog.tab} onclose={closeDialog} />
+{/if}
+
+{#if asking?.question && !dialogOpen}
+  <!-- Anew for each question, so nothing typed for one is there for the next. -->
+  {#key asking.question}
+    <SshQuestion
+      question={asking.question}
+      onanswer={(answer) => {
+        asking.answer(answer);
+        focusTerminal();
+      }}
+    />
+  {/key}
 {/if}
 
 {#if settingsOpen}

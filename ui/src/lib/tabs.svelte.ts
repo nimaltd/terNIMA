@@ -1,4 +1,4 @@
-// The open tabs, each with its session (serial, RTT, SWO or TCP) and its log,
+// The open tabs, each with its session (serial, RTT, SWO, TCP or SSH) and its log,
 // and saving them to workspace.toml.
 
 import { Channel, invoke } from "@tauri-apps/api/core";
@@ -51,6 +51,7 @@ import {
   type WatchSetup,
 } from "./serial";
 import { settings, type Macro, type Sequence } from "./settings.svelte";
+import { DEFAULT_SSH, sshTarget, type SshAnswer, type SshConfig, type SshQuestion } from "./ssh";
 import { bytes as byteText } from "./state";
 
 /** Whether a log is being written, and where; or why it could not start. */
@@ -60,7 +61,7 @@ type LogStatus = { path: string | null; problem: string | null };
 type LogSetup = { folder: string; name: string; format: string; timestamps: boolean };
 
 /** What the Rust side learns of a recording it opens. */
-type ReplayInfo = { name: string; length: number };
+type ReplayInfo = { name: string; length: number; pty: boolean };
 
 /** What a recording being played is asked to do. */
 type ReplayCommand =
@@ -109,6 +110,7 @@ export class Tab {
   rtt: RttConfig = $state({ ...DEFAULT_RTT });
   swo: SwoConfig = $state({ ...DEFAULT_SWO });
   tcp: TcpConfig = $state({ ...DEFAULT_TCP });
+  ssh: SshConfig = $state({ ...DEFAULT_SSH });
   replay: ReplaySetup = $state({ ...DEFAULT_REPLAY });
   terminal: TerminalOptions = $state({ ...DEFAULT_TERMINAL });
   /** True while the session runs: connected, or ternima is waiting for the device. */
@@ -117,6 +119,8 @@ export class Tab {
   status: Status | null = $state(null);
   /** What the tab is connected to, for people: COM6, or STM32H503RB. */
   target = $state("");
+  /** What an SSH session asks the user, while it waits for the answer. */
+  question: SshQuestion | null = $state(null);
   lines: ModemLines | null = $state(null);
   /** The RTT control block's address and channels, once found. */
   rttAddress: number | null = $state(null);
@@ -233,8 +237,13 @@ export class Tab {
     this.rtt = { ...DEFAULT_RTT, ...setup.rtt };
     this.swo = { ...DEFAULT_SWO, ...setup.swo };
     this.tcp = { ...DEFAULT_TCP, ...setup.tcp };
+    this.ssh = { ...DEFAULT_SSH, ...setup.ssh };
     this.replay = { ...DEFAULT_REPLAY, ...setup.replay };
     this.terminal = { ...DEFAULT_TERMINAL, ...setup.terminal };
+    // A real terminal: the server echoes, and Enter and LF are as a terminal has them.
+    if (this.kind === "ssh") {
+      this.terminal = { ...this.terminal, enter: "cr", local_echo: false, lf_is_newline: false };
+    }
     this.log = setup.log ?? false;
     this.view = setup.view ?? "terminal";
     this.hexView = { ...DEFAULT_HEX_VIEW, ...setup.hex_view };
@@ -343,6 +352,8 @@ export class Tab {
         return $state.snapshot({ ...common, swo: this.swo, watch: this.watch });
       case "tcp":
         return $state.snapshot({ ...common, tcp: this.tcp, watch: this.watch });
+      case "ssh":
+        return $state.snapshot({ ...common, ssh: this.ssh });
       case "replay":
         return $state.snapshot({ ...common, replay: this.replay });
       default:
@@ -358,7 +369,34 @@ export class Tab {
         term.write(chunk);
       }
       this.early = [];
+      this.resized(term.cols, term.rows);
     }
+  }
+
+  /**
+   * Takes back what a program on a real terminal may have left on when its
+   * connection ended: the full screen, the mouse, the hidden cursor. The next
+   * shell, and the keys, would not work as they should.
+   */
+  private leaveProgram(): void {
+    if (this.kind === "ssh") {
+      // Only from the full screen: leaving it puts the cursor back where it was saved.
+      const fullScreen = this.term?.buffer.active.type === "alternate" ? "\x1b[?1049l" : "";
+      this.write(`${fullScreen}\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[!p`);
+    }
+  }
+
+  /** Called when the tab's terminal changes size, for a shell that has to know it. */
+  resized(cols: number, rows: number): void {
+    if (this.kind === "ssh" && this.running) {
+      void invoke("resize_ssh_session", { id: this.id, cols, rows });
+    }
+  }
+
+  /** Answers what an SSH session asks. */
+  answer(answer: SshAnswer): void {
+    this.question = null;
+    void invoke("answer_ssh", { id: this.id, answer });
   }
 
   /** Called by the tab's hex view when it opens, which shows what came lately, and with null when it closes. */
@@ -675,6 +713,14 @@ export class Tab {
       case "tcp":
         started = invoke("open_tcp_session", { ...common, config: $state.snapshot(this.tcp) });
         break;
+      case "ssh":
+        started = invoke("open_ssh_session", {
+          ...common,
+          config: $state.snapshot(this.ssh),
+          cols: this.term?.cols ?? 80,
+          rows: this.term?.rows ?? 24,
+        });
+        break;
       default:
         started = invoke("open_session", {
           ...common,
@@ -687,6 +733,10 @@ export class Tab {
         this.onLogStatus(status);
         if (this.watch.names.length > 0) {
           this.sendWatch();
+        }
+        // The terminal may have changed size, or opened, while the session started.
+        if (this.term) {
+          this.resized(this.term.cols, this.term.rows);
         }
       })
       .catch((error) => this.note(`could not start: ${error}`));
@@ -702,6 +752,8 @@ export class Tab {
           return;
         }
         this.target = fileName(path);
+        // A program on a real terminal may send LF to move down, without going back to the start of the line.
+        this.terminal = { ...this.terminal, lf_is_newline: !info.pty };
         this.connectedAt = Date.now();
         this.status = { state: "connected" };
         this.note(`playing ${this.target}: ${duration(info.length * 1000)} recorded from ${info.name || "a tab"}`);
@@ -835,6 +887,7 @@ export class Tab {
       return;
     }
     if (this.connected) {
+      this.leaveProgram();
       this.note(`closed at ${clock(Date.now())}`);
     }
     if (this.recordPath) {
@@ -844,6 +897,7 @@ export class Tab {
     this.modbus.stop();
     this.running = false;
     this.status = null;
+    this.question = null;
     this.lines = null;
     this.connectedAt = null;
     this.logPath = null;
@@ -911,6 +965,16 @@ export class Tab {
       if (this.watch.names.length > 0) {
         this.sendWatch();
       }
+    }
+    changed();
+  }
+
+  /** Changes where and how an SSH session logs in; a running session connects again at once. */
+  reconfigureSsh(ssh: SshConfig): void {
+    this.ssh = ssh;
+    this.question = null;
+    if (this.running) {
+      void invoke("reconfigure_ssh_session", { id: this.id, config: $state.snapshot(ssh) });
     }
     changed();
   }
@@ -1164,7 +1228,7 @@ export class Tab {
     this.rx += bytes.length;
     // After a pause, what comes starts on a new line, but not an echo of what
     // was just typed or sent: an interactive shell keeps its lines whole.
-    const pause = this.terminal.pause_ms;
+    const pause = this.kind === "ssh" ? 0 : this.terminal.pause_ms;
     if (
       pause > 0 &&
       at - this.lastReceived >= pause &&
@@ -1290,6 +1354,23 @@ export class Tab {
           this.onWaiting(event.problem);
         }
         return;
+      case "ssh_state":
+        if (event.state === "connected") {
+          this.question = null;
+          this.onConnected(event.address, `${event.address}, SSH`);
+        } else if (event.state === "ended") {
+          // Not "closed at": what ended it says more, and it does not try again.
+          this.status = null;
+          this.leaveProgram();
+          this.note(event.why);
+          this.stop();
+        } else {
+          this.onWaiting(event.problem);
+        }
+        return;
+      case "ssh_ask":
+        this.question = event;
+        return;
       case "log_stopped":
         this.log = false;
         this.logPath = null;
@@ -1326,6 +1407,7 @@ export class Tab {
       this.lostAt = now;
       this.lines = null;
       this.connectedAt = null;
+      this.leaveProgram();
       if (!this.resetting) {
         this.note(`disconnected at ${clock(now)}`);
       }
@@ -1346,6 +1428,8 @@ export class Tab {
         return this.port.name;
       case "tcp":
         return address(this.tcp);
+      case "ssh":
+        return address(this.ssh);
       case "replay":
         return fileName(this.replay.path);
       default:
@@ -1498,6 +1582,8 @@ export function closedText(setup: SessionSetup): string {
       return setup.swo?.chip ? `${setup.swo.chip}, SWO` : "SWO";
     case "tcp":
       return setup.tcp ? `${address(setup.tcp)}, ${protocolText(setup.tcp)}` : "TCP";
+    case "ssh":
+      return setup.ssh ? `${sshTarget(setup.ssh)}, SSH` : "SSH";
     case "replay":
       return setup.replay ? fileName(setup.replay.path) : "Recording";
   }

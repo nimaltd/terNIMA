@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { ModbusSetup } from "./modbus.svelte";
 import type { NetState, TcpConfig } from "./net";
 import type { ChannelInfo, RttConfig, RttState, SwoConfig, SwoState } from "./probe";
+import type { SshConfig, SshQuestion, SshState } from "./ssh";
 
 export type UsbId = {
   /** Four hex digits, such as "0483". */
@@ -49,7 +50,7 @@ export type TerminalOptions = {
 };
 
 /** A tab's session: a device, or a recording played back. */
-export type SessionKind = "serial" | "rtt" | "swo" | "tcp" | "replay";
+export type SessionKind = "serial" | "rtt" | "swo" | "tcp" | "ssh" | "replay";
 
 /**
  * What a tab shows: the terminal, every byte in hex, every line in a list,
@@ -180,6 +181,7 @@ export type SessionSetup = {
   rtt?: RttConfig;
   swo?: SwoConfig;
   tcp?: TcpConfig;
+  ssh?: SshConfig;
   replay?: ReplaySetup;
   terminal: TerminalOptions;
   view?: View;
@@ -247,6 +249,8 @@ export type SessionEvent =
   | { kind: "channels"; up: ChannelInfo[]; down: ChannelInfo[] }
   | ({ kind: "swo_state" } & SwoState)
   | ({ kind: "tcp_state" } & NetState)
+  | ({ kind: "ssh_state" } & SshState)
+  | ({ kind: "ssh_ask" } & SshQuestion)
   | { kind: "text_lines"; lines: LogLine[]; at: number }
   /** The watched variables' values, in their order, with when they were read. */
   | { kind: "watch"; values: (number | null)[]; at: number }

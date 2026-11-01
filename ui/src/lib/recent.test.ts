@@ -33,6 +33,20 @@ test("without a serial number, a port is the same by its name", () => {
   assert.equal(sameDevice({ name: "/dev/ttyS0" }, { name: "/dev/ttyS0", usb: null }), true);
 });
 
+test("SSH tabs are the same by their host, port and user", () => {
+  const ssh = (host: string, port: number, user: string, auth: "password" | "key" = "password"): SessionSetup => ({
+    name: `${user}@${host}`,
+    kind: "ssh",
+    connected: false,
+    ssh: { host, port, user, auth },
+    terminal: { ...TERMINAL },
+  });
+  assert.equal(sameTarget(ssh("board", 22, "root"), ssh("board", 22, "root", "key")), true);
+  assert.equal(sameTarget(ssh("board", 22, "root"), ssh("board", 2222, "root")), false);
+  assert.equal(sameTarget(ssh("board", 22, "root"), ssh("board", 22, "nima")), false);
+  assert.equal(sameTarget(ssh("board", 22, "root"), ssh("other", 22, "root")), false);
+});
+
 test("tabs of other kinds, chips, probes or addresses are not the same", () => {
   const rtt = (chip: string, serial: string | null): SessionSetup => ({
     name: chip,

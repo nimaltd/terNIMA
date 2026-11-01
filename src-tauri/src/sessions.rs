@@ -1,4 +1,4 @@
-//! The session commands the UI calls, for serial ports, RTT, SWO, TCP and
+//! The session commands the UI calls, for serial ports, RTT, SWO, TCP, SSH and
 //! recordings played back, the sessions they run, and the log file and
 //! recording each can write.
 
@@ -18,7 +18,7 @@ use ternima_core::logfile::{LogSetup, Logger};
 use ternima_core::record::{self, Direction, Recorder};
 use ternima_core::replay::{self, Player};
 use ternima_core::send::{self, Pace, Stopped};
-use ternima_core::{elf, net, openocd, probe, rtt, serial, swo, watch};
+use ternima_core::{elf, net, openocd, probe, rtt, serial, ssh, swo, watch};
 
 /// The most time, in ms, that lines read at once are spread over, the same
 /// as SPREAD_MS in tabs.svelte.ts, which does it for live sessions.
@@ -30,6 +30,7 @@ enum Running {
     Rtt(rtt::Session),
     Swo(swo::Session),
     Tcp(net::Session),
+    Ssh(ssh::Session),
     Replay(Player),
 }
 
@@ -45,6 +46,7 @@ impl Running {
             Running::Serial(session) => session.write(data),
             Running::Rtt(session) => session.write(data),
             Running::Tcp(session) => session.write(data),
+            Running::Ssh(session) => session.write(data),
             Running::Swo(_) | Running::Replay(_) => {}
         }
     }
@@ -146,6 +148,9 @@ pub enum SessionEvent {
     },
     SwoState(swo::SwoState),
     TcpState(net::NetState),
+    SshState(ssh::SshState),
+    /// What only the user can say, to come back through `answer_ssh`.
+    SshAsk(ssh::Question),
     /// The lines of text the last bytes finished, for the Lines view and the
     /// plot, with when those bytes were read: ms since 1970.
     TextLines {
@@ -551,6 +556,72 @@ pub fn open_tcp_session(
     status
 }
 
+/// Starts an SSH session in a terminal of `cols` and `rows`, with the same
+/// channels and log as the others.
+#[tauri::command(async)]
+#[allow(clippy::too_many_arguments)]
+pub fn open_ssh_session(
+    id: u32,
+    config: ssh::SshConfig,
+    cols: u32,
+    rows: u32,
+    log: Option<LogSetup>,
+    data: Channel<InvokeResponseBody>,
+    events: Channel<SessionEvent>,
+    app: AppHandle,
+    sessions: State<Sessions>,
+) -> LogStatus {
+    let (shared, status) = new_log(&app, log);
+    let log = shared.clone();
+    let mut splitter = LineSplitter::default();
+    let session = ssh::Session::start(config, (cols, rows), move |event| {
+        let _ = match event {
+            ssh::Event::Data(bytes) => {
+                log_data(&log, &events, &bytes);
+                send_lines(&mut splitter, &events, &bytes);
+                data.send(InvokeResponseBody::Raw(bytes))
+            }
+            ssh::Event::State(state) => {
+                let connected_to = match &state {
+                    ssh::SshState::Connected { address } => Some(format!("{address}, SSH")),
+                    ssh::SshState::Waiting { .. } | ssh::SshState::Ended { .. } => None,
+                };
+                log_state(&log, &events, connected_to);
+                events.send(SessionEvent::SshState(state))
+            }
+            ssh::Event::Ask(question) => events.send(SessionEvent::SshAsk(question)),
+        };
+    });
+    sessions.insert(id, Running::Ssh(session), shared);
+    status
+}
+
+/// Gives an SSH session the answer to what it asked.
+#[tauri::command]
+pub fn answer_ssh(id: u32, answer: ssh::Answer, sessions: State<Sessions>) {
+    sessions.with(id, |session| {
+        if let Running::Ssh(session) = session {
+            session.answer(answer);
+        }
+    });
+}
+
+/// Tells an SSH session the size of its terminal, in columns and rows.
+#[tauri::command]
+pub fn resize_ssh_session(id: u32, cols: u32, rows: u32, sessions: State<Sessions>) {
+    sessions.with(id, |session| {
+        if let Running::Ssh(session) = session {
+            session.resize(cols, rows);
+        }
+    });
+}
+
+/// The private key OpenSSH would use first, to offer it for a new SSH session.
+#[tauri::command(async)]
+pub fn usual_ssh_key() -> Option<String> {
+    ssh::usual_key_file()
+}
+
 /// Turns a running session's log on with `log`, or off without it. A log
 /// turned on starts a new file.
 #[tauri::command(async)]
@@ -596,7 +667,14 @@ pub fn set_recording(
         PathBuf::from(folder)
     };
     let connected_to = lock_log(&shared).connected_to.clone();
+    let pty = sessions
+        .lock()
+        .get(&id)
+        .is_some_and(|entry| matches!(entry.running, Running::Ssh(_)));
     let started = Recorder::create(&folder, &name).and_then(|mut recorder| {
+        if pty {
+            recorder.mark_pty()?;
+        }
         if let Some(what) = connected_to {
             recorder.note(&format!("connected to {what}"))?;
         }
@@ -628,6 +706,8 @@ pub struct ReplayInfo {
     name: String,
     /// How long it plays, in seconds.
     length: f64,
+    /// Whether it comes from a real terminal, whose LF is not a new line.
+    pty: bool,
 }
 
 /// Opens a recording to play back, paused at its start. What it received
@@ -644,6 +724,7 @@ pub fn open_replay_session(
     let info = ReplayInfo {
         name: recording.name.clone(),
         length: recording.length(),
+        pty: recording.pty,
     };
     // Lines keep the time they were recorded at, so the plot shows it, at any speed.
     let started = recording.started_ms.unwrap_or_else(|| {
@@ -1010,6 +1091,15 @@ pub fn reconfigure_swo_session(id: u32, config: swo::SwoConfig, sessions: State<
 }
 
 #[tauri::command]
+pub fn reconfigure_ssh_session(id: u32, config: ssh::SshConfig, sessions: State<Sessions>) {
+    sessions.with(id, |session| {
+        if let Running::Ssh(session) = session {
+            session.reconfigure(config);
+        }
+    });
+}
+
+#[tauri::command]
 pub fn reconfigure_tcp_session(id: u32, config: net::TcpConfig, sessions: State<Sessions>) {
     let mut all = sessions.lock();
     let Some(entry) = all.get_mut(&id) else {
@@ -1034,6 +1124,6 @@ pub fn reset_target(id: u32, sessions: State<Sessions>) {
         Running::Rtt(session) => session.reset(),
         Running::Swo(session) => session.reset(),
         // No probe of its own: an RTT server's probe belongs to the debugger.
-        Running::Serial(_) | Running::Tcp(_) | Running::Replay(_) => {}
+        Running::Serial(_) | Running::Tcp(_) | Running::Ssh(_) | Running::Replay(_) => {}
     });
 }

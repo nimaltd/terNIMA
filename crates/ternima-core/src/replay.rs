@@ -267,6 +267,7 @@ mod tests {
         Recording {
             name: "test".into(),
             started_ms: Some(0.0),
+            pty: false,
             chunks: times
                 .iter()
                 .enumerate()

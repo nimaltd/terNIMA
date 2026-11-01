@@ -19,6 +19,7 @@ pub mod rtt;
 pub mod send;
 pub mod serial;
 pub mod settings;
+pub mod ssh;
 pub mod swo;
 mod tomlfile;
 pub mod watch;

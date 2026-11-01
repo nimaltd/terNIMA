@@ -14,10 +14,14 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 gimli = { version = "0.34.0", default-features = false, features = ["read", "std"] }
 object = { version = "0.39", default-features = false, features = ["read", "std", "compression"] }
 probe-rs = "0.32.0"
+# Pure Rust. Ring, not its default aws-lc-rs, needs no NASM to build on Windows.
+russh = { version = "0.65", default-features = false, features = ["ring", "rsa"] }
 serde = { version = "1", features = ["derive"] }
 serialport = { version = "4.10", features = ["usbportinfo-interface", "usbportinfo-location"] }
+tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
 toml = "1.1.8"
 
 [dev-dependencies]
+futures = "0.3"
 gimli = { version = "0.34.0", default-features = false, features = ["read", "std", "write"] }
 object = { version = "0.39", default-features = false, features = ["read", "std", "compression", "write"] }

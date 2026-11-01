@@ -73,6 +73,16 @@ fn is_tcl_port(port: &u16) -> bool {
     *port == TCL_PORT
 }
 
+/// "localhost:19021", or "[::1]:23" for an IPv6 address.
+pub(crate) fn host_and_port(host: &str, port: u16) -> String {
+    let host = host.trim();
+    if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
 impl Default for TcpConfig {
     fn default() -> Self {
         Self {
@@ -100,12 +110,7 @@ impl TcpConfig {
 
     /// "localhost:19021", or "[::1]:23" for an IPv6 address.
     pub fn address(&self) -> String {
-        let host = self.host.trim();
-        if host.contains(':') && !host.starts_with('[') {
-            format!("[{host}]:{}", self.port)
-        } else {
-            format!("{host}:{}", self.port)
-        }
+        host_and_port(&self.host, self.port)
     }
 
     /// What J-Link's RTT server is told right after connecting, if anything.

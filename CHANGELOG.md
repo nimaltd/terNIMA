@@ -5,6 +5,27 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- SSH, under + and in File > New session: a shell on a Linux board or a
+  server, in a real terminal, so `vim`, `htop` and colors work and the size
+  follows the tab. Log in with a key file, OpenSSH's or PuTTY's, with the
+  SSH agent, OpenSSH's or Pageant on Windows, or with a password, also when
+  the server asks for it itself. A password or a passphrase is asked each
+  time and never saved. Old boards' servers work too, and only then with
+  their old algorithms.
+- The server's key is checked against `known_hosts` in your `.ssh` folder,
+  the file `ssh` itself uses. A new key is shown and asked about first. A
+  changed key is refused, with both fingerprints and the command that takes
+  the old one out, for when you know why, as with a board flashed again.
+- Log, record and replay, macros, sequences, the send box, find and split
+  view work on SSH tabs as on the others. A tab is saved with its host, user
+  and how it logs in, and connects again by itself when the connection
+  breaks. `exit` ends the session.
+- While a full-screen program such as `vim` or `htop` has the screen of any
+  tab, it gets the function keys, Alt with a key, and Ctrl+V. Ctrl+Shift
+  with a key and Ctrl+Tab stay terNIMA's.
+
 ## [1.3.0] - 2026-10-31
 
 ### Added

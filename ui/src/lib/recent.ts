@@ -54,6 +54,8 @@ export function sameTarget(a: SessionSetup, b: SessionSetup): boolean {
         a.tcp?.protocol === b.tcp?.protocol &&
         a.tcp?.channel === b.tcp?.channel
       );
+    case "ssh":
+      return a.ssh?.host === b.ssh?.host && a.ssh?.port === b.ssh?.port && a.ssh?.user === b.ssh?.user;
     case "replay":
       return a.replay?.path === b.replay?.path;
   }

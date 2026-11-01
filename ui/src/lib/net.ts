@@ -61,7 +61,7 @@ export const PROTOCOLS: Record<Protocol, { name: string; port: number | null; hi
 };
 
 /** "localhost:19021", or "[::1]:23" for an IPv6 address. */
-export function address(config: TcpConfig): string {
+export function address(config: { host: string; port: number }): string {
   const host = config.host.trim();
   return host.includes(":") && !host.startsWith("[") ? `[${host}]:${config.port}` : `${host}:${config.port}`;
 }

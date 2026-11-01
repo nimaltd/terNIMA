@@ -85,10 +85,18 @@
     }
   });
 
+  // A shell on a real terminal needs to know its size.
+  term.onResize(({ cols, rows }) => {
+    if (!hex) {
+      tab?.resized(cols, rows);
+    }
+  });
+
   /**
    * Ctrl+C copies while text is selected, and goes to the device as Ctrl+C
-   * when nothing is; Ctrl+V and Shift+Insert paste. On macOS, Cmd+C and
-   * Cmd+V do it, from the Edit menu. Says whether the key was one of these.
+   * when nothing is; Ctrl+V and Shift+Insert paste, but a full-screen program
+   * such as vim reads Ctrl+V itself. On macOS, Cmd+C and Cmd+V do it, from the
+   * Edit menu. Says whether the key was one of these.
    */
   function clipboardKey(event: KeyboardEvent): boolean {
     if (isMac || event.altKey || event.metaKey) {
@@ -101,7 +109,8 @@
       term.clearSelection();
       return true;
     }
-    if ((ctrl && event.code === "KeyV") || (event.shiftKey && !event.ctrlKey && event.key === "Insert")) {
+    const fullScreen = term.buffer.active.type === "alternate";
+    if ((ctrl && event.code === "KeyV" && !fullScreen) || (event.shiftKey && !event.ctrlKey && event.key === "Insert")) {
       event.preventDefault();
       void actions.paste();
       return true;
@@ -250,6 +259,7 @@
     },
     findNext: () => find("next"),
     findPrevious: () => find("previous"),
+    fullScreen: () => term.buffer.active.type === "alternate",
   };
 
   /** Finds the query: the next match, the previous one, or again from here as it is typed. */

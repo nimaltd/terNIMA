@@ -4,7 +4,7 @@
 [![Stars](https://img.shields.io/github/stars/nimaltd/ternima?style=social)](https://github.com/nimaltd/ternima)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE.md)
 
-A serial, RTT, SWO and TCP terminal for embedded developers, the same on Windows, macOS and Linux.
+A serial, RTT, SWO, TCP and SSH terminal for embedded developers, the same on Windows, macOS and Linux.
 
 The name is "terminal" with my name, Nima, in it: ter-NIMA.
 
@@ -42,6 +42,7 @@ What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 - Live variables: watch and plot the firmware's globals, struct members and array elements by name from its ELF file, read as the chip runs: through the probe of an RTT or SWO tab, with or without RTT in the firmware, or through OpenOCD while you debug. Beside the terminal, or in a view of their own
 - RTT over TCP while your IDE is debugging, from J-Link or OpenOCD
 - TCP and Telnet sessions, for devices and serial bridges on the network
+- SSH sessions in a real terminal, for a shell on a Linux board or a server, with `vim` and `htop`: log in with a key file, the SSH agent or a password that is never saved, with the server's key checked against `known_hosts`
 - A send box with history, macros on Alt+1 to Alt+9 and sequences of them, hex sending, and sending a file
 - A full VT100 / xterm terminal with 256 and 24-bit color, so the Zephyr shell works as it should
 - Copy by selecting and paste with a right-click, as in PuTTY; Ctrl+C copies while text is selected
@@ -73,6 +74,17 @@ A probe has one owner: while your IDE debugs through it, terNIMA cannot open it 
   The address and size say where to look for RTT: your chip's RAM. Port 9090 then serves channel 0.
 
   The Watch view of that tab reads the variables through OpenOCD's Tcl port, 6666 unless OpenOCD is told otherwise, as the chip runs. Nothing else is needed: a debugger attached to the same OpenOCD keeps working.
+
+---
+
+## 🔐 SSH
+
+**SSH** under + or File > New session opens a shell on a Linux board or a server, in a real terminal: `vim`, `htop` and colors work, and the size follows the tab. Log, record and replay, macros, find and split view work as on any tab.
+
+- **Logging in**: with a key file, OpenSSH's or PuTTY's, with the SSH agent, OpenSSH's or Pageant on Windows, or with a password. A password or a passphrase is asked each time, also when the tab connects again, and never saved.
+- **The server's key** is checked against `known_hosts` in your `.ssh` folder, the file `ssh` itself uses. A new key is shown and asked about first. A changed key is refused. If you know why it changed, as with a board flashed again, take the old one out with the command the message shows, such as `ssh-keygen -R "[board]:2222"`, and connect again.
+- **When it ends**: a connection that breaks is made again by itself, as on a TCP tab. `exit` ends the session, and Connect opens a new one.
+- **Keys**: while a full-screen program such as `vim` or `htop` has the screen, it gets the function keys, Alt with a key, and Ctrl+V. Ctrl+Shift with a key and Ctrl+Tab stay terNIMA's.
 
 ---
 

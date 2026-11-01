@@ -46,6 +46,11 @@ export const NEW_TABS: NewTab[] = [
     shortcut: keys("Ctrl+Shift+T", "Cmd+Shift+T"),
   },
   {
+    kind: "ssh",
+    label: "SSH",
+    detail: "A shell on a Linux board or a server, in a real terminal",
+  },
+  {
     kind: "replay",
     label: "A recording",
     detail: "Play back what a tab recorded, with its timing",

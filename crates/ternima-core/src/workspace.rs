@@ -10,6 +10,7 @@ use crate::lines::Level;
 use crate::net::TcpConfig;
 use crate::rtt::RttConfig;
 use crate::serial::{PortId, SerialConfig};
+use crate::ssh::SshConfig;
 use crate::swo::SwoConfig;
 use crate::tomlfile;
 
@@ -62,6 +63,8 @@ pub enum SessionKind {
     Swo,
     /// A TCP connection: a plain socket, Telnet, or an RTT server.
     Tcp,
+    /// A shell on a server or a board, through SSH.
+    Ssh,
     /// A recording played back.
     Replay,
 }
@@ -467,6 +470,8 @@ pub struct SessionSetup {
     #[serde(default, skip_serializing_if = "is_default")]
     pub tcp: TcpConfig,
     #[serde(default, skip_serializing_if = "is_default")]
+    pub ssh: SshConfig,
+    #[serde(default, skip_serializing_if = "is_default")]
     pub replay: ReplaySetup,
     #[serde(default)]
     pub terminal: TerminalOptions,
@@ -642,6 +647,7 @@ mod tests {
     use super::*;
     use crate::net::Protocol;
     use crate::serial::UsbId;
+    use crate::ssh::Auth;
     use crate::tomlfile::tests::TempDir;
 
     fn nucleo() -> SessionSetup {
@@ -667,6 +673,7 @@ mod tests {
             rtt: RttConfig::default(),
             swo: SwoConfig::default(),
             tcp: TcpConfig::default(),
+            ssh: SshConfig::default(),
             replay: ReplaySetup::default(),
             terminal: TerminalOptions::default(),
             view: View::Terminal,
@@ -694,6 +701,7 @@ mod tests {
             },
             swo: SwoConfig::default(),
             tcp: TcpConfig::default(),
+            ssh: SshConfig::default(),
             replay: ReplaySetup::default(),
             terminal: TerminalOptions::default(),
             view: View::Terminal,
@@ -1042,6 +1050,41 @@ mode = "tcp"
             "{text}"
         );
         assert!(!text.contains("chip"), "{text}");
+    }
+
+    #[test]
+    fn ssh_tabs_are_kept_with_how_they_log_in_and_no_password() {
+        let dir = TempDir::new("workspace-ssh");
+        let path = dir.file("workspace.toml");
+        let workspace = Workspace {
+            sessions: vec![SessionSetup {
+                name: "Board".into(),
+                kind: SessionKind::Ssh,
+                ssh: SshConfig {
+                    host: "board".into(),
+                    user: "root".into(),
+                    auth: Auth::Key,
+                    key_file: "/home/nima/.ssh/id_ed25519".into(),
+                    ..SshConfig::default()
+                },
+                ..nucleo()
+            }],
+            ..Workspace::default()
+        };
+        workspace.save(&path).unwrap();
+        assert_eq!(Workspace::load(&path), workspace);
+
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains("kind = \"ssh\"")
+                && text.contains("auth = \"key\"")
+                && text.contains("key_file = "),
+            "{text}"
+        );
+        assert!(
+            !text.contains("password") && !text.contains("passphrase"),
+            "{text}"
+        );
     }
 
     #[test]

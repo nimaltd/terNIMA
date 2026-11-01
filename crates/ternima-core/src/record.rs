@@ -10,10 +10,15 @@
 //! # name: Nucleo
 //! # started: 2026-10-25 14:02:11.123 +02:00
 //! # started ms: 1792930931123
+//! # pty: yes
 //! 0.000000 < "booting\r\n"
 //! 1.250000 > "help\r"
 //! # 2.000000 disconnected
 //! ```
+//!
+//! `pty: yes` is there when it comes from a real terminal, an SSH tab's: a
+//! program there may send LF to move down, without going back to the start
+//! of the line, so an LF must not be played back as a new line.
 //!
 //! Text stays as it is, UTF-8 included. Other bytes are written as `\r`,
 //! `\n`, `\t`, `\e`, `\0` or `\xHH`, and `\` and `"` as `\\` and `\"`.
@@ -55,6 +60,8 @@ pub struct Recording {
     pub name: String,
     /// When it started, in ms since 1970, if the file says.
     pub started_ms: Option<f64>,
+    /// Whether it comes from a real terminal, whose LF is not a new line.
+    pub pty: bool,
     pub chunks: Vec<Chunk>,
 }
 
@@ -99,6 +106,13 @@ impl Recorder {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Says in the file that it comes from a real terminal. Only right after
+    /// [`Recorder::create`], with the rest of what is said at its start.
+    pub fn mark_pty(&mut self) -> io::Result<()> {
+        self.file.write_all(b"# pty: yes\n")?;
+        self.file.flush()
     }
 
     /// Writes bytes received or sent, with the time since the start.
@@ -170,6 +184,7 @@ pub fn parse(text: &str) -> Result<Recording, String> {
             match header.trim_start().split_once(": ") {
                 Some(("name", name)) => recording.name = name.to_string(),
                 Some(("started ms", ms)) => recording.started_ms = ms.trim().parse().ok(),
+                Some(("pty", yes)) => recording.pty = yes.trim() == "yes",
                 _ => {}
             }
             continue;
@@ -348,6 +363,26 @@ mod tests {
         assert!(broken.contains("line 2"), "{broken}");
         assert!(parse("# terNIMA recording\nnow < \"a\"\n").is_err());
         assert!(parse("# terNIMA recording\n0.5 = \"a\"\n").is_err());
+    }
+
+    #[test]
+    fn a_recording_from_a_real_terminal_says_so() {
+        let dir = TempDir::new("record-pty");
+        let path = {
+            let mut recorder = Recorder::create(&dir.file("logs"), "Board").unwrap();
+            recorder.mark_pty().unwrap();
+            recorder.data(Direction::Received, b"$ ").unwrap();
+            recorder.path().to_path_buf()
+        };
+        let recording = read(&path).unwrap();
+        assert!(recording.pty);
+        assert_eq!(recording.chunks[0].bytes, b"$ ");
+
+        let path = {
+            let recorder = Recorder::create(&dir.file("logs"), "COM6").unwrap();
+            recorder.path().to_path_buf()
+        };
+        assert!(!read(&path).unwrap().pty);
     }
 
     #[test]
