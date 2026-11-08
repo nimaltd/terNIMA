@@ -39,6 +39,8 @@
     light: { text: "#5d6b7a", grid: "#d9dfe6", cursor: "#1d2733", shade: "#1d27330f", bg: "#fbfcfd" },
   };
   const FONT_FAMILY = '"Inter Variable", system-ui, sans-serif';
+  /** The table's numbers: --font-mono in app.css. */
+  const MONO_FAMILY = '"JetBrains Mono", ui-monospace, monospace';
   const CHARTS: { chart: Chart; label: string; title: string }[] = [
     { chart: "time", label: "Time", title: "The values over time, with cursors and a trigger" },
     { chart: "xy", label: "XY", title: "One series against the others, such as a sensor's x and y" },
@@ -1096,6 +1098,94 @@
     return hover !== null && times[hover] !== undefined ? `At ${number(times[hover])} s` : "Last";
   });
 
+  type TableRow = (typeof table)[number];
+  type SectionRow = NonNullable<typeof section>["rows"][number];
+  /** A column of a table under the chart: its heading, its tooltip, and each row's text in it. */
+  type TableColumn<Row> = { title: string; tip?: string; cell: (row: Row) => string };
+  /** A part of the line over a table: what it is, in bold, then how much. Help is left out of the picture. */
+  type RangePart = { label?: string; text: string; number?: boolean; help?: boolean };
+
+  /** Each series' stats, in both tables. */
+  const STAT_COLUMNS: TableColumn<{ stats: Stats; decimals: number }>[] = [
+    { title: "Min", cell: (row) => fixed(row.stats?.min, row.decimals) },
+    { title: "Max", cell: (row) => fixed(row.stats?.max, row.decimals) },
+    { title: "Pk-pk", tip: "Max − Min", cell: (row) => (row.stats ? fixed(row.stats.max - row.stats.min, row.decimals) : "") },
+    { title: "Mean", cell: (row) => fixed(row.stats?.mean, row.decimals + 2) },
+    {
+      title: "RMS",
+      tip: "Root mean square: the square root of the squares' mean",
+      cell: (row) => fixed(row.stats?.rms, row.decimals + 2),
+    },
+    { title: "Std dev", cell: (row) => fixed(row.stats?.deviation, row.decimals + 2) },
+  ];
+
+  /** The table's columns after Series, for the chart shown: the same on screen and in the picture. */
+  const tableColumns = $derived.by((): TableColumn<TableRow>[] => {
+    if (kind === "fft") {
+      return [
+        { title: "Peak at", cell: (row) => (row.peak ? hz(row.peak.freq) : "") },
+        { title: "Peak", cell: (row) => level(row.peak?.level) },
+        ...(hoverTitle ? [{ title: hoverTitle, cell: (row: TableRow) => level(row.value) }] : []),
+      ];
+    }
+    if (kind === "histogram") {
+      return [
+        { title: "Count", cell: (row) => row.stats?.count.toLocaleString() ?? "" },
+        ...(hoverTitle ? [{ title: hoverTitle, cell: (row: TableRow) => number(row.value) }] : []),
+        ...STAT_COLUMNS,
+      ];
+    }
+    return [{ title: hoverTitle ?? "", cell: (row) => fixed(row.value, row.decimals) }, ...STAT_COLUMNS];
+  });
+
+  /** The line over the table: the time its stats are of, its points, and what the chart is made of. */
+  const rangeParts = $derived.by((): RangePart[] => {
+    const parts: RangePart[] = stats.both
+      ? [
+          {
+            label: "A to B",
+            text: `${duration(stats.to - stats.from)}${kind === "time" && stats.to > stats.from ? `, ${frequency(stats.to - stats.from)}` : ""}`,
+          },
+        ]
+      : [{ label: kind === "time" ? "In view" : "Over", text: duration(Math.max(0, stats.to - stats.from)) }];
+    parts.push({ text: `${stats.points.toLocaleString()} points`, number: true });
+    if (kind === "fft" && fftInfo.size > 0) {
+      const newest = fftInfo.samples > FFT_MAX ? "the newest " : "";
+      const measured = tab.plotView.fft_rate > 0 ? "" : " (measured)";
+      parts.push({
+        text: `${newest}${Math.min(fftInfo.samples, FFT_MAX).toLocaleString()} at ${hz(fftInfo.rate)}${measured}, ${hz(fftInfo.rate / fftInfo.size)} a bin`,
+      });
+    } else if (kind === "histogram" && bins.edges.length > 1) {
+      parts.push({ text: `${bins.edges.length - 1} bins of ${number(bins.edges[1] - bins.edges[0])}` });
+    }
+    return parts;
+  });
+
+  /** The line over A and B's table: where A is, or the time from A to B. */
+  const sectionParts = $derived.by((): RangePart[] => {
+    if (!section) return [];
+    if (!section.both) {
+      return [
+        { label: "A", text: `at ${number(Number(section.from.toFixed(4)))} s` },
+        { text: "Click again for B: the values between A and B come here.", help: true },
+      ];
+    }
+    const between = section.to - section.from;
+    return [
+      { label: "A → B", text: `${duration(between)}${between > 0 ? `, ${frequency(between)}` : ""}` },
+      { text: `${section.points.toLocaleString()} points`, number: true },
+    ];
+  });
+
+  const atHeading = $derived(section?.both ? "At A → At B (change)" : "At A");
+
+  /** A row's value at A; with B, its value there too and the change: "1.00 → 2.16" and "(+1.16)". */
+  function atAandB(row: SectionRow, both: boolean): { values: string; change: string } {
+    if (!both) return { values: fixed(row.a, row.decimals), change: "" };
+    const change = row.a !== null && row.b !== null ? `(${signed(row.b - row.a, row.decimals)})` : "";
+    return { values: `${fixed(row.a, row.decimals)} → ${fixed(row.b, row.decimals)}`, change };
+  }
+
   function fftAt(index: number): number {
     return spectra.find(Boolean)?.freqs[index] ?? 0;
   }
@@ -1245,7 +1335,47 @@
     root.focus();
   }
 
-  /** Saves the chart as it is on screen, with the names of the series above it. */
+  /** A table under the chart, in the picture: its line, headings and rows, in the words and numbers on screen. */
+  type PictureTable = { parts: RangePart[]; head: string[]; rows: { index: number; isX: boolean; cells: string[] }[] };
+
+  /** The tables under the chart, with the rows of the series it draws: the ones not dimmed on screen. */
+  function pictureTables(): PictureTable[] {
+    const isX = (index: number) => kind === "xy" && index === xIndex();
+    const drawn = (index: number) => (kind === "histogram" ? index === histIndex() : shown(index) || isX(index));
+    const tables: PictureTable[] = [
+      {
+        parts: rangeParts,
+        head: ["Series", ...tableColumns.map((column) => column.title)],
+        rows: table
+          .filter((row) => drawn(row.index))
+          .map((row) => ({
+            index: row.index,
+            isX: isX(row.index),
+            cells: [row.name, ...tableColumns.map((column) => column.cell(row))],
+          })),
+      },
+    ];
+    if (section) {
+      const both = section.both;
+      tables.push({
+        parts: sectionParts.filter((part) => !part.help),
+        head: ["Series", atHeading, ...STAT_COLUMNS.map((column) => column.title)],
+        rows: section.rows
+          .filter((row) => shown(row.index))
+          .map((row) => {
+            const at = atAandB(row, both);
+            const values = at.change ? `${at.values} ${at.change}` : at.values;
+            return { index: row.index, isX: false, cells: [row.name, values, ...STAT_COLUMNS.map((column) => column.cell(row))] };
+          }),
+      });
+    }
+    return tables.filter((one) => one.rows.length > 0);
+  }
+
+  /**
+   * Saves the chart as it is on screen: the names of the series above it, and
+   * the table's numbers under it, A and B's too, for the series it draws.
+   */
   async function exportPng() {
     if (!chart) return;
     const path = await save({
@@ -1258,54 +1388,173 @@
       return;
     }
     const scheme = appScheme();
+    const ink = INK[scheme];
+    const colors = COLORS[scheme];
     const source = chart.ctx.canvas;
     const ratio = window.devicePixelRatio || 1;
     const font = `${12 * ratio}px ${FONT_FAMILY}`;
+    const bold = `600 ${font}`;
+    const mono = `${12 * ratio}px ${MONO_FAMILY}`;
     const pad = 12 * ratio;
     const row = 20 * ratio;
     const swatch = 18 * ratio;
+    // Room on each side of a table's cell, as on screen.
+    const room = 10 * ratio;
     const out = document.createElement("canvas");
     let ctx = out.getContext("2d")!;
-    ctx.font = font;
-    // The legend, in rows as wide as the chart. XY's series are named against x.
+
+    // The tables' columns: as wide as their widest text, and the same in both tables, as on screen.
+    const tables = pictureTables();
+    const widths: number[] = [];
+    const measure = (cells: string[], before: number) =>
+      cells.forEach((text, column) => {
+        widths[column] = Math.max(widths[column] ?? 0, (column === 0 ? before : 0) + ctx.measureText(text).width);
+      });
+    for (const one of tables) {
+      ctx.font = `500 ${font}`;
+      measure(one.head, 0);
+      ctx.font = mono;
+      for (const entry of one.rows) measure(entry.cells, swatch + 6 * ratio);
+    }
+    const needed = widths.reduce((sum, wide) => sum + wide + 2 * room, 0);
+    // As wide as the chart, unless the table needs more. Its columns of numbers share what is left, as on screen.
+    const width = Math.max(source.width, Math.ceil(needed + 2 * (pad - room)));
+    const spare = Math.max(0, width - 2 * (pad - room) - needed) / Math.max(1, widths.length - 1);
+    const columnWidths = widths.map((wide, column) => wide + 2 * room + (column > 0 ? spare : 0));
+
+    /** Where items this wide go, in rows as wide as the picture, and the height they take. */
+    const flow = (sizes: number[], gap: number) => {
+      const places: { x: number; y: number }[] = [];
+      let x = pad;
+      let y = 0;
+      for (const size of sizes) {
+        if (x > pad && x + size > width - pad) {
+          x = pad;
+          y += row;
+        }
+        places.push({ x, y });
+        x += size + gap;
+      }
+      return { places, height: sizes.length > 0 ? y + row : 0 };
+    };
+
+    // The legend, above the chart. XY's series are named against x.
     const against = kind === "xy" ? ` against ${names[xIndex()]}` : "";
     const shownNow = charted()
       .map((index, position) => ({ name: `${names[index]}${against}`, index, position }))
       .filter(({ position }) => chart!.series[position + 1].show);
-    const placed: { name: string; index: number; x: number; y: number }[] = [];
-    let x = pad;
-    let y = pad;
-    for (const item of shownNow) {
-      const width = swatch + 6 * ratio + ctx.measureText(item.name).width;
-      if (x > pad && x + width > source.width - pad) {
-        x = pad;
-        y += row;
-      }
-      placed.push({ ...item, x, y });
-      x += width + 16 * ratio;
-    }
-    const legend = shownNow.length > 0 ? y + row : 0;
-    out.width = source.width;
-    out.height = source.height + legend;
-    ctx = out.getContext("2d")!;
-    ctx.fillStyle = INK[scheme].bg;
-    ctx.fillRect(0, 0, out.width, out.height);
     ctx.font = font;
+    const named = flow(
+      shownNow.map((item) => swatch + 6 * ratio + ctx.measureText(item.name).width),
+      16 * ratio,
+    );
+    const legend = named.height > 0 ? pad + named.height : 0;
+    // Each table's line, with what its stats are of.
+    const captions = tables.map((one) =>
+      flow(
+        one.parts.map((part) => {
+          ctx.font = bold;
+          const label = part.label ? ctx.measureText(`${part.label} `).width : 0;
+          ctx.font = font;
+          return label + ctx.measureText(part.text).width;
+        }),
+        14 * ratio,
+      ),
+    );
+    const under = tables.reduce((sum, one, position) => sum + captions[position].height + row * (1 + one.rows.length), 0);
+
+    out.width = width;
+    out.height = legend + source.height + under + (tables.length > 0 ? pad / 2 : 0);
+    ctx = out.getContext("2d")!;
+    ctx.fillStyle = ink.bg;
+    ctx.fillRect(0, 0, out.width, out.height);
     ctx.textBaseline = "middle";
-    ctx.lineWidth = 2 * ratio;
-    const colors = COLORS[scheme];
-    for (const item of placed) {
-      const middle = item.y + row / 2;
-      ctx.strokeStyle = colors[item.index % colors.length];
-      ctx.setLineDash((DASHES[Math.floor(item.index / colors.length)] ?? []).map((length) => length * ratio));
-      ctx.beginPath();
-      ctx.moveTo(item.x, middle);
-      ctx.lineTo(item.x + swatch, middle);
-      ctx.stroke();
-      ctx.fillStyle = INK[scheme].cursor;
-      ctx.fillText(item.name, item.x + swatch + 6 * ratio, middle);
-    }
+
+    /** A series' line, as in the chart, or x for XY's x. */
+    const mark = (index: number, isX: boolean, x: number, middle: number) => {
+      ctx.save();
+      if (isX) {
+        ctx.font = bold;
+        ctx.fillStyle = ink.text;
+        ctx.textAlign = "center";
+        ctx.fillText("x", x + swatch / 2, middle);
+      } else {
+        ctx.strokeStyle = colors[index % colors.length];
+        ctx.lineWidth = 2 * ratio;
+        ctx.setLineDash((DASHES[Math.floor(index / colors.length)] ?? []).map((length) => length * ratio));
+        ctx.beginPath();
+        ctx.moveTo(x, middle);
+        ctx.lineTo(x + swatch, middle);
+        ctx.stroke();
+      }
+      ctx.restore();
+    };
+
+    ctx.font = font;
+    shownNow.forEach((item, position) => {
+      const { x, y } = named.places[position];
+      const middle = pad + y + row / 2;
+      mark(item.index, false, x, middle);
+      ctx.fillStyle = ink.cursor;
+      ctx.fillText(item.name, x + swatch + 6 * ratio, middle);
+    });
     ctx.drawImage(source, 0, legend);
+
+    /** A table's row: the name on the left, after its series' line, and the numbers on the right of their columns. */
+    const cells = (texts: string[], middle: number, series?: { index: number; isX: boolean }) => {
+      let x = pad - room;
+      texts.forEach((text, column) => {
+        if (column === 0) {
+          let start = x + room;
+          if (series) {
+            mark(series.index, series.isX, start, middle);
+            start += swatch + 6 * ratio;
+          }
+          ctx.textAlign = "left";
+          ctx.fillText(text, start, middle);
+        } else {
+          ctx.textAlign = "right";
+          ctx.fillText(text, x + columnWidths[column] - room, middle);
+        }
+        x += columnWidths[column];
+      });
+    };
+    const rule = (y: number) => {
+      ctx.fillStyle = ink.grid;
+      ctx.fillRect(0, Math.round(y), width, Math.max(1, Math.round(ratio)));
+    };
+    let top = legend + source.height;
+    tables.forEach((one, position) => {
+      // As on screen: a rule between the line and the table, and over A and B's line.
+      if (position > 0) rule(top);
+      one.parts.forEach((part, index) => {
+        const { x, y } = captions[position].places[index];
+        const middle = top + y + row / 2;
+        let at = x;
+        ctx.textAlign = "left";
+        if (part.label) {
+          ctx.font = bold;
+          ctx.fillStyle = ink.cursor;
+          ctx.fillText(part.label, at, middle);
+          at += ctx.measureText(`${part.label} `).width;
+        }
+        ctx.font = font;
+        ctx.fillStyle = ink.text;
+        ctx.fillText(part.text, at, middle);
+      });
+      top += captions[position].height;
+      if (position === 0) rule(top);
+      ctx.font = `500 ${font}`;
+      ctx.fillStyle = ink.text;
+      cells(one.head, top + row / 2);
+      top += row;
+      ctx.font = mono;
+      for (const entry of one.rows) {
+        ctx.fillStyle = ink.cursor;
+        cells(entry.cells, top + row / 2, entry);
+        top += row;
+      }
+    });
     const blob = await new Promise<Blob | null>((done) => out.toBlob(done, "image/png"));
     if (blob) {
       const bytes = new Uint8Array(await blob.arrayBuffer());
@@ -1436,6 +1685,13 @@
       <p><b>Trigger</b> holds the time around the last crossing of the level, the crossing in the middle, as a scope does.</p>
     {/if}
   </div>
+{/snippet}
+
+<!-- The line over a table: what each part is, in bold, then how much. The picture draws the same parts. -->
+{#snippet rangeLine(parts: RangePart[])}
+  {#each parts as part}
+    <span class:number={part.number}>{#if part.label}<b>{part.label}</b>{" "}{/if}{part.text}</span>
+  {/each}
 {/snippet}
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
@@ -1671,23 +1927,7 @@
 
   {#if names.length > 0}
     <div class="range">
-      {#if stats.both}
-        <span>
-          <b>A to B</b>
-          {duration(stats.to - stats.from)}{kind === "time" && stats.to > stats.from ? `, ${frequency(stats.to - stats.from)}` : ""}
-        </span>
-      {:else}
-        <span><b>{kind === "time" ? "In view" : "Over"}</b> {duration(Math.max(0, stats.to - stats.from))}</span>
-      {/if}
-      <span class="number">{stats.points.toLocaleString()} points</span>
-      {#if kind === "fft" && fftInfo.size > 0}
-        <span>
-          {fftInfo.samples > FFT_MAX ? "the newest " : ""}{Math.min(fftInfo.samples, FFT_MAX).toLocaleString()} at
-          {hz(fftInfo.rate)}{tab.plotView.fft_rate > 0 ? "" : " (measured)"}, {hz(fftInfo.rate / fftInfo.size)} a bin
-        </span>
-      {:else if kind === "histogram" && bins.edges.length > 1}
-        <span>{bins.edges.length - 1} bins of {number(bins.edges[1] - bins.edges[0])}</span>
-      {/if}
+      {@render rangeLine(rangeParts)}
       {#if tooMany}
         <span class="warning">Only the first {SERIES_MAX} series are drawn.</span>
       {/if}
@@ -1705,24 +1945,9 @@
         <thead>
           <tr>
             <th class="name">Series</th>
-            {#if kind === "fft"}
-              <th>Peak at</th>
-              <th>Peak</th>
-              {#if hoverTitle}<th>{hoverTitle}</th>{/if}
-            {:else}
-              {#if kind === "histogram"}
-                <th>Count</th>
-                {#if hoverTitle}<th>{hoverTitle}</th>{/if}
-              {:else}
-                <th>{hoverTitle}</th>
-              {/if}
-              <th>Min</th>
-              <th>Max</th>
-              <th title="Max − Min">Pk-pk</th>
-              <th>Mean</th>
-              <th title="Root mean square: the square root of the squares' mean">RMS</th>
-              <th>Std dev</th>
-            {/if}
+            {#each tableColumns as column}
+              <th title={column.tip}>{column.title}</th>
+            {/each}
           </tr>
         </thead>
         <tbody>
@@ -1766,24 +1991,9 @@
                   {/if}
                 </div>
               </td>
-              {#if kind === "fft"}
-                <td>{row.peak ? hz(row.peak.freq) : ""}</td>
-                <td>{level(row.peak?.level)}</td>
-                {#if hoverTitle}<td>{level(row.value)}</td>{/if}
-              {:else}
-                {#if kind === "histogram"}
-                  <td>{row.stats?.count.toLocaleString() ?? ""}</td>
-                  {#if hoverTitle}<td>{number(row.value)}</td>{/if}
-                {:else}
-                  <td>{fixed(row.value, row.decimals)}</td>
-                {/if}
-                <td>{fixed(row.stats?.min, row.decimals)}</td>
-                <td>{fixed(row.stats?.max, row.decimals)}</td>
-                <td>{row.stats ? fixed(row.stats.max - row.stats.min, row.decimals) : ""}</td>
-                <td>{fixed(row.stats?.mean, row.decimals + 2)}</td>
-                <td>{fixed(row.stats?.rms, row.decimals + 2)}</td>
-                <td>{fixed(row.stats?.deviation, row.decimals + 2)}</td>
-              {/if}
+              {#each tableColumns as column}
+                <td>{column.cell(row)}</td>
+              {/each}
             </tr>
           {/each}
         </tbody>
@@ -1792,35 +2002,24 @@
       {#if section}
         <!-- A and B, with all their values: a table of their own under the one of the time shown. -->
         <div class="range section">
-          {#if section.both}
-            <span>
-              <b>A → B</b>
-              {duration(section.to - section.from)}{section.to > section.from ? `, ${frequency(section.to - section.from)}` : ""}
-            </span>
-            <span class="number">{section.points.toLocaleString()} points</span>
-          {:else}
-            <span><b>A</b> at {number(Number(section.from.toFixed(4)))} s</span>
-            <span>Click again for B: the values between A and B come here.</span>
-          {/if}
+          {@render rangeLine(sectionParts)}
         </div>
         <table class="aligned">
           <colgroup><col class="name-col" /><col class="value-col" /><col span="6" /></colgroup>
           <thead>
             <tr>
               <th class="name">Series</th>
-              <th title="The value at A, at B, and the change from A to B">{section.both ? "At A → At B (change)" : "At A"}</th>
-              <th>Min</th>
-              <th>Max</th>
-              <th title="Max − Min">Pk-pk</th>
-              <th>Mean</th>
-              <th title="Root mean square: the square root of the squares' mean">RMS</th>
-              <th>Std dev</th>
+              <th title="The value at A, at B, and the change from A to B">{atHeading}</th>
+              {#each STAT_COLUMNS as column}
+                <th title={column.tip}>{column.title}</th>
+              {/each}
             </tr>
           </thead>
           <tbody>
             {#each section.rows as row (row.name)}
               {@const color = COLORS[appScheme()][row.index % COLORS.light.length]}
               {@const dash = DASHES[Math.floor(row.index / COLORS.light.length)]}
+              {@const at = atAandB(row, section.both)}
               <tr class:off={tab.plotView.hidden.includes(row.name)}>
                 <td class="name">
                   <span class="series">
@@ -1830,18 +2029,10 @@
                     <span class="mono">{row.name}</span>
                   </span>
                 </td>
-                <td>
-                  {fixed(row.a, row.decimals)}{#if section.both}
-                    {" → "}{fixed(row.b, row.decimals)}
-                    {#if row.a !== null && row.b !== null}<span class="change">({signed(row.b - row.a, row.decimals)})</span>{/if}
-                  {/if}
-                </td>
-                <td>{fixed(row.stats?.min, row.decimals)}</td>
-                <td>{fixed(row.stats?.max, row.decimals)}</td>
-                <td>{row.stats ? fixed(row.stats.max - row.stats.min, row.decimals) : ""}</td>
-                <td>{fixed(row.stats?.mean, row.decimals + 2)}</td>
-                <td>{fixed(row.stats?.rms, row.decimals + 2)}</td>
-                <td>{fixed(row.stats?.deviation, row.decimals + 2)}</td>
+                <td>{at.values}{#if at.change} <span class="change">{at.change}</span>{/if}</td>
+                {#each STAT_COLUMNS as column}
+                  <td>{column.cell(row)}</td>
+                {/each}
               </tr>
             {/each}
           </tbody>

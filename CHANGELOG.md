@@ -5,6 +5,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- PNG... in the Plot view saves the table under the chart too, with its
+  numbers as they are on screen, and A and B's table when they are placed.
+  Only the series the chart draws are in it.
+
 ## [1.4.0] - 2026-11-01
 
 ### Added

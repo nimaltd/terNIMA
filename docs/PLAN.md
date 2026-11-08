@@ -311,7 +311,7 @@ Draws numbers from the data as live charts, like an oscilloscope.
   value between them
 - Trigger like a scope: wait for a rising or falling edge through a level, then hold
 - Per series: color, scale, offset, hide; min, max and average
-- Export the data as CSV and the chart as PNG
+- Export the data as CSV and the chart as PNG, with the table of numbers under it
 
 ---
 
