@@ -5,6 +5,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-09
+
 ### Added
 
 - A menu text size, apart from the text size: the menus, tabs, buttons and
@@ -458,7 +460,8 @@ yet; the README says how to open them.
   at all for 2 s, as when flow control holds it, drops the rest and stays
   open.
 
-[Unreleased]: https://github.com/nimaltd/ternima/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/nimaltd/ternima/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/nimaltd/ternima/releases/tag/v1.5.0
 [1.4.0]: https://github.com/nimaltd/ternima/releases/tag/v1.4.0
 [1.3.0]: https://github.com/nimaltd/ternima/releases/tag/v1.3.0
 [1.2.0]: https://github.com/nimaltd/ternima/releases/tag/v1.2.0
