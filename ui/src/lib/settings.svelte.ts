@@ -79,6 +79,9 @@ export type Highlight = {
 /** The same fields as `Settings` in ternima-core's settings.rs. */
 export type Settings = {
   theme: ThemeChoice;
+  /** The text size of the menus, tabs, buttons and dialogs, which grow with it. */
+  menu_font_size: number;
+  /** The text size of the terminals. */
   font_size: number;
   /** Shows a line under each terminal to type a whole command and send it at once. */
   send_box: boolean;
@@ -100,9 +103,25 @@ export const FONT_SIZE_MIN = 8;
 export const FONT_SIZE_MAX = 32;
 export const FONT_SIZE_DEFAULT = 14;
 
+/** Menu text size limits, the same as in settings.rs. */
+export const MENU_FONT_SIZE_MIN = 10;
+export const MENU_FONT_SIZE_MAX = 26;
+export const MENU_FONT_SIZE_DEFAULT = 16;
+/** The menu text size app.css and the components are written for; above it, the Rust side zooms the window. */
+const MENU_FONT_SIZE_DRAWN = 13;
+
+/**
+ * The CSS size that shows as `size` pixels on screen. The window is zoomed to make the menus' text its size, so the
+ * terminals' text is made smaller by as much, and stays at the text size.
+ */
+export function unzoomed(size: number): number {
+  return (size * MENU_FONT_SIZE_DRAWN) / settings.menu_font_size;
+}
+
 /** The settings in use. Read them anywhere; change them only with `updateSettings`. */
 export const settings: Settings = $state({
   theme: "system",
+  menu_font_size: MENU_FONT_SIZE_DEFAULT,
   font_size: FONT_SIZE_DEFAULT,
   send_box: true,
   decode_addresses: true,

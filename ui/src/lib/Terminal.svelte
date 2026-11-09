@@ -10,7 +10,7 @@
   import { WebLinksAddon } from "@xterm/addon-web-links";
   import { WebglAddon } from "@xterm/addon-webgl";
   import { echoed } from "./echo";
-  import { settings } from "./settings.svelte";
+  import { settings, unzoomed } from "./settings.svelte";
   import { isMac } from "./shortcuts";
   import type { Tab } from "./tabs.svelte";
   import { clearActiveTerminal, setActiveTerminal, type TerminalActions } from "./terminal-actions";
@@ -48,7 +48,7 @@
 
   const term = new Terminal({
     fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-    fontSize: settings.font_size,
+    fontSize: unzoomed(settings.font_size),
     cursorBlink: true,
     scrollback: 10_000,
     // The unicode11 addon uses xterm.js's proposed API.
@@ -330,7 +330,7 @@
     }
   });
   $effect(() => {
-    term.options.fontSize = settings.font_size;
+    term.options.fontSize = unzoomed(settings.font_size);
     if (opened) {
       fit.fit();
     }
@@ -356,8 +356,8 @@
       // xterm.js measures the font when it opens, so the font has to be loaded first.
       try {
         await Promise.all([
-          document.fonts.load(`${settings.font_size}px "JetBrains Mono"`),
-          document.fonts.load(`bold ${settings.font_size}px "JetBrains Mono"`),
+          document.fonts.load(`${unzoomed(settings.font_size)}px "JetBrains Mono"`),
+          document.fonts.load(`bold ${unzoomed(settings.font_size)}px "JetBrains Mono"`),
         ]);
       } catch {
         // The fallback monospace font still works.

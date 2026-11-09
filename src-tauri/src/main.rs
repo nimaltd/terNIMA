@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, PoisonError};
 
 use serde::Serialize;
-use tauri::{Manager, RunEvent, State, WindowEvent};
+use tauri::{Manager, RunEvent, State, WebviewWindow, WindowEvent};
 use ternima_core::settings::Settings;
 use ternima_core::workspace::Workspace;
 
@@ -68,11 +68,18 @@ fn get_settings(file: State<Saved<Settings>>) -> Settings {
 
 /// Saves new settings at once, and returns them as kept, with every value in range.
 #[tauri::command]
-fn set_settings(settings: Settings, file: State<Saved<Settings>>) -> Result<Settings, String> {
+fn set_settings(
+    settings: Settings,
+    file: State<Saved<Settings>>,
+    main: WebviewWindow,
+) -> Result<Settings, String> {
     let settings = settings.checked();
     settings
         .save(&file.path)
         .map_err(|error| file.save_problem(error))?;
+    if settings.menu_font_size != file.get().menu_font_size {
+        window::set_menu_font_size(&main, settings.menu_font_size);
+    }
     file.set(settings.clone());
     Ok(settings)
 }
@@ -110,6 +117,7 @@ fn main() {
             let workspace = dir.join("workspace.toml");
             let settings_now = Settings::load(&settings);
             let restore_window = settings_now.startup.restore_window;
+            let menu_font_size = settings_now.menu_font_size;
             app.manage(Saved {
                 current: Mutex::new(settings_now),
                 path: settings,
@@ -124,6 +132,8 @@ fn main() {
             app.manage(sessions::Sessions::default());
             app.manage(window::Unsaved::default());
             if let Some(main) = app.get_webview_window("main") {
+                // Before the window shows, so it never changes size in sight.
+                window::set_menu_font_size(&main, menu_font_size);
                 window::restore(&main, window_before);
             }
             window::keep_saving(app.handle().clone());

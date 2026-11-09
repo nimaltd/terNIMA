@@ -15,6 +15,14 @@ pub const FONT_SIZE_MAX: u8 = 32;
 /// Terminal text size for a new install, in pixels.
 pub const FONT_SIZE_DEFAULT: u8 = 14;
 
+/// Smallest text size of the menus, tabs, buttons and dialogs, in pixels.
+pub const MENU_FONT_SIZE_MIN: u8 = 10;
+/// Largest text size of the menus, tabs, buttons and dialogs, in pixels.
+pub const MENU_FONT_SIZE_MAX: u8 = 26;
+/// Text size of the menus, tabs, buttons and dialogs for a new install, in
+/// pixels: a quarter bigger than the 13 they were before.
+pub const MENU_FONT_SIZE_DEFAULT: u8 = 16;
+
 /// Written at the top of the file, so someone who opens it knows what it is.
 const HEADER: &str = "# ternima settings. Edit them while ternima is closed.\n\n";
 
@@ -187,6 +195,9 @@ pub struct Highlight {
 #[serde(default)]
 pub struct Settings {
     pub theme: Theme,
+    /// The text size of the menus, tabs, buttons and dialogs, which grow with it.
+    pub menu_font_size: u8,
+    /// The text size of the terminals.
     pub font_size: u8,
     /// Shows a line under each terminal to type a whole command and send it at once.
     pub send_box: bool,
@@ -211,6 +222,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: Theme::System,
+            menu_font_size: MENU_FONT_SIZE_DEFAULT,
             font_size: FONT_SIZE_DEFAULT,
             send_box: true,
             decode_addresses: true,
@@ -238,6 +250,9 @@ impl Settings {
 
     /// The same settings with every value moved into its allowed range.
     pub fn checked(mut self) -> Self {
+        self.menu_font_size = self
+            .menu_font_size
+            .clamp(MENU_FONT_SIZE_MIN, MENU_FONT_SIZE_MAX);
         self.font_size = self.font_size.clamp(FONT_SIZE_MIN, FONT_SIZE_MAX);
         self
     }
@@ -265,6 +280,7 @@ mod tests {
         let path = dir.file("nested/folder/settings.toml");
         let settings = Settings {
             theme: Theme::Light,
+            menu_font_size: 20,
             font_size: 18,
             send_box: false,
             decode_addresses: false,
@@ -358,6 +374,7 @@ mod tests {
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.starts_with("# ternima settings"));
         assert!(text.contains("theme = \"system\""));
+        assert!(text.contains("menu_font_size = 16"));
         assert!(text.contains("font_size = 14"));
     }
 
@@ -368,6 +385,7 @@ mod tests {
         fs::write(&path, "theme = \"dark\"\n").unwrap();
         let settings = Settings::load(&path);
         assert_eq!(settings.theme, Theme::Dark);
+        assert_eq!(settings.menu_font_size, MENU_FONT_SIZE_DEFAULT);
         assert_eq!(settings.font_size, FONT_SIZE_DEFAULT);
         // From before the mouse and the updates had settings: on, as for a new install.
         assert!(settings.mouse.select_copies && settings.mouse.right_click_pastes);
@@ -405,5 +423,19 @@ mod tests {
         };
         assert_eq!(small.checked().font_size, FONT_SIZE_MIN);
         assert_eq!(large.checked().font_size, FONT_SIZE_MAX);
+    }
+
+    #[test]
+    fn menu_font_size_is_kept_in_range() {
+        let small = Settings {
+            menu_font_size: 2,
+            ..Settings::default()
+        };
+        let large = Settings {
+            menu_font_size: 200,
+            ..Settings::default()
+        };
+        assert_eq!(small.checked().menu_font_size, MENU_FONT_SIZE_MIN);
+        assert_eq!(large.checked().menu_font_size, MENU_FONT_SIZE_MAX);
     }
 }

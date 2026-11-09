@@ -5,6 +5,8 @@
   import {
     FONT_SIZE_MAX,
     FONT_SIZE_MIN,
+    MENU_FONT_SIZE_MAX,
+    MENU_FONT_SIZE_MIN,
     defaultLogFolder,
     settings,
     updateSettings,
@@ -19,6 +21,7 @@
 
   // A copy of the settings: nothing changes until Save.
   let theme: ThemeChoice = $state(settings.theme);
+  let menuFontSize = $state(settings.menu_font_size);
   let fontSize = $state(settings.font_size);
   let decodeAddresses = $state(settings.decode_addresses);
   let startup: StartupSettings = $state({ ...settings.startup });
@@ -45,12 +48,17 @@
   }
 
   function submit() {
+    if (!Number.isInteger(menuFontSize) || menuFontSize < MENU_FONT_SIZE_MIN || menuFontSize > MENU_FONT_SIZE_MAX) {
+      error = `The menu text size must be a whole number from ${MENU_FONT_SIZE_MIN} to ${MENU_FONT_SIZE_MAX}.`;
+      return;
+    }
     if (!Number.isInteger(fontSize) || fontSize < FONT_SIZE_MIN || fontSize > FONT_SIZE_MAX) {
       error = `The text size must be a whole number from ${FONT_SIZE_MIN} to ${FONT_SIZE_MAX}.`;
       return;
     }
     updateSettings({
       theme,
+      menu_font_size: menuFontSize,
       font_size: fontSize,
       decode_addresses: decodeAddresses,
       startup: { ...startup },
@@ -74,10 +82,24 @@
       </select>
     </label>
     <label class="dlg-label">
+      Menu text size
+      <input
+        class="field mono"
+        type="number"
+        min={MENU_FONT_SIZE_MIN}
+        max={MENU_FONT_SIZE_MAX}
+        bind:value={menuFontSize}
+      />
+    </label>
+    <label class="dlg-label">
       Text size
       <input class="field mono" type="number" min={FONT_SIZE_MIN} max={FONT_SIZE_MAX} bind:value={fontSize} />
     </label>
   </div>
+  <p class="dlg-hint">
+    The menu text size is for the menus, tabs, buttons and dialogs, which grow with it. The text size is for the
+    terminals.
+  </p>
 
   <h2 class="dlg-section">Mouse</h2>
   <p class="dlg-hint">

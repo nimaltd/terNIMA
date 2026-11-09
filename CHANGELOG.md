@@ -5,8 +5,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- A menu text size, apart from the text size: the menus, tabs, buttons and
+  dialogs grow with it, and the terminals' text stays at the text size. It is
+  in Settings and in the View menu (Bigger menu text, Smaller menu text,
+  Normal menu text size), from 10 to 26 pixels. It is the same in terNIMA,
+  bleNIMA and libNIMA.
+
 ### Changed
 
+- The menus, tabs, buttons and dialogs are a quarter bigger than before: the
+  menu text size starts at 16 pixels, where it was 13. Set it to 13 in
+  Settings to have the old size.
 - PNG... in the Plot view saves the table under the chart too, with its
   numbers as they are on screen, and A and B's table when they are placed.
   Only the series the chart draws are in it.
