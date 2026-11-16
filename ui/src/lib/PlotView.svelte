@@ -1253,6 +1253,25 @@
     if (tab.plotView.chart !== "time") redrawNow();
   }
 
+  /** Whether the Series menu, which shows and hides series as the table's check boxes do, is open. */
+  let seriesOpen = $state(false);
+  /** How many of the series there are now are hidden. */
+  const hiddenCount = $derived(names.filter((name) => tab.plotView.hidden.includes(name)).length);
+
+  /** Shows every series, or none: the Series menu's All and None. On the XY chart, x stays. */
+  function showAll(show: boolean) {
+    const hidden = show ? [] : names.filter((_, index) => kind !== "xy" || index !== xIndex());
+    setPlotView({ hidden });
+    charted().forEach((index, position) => chart?.setSeries(position + 1, { show: !hidden.includes(names[index]) }));
+    if (tab.plotView.chart !== "time") redrawNow();
+  }
+
+  function onWindowMouseDown(event: MouseEvent) {
+    if (seriesOpen && !(event.target as Element).closest(".series-menu")) {
+      seriesOpen = false;
+    }
+  }
+
   /** Puts a series on the right axis, with a scale of its own, or back on the left one. */
   function toggleRight(name: string) {
     const right = tab.plotView.right.includes(name)
@@ -1694,6 +1713,15 @@
   {/each}
 {/snippet}
 
+<svelte:window
+  onmousedown={onWindowMouseDown}
+  onkeydown={(event) => {
+    if (seriesOpen && event.key === "Escape") {
+      seriesOpen = false;
+    }
+  }}
+/>
+
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <div class="plotview" tabindex="0" role="region" aria-label="Plot" bind:this={root} {onkeydown}>
   <div class="bar">
@@ -1725,6 +1753,58 @@
         bind:this={regexInput}
         oninput={onRegexInput}
       />
+    {/if}
+
+    <!-- Which series are drawn, as the Zephyr view's Modules picks modules. The histogram counts one series, which
+         its own Series list picks. -->
+    {#if kind !== "histogram"}
+      <div class="series-menu">
+        <button
+          class="btn small"
+          disabled={names.length === 0}
+          aria-haspopup="menu"
+          aria-expanded={seriesOpen}
+          title="Which series the chart shows"
+          onclick={() => (seriesOpen = !seriesOpen)}
+        >
+          Series
+          {#if hiddenCount > 0}
+            <span class="count">{names.length - hiddenCount} of {names.length}</span>
+          {/if}
+          ▾
+        </button>
+        {#if seriesOpen && names.length > 0}
+          <div class="popover" role="menu">
+            <div class="popover-head">
+              <button class="link" onclick={() => showAll(true)}>All</button>
+              <button class="link" onclick={() => showAll(false)}>None</button>
+            </div>
+            {#each names as name, index (name)}
+              {@const isX = kind === "xy" && index === xIndex()}
+              <label class="choice" title={isX ? "Along x on this chart, so always used" : undefined}>
+                <input
+                  type="checkbox"
+                  checked={isX || !tab.plotView.hidden.includes(name)}
+                  disabled={isX}
+                  onchange={() => toggleSeries(name, index)}
+                />
+                <svg width="18" height="8" aria-hidden="true">
+                  <line
+                    x1="0"
+                    y1="4"
+                    x2="18"
+                    y2="4"
+                    stroke={COLORS[appScheme()][index % COLORS.light.length]}
+                    stroke-width="2"
+                    stroke-dasharray={DASHES[Math.floor(index / COLORS.light.length)]?.join(" ")}
+                  />
+                </svg>
+                <span class="name mono">{name}</span>
+              </label>
+            {/each}
+          </div>
+        {/if}
+      </div>
     {/if}
 
     <div class="kinds" role="group" aria-label="Chart">
@@ -2152,6 +2232,65 @@
     height: 24px;
     padding: 0 8px;
     font-size: 12px;
+  }
+
+  /* The Series menu: the same look as the Zephyr view's Modules. */
+  .series-menu {
+    position: relative;
+  }
+
+  .series-menu .count {
+    font-weight: 400;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .popover {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 10;
+    min-width: 220px;
+    max-height: 320px;
+    padding: 4px;
+    overflow-y: auto;
+    background: var(--menu-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+  }
+
+  .popover-head {
+    display: flex;
+    gap: 12px;
+    padding: 4px 8px 6px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .link {
+    padding: 0;
+    font: inherit;
+    color: var(--accent);
+    background: none;
+    border: 0;
+    cursor: default;
+  }
+
+  .choice {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 4px 8px;
+    color: var(--text);
+    border-radius: 5px;
+  }
+
+  .choice:hover {
+    background: var(--hover);
+  }
+
+  .choice .name {
+    flex: 1;
   }
 
   .follow {

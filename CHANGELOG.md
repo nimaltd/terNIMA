@@ -18,6 +18,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Scroll lock keeps the list where it is while lines keep coming, at the
   bottom too. The Scroll Lock key works there too, and Latest or sending a
   line turns it off, as in the terminal.
+- A Series list in the Plot view, as the Zephyr view's Modules: a check box
+  for each series, all on at first, with All and None. It shows and hides
+  them as the check boxes in the table under the chart do.
 
 ### Changed
 
