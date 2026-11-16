@@ -50,8 +50,12 @@ enum Command {
 /// How often things happen. Tests make the times shorter.
 #[derive(Clone, Copy)]
 struct Timing {
-    /// Between two tries to attach, or to find the control block.
+    /// Between two tries to attach, and the longest between two tries to find the control block.
     retry: Duration,
+    /// The first wait before the control block is looked for again. Each wait
+    /// after it is twice as long, up to `retry`: firmware that is starting, as
+    /// after a reset, sets it up within moments.
+    search: Duration,
     /// The longest received bytes wait before they are passed on.
     batch: Duration,
     /// The pause between reads when nothing came.
@@ -64,6 +68,7 @@ struct Timing {
 
 const TIMING: Timing = Timing {
     retry: Duration::from_secs(1),
+    search: Duration::from_millis(25),
     batch: Duration::from_millis(16),
     idle: Duration::from_millis(2),
     check: Duration::from_secs(1),
@@ -225,8 +230,11 @@ impl Worker {
         if self.config.watch_only {
             return self.serve_watch(link.as_mut());
         }
+        // How long to wait before looking for the control block again. While
+        // the waits are short, only where it was last is looked at.
+        let mut again = self.timing.search;
         loop {
-            let attached = match link.find(&self.config) {
+            let attached = match link.find(&self.config, again < self.timing.retry) {
                 Ok(attached) => attached,
                 Err(LinkProblem::Lost(problem)) => {
                     self.set_state(RttState::Waiting {
@@ -238,19 +246,22 @@ impl Worker {
                     self.set_state(RttState::Waiting {
                         problem: Some(problem),
                     });
-                    match self.wait_watching(link.as_mut(), self.timing.retry) {
+                    match self.wait_watching(link.as_mut(), again) {
                         Waited::Stop => return Ended::Closed,
                         Waited::Reopen => return Ended::Reopen,
                         Waited::Reset => {
                             if link.reset().is_err() {
                                 return Ended::Lost;
                             }
+                            again = self.timing.search;
                         }
-                        Waited::Go => {}
+                        Waited::Go => again = (again * 2).min(self.timing.retry),
                     }
                     continue;
                 }
             };
+            // When it goes, as after a reset, it is looked for soon again.
+            again = self.timing.search;
 
             self.emit(Event::Channels {
                 up: attached.up,
@@ -490,6 +501,7 @@ mod tests {
 
     const FAST: Timing = Timing {
         retry: Duration::from_millis(20),
+        search: Duration::from_millis(5),
         batch: Duration::from_millis(5),
         idle: Duration::from_millis(1),
         check: Duration::from_millis(20),
@@ -510,6 +522,8 @@ mod tests {
         /// RAM from 0x2000_0000, for the watched variables.
         ram: Vec<u8>,
         memory_reads: usize,
+        /// Whether each look for the control block was a quick one.
+        finds: Vec<bool>,
     }
 
     #[derive(Default)]
@@ -549,11 +563,13 @@ mod tests {
     }
 
     impl RttLink for FakeLink {
-        fn find(&mut self, _config: &RttConfig) -> Result<Attached, LinkProblem> {
-            let address = self
-                .chip()?
+        fn find(&mut self, _config: &RttConfig, quick: bool) -> Result<Attached, LinkProblem> {
+            let mut chip = self.chip()?;
+            chip.finds.push(quick);
+            let address = chip
                 .control_block
                 .ok_or_else(|| LinkProblem::NoControlBlock("no control block".into()))?;
+            drop(chip);
             self.found = Some(address);
             let terminal = ChannelInfo {
                 number: 0,
@@ -617,6 +633,14 @@ mod tests {
     }
 
     fn start(chip: &Arc<Mutex<Chip>>, config: RttConfig) -> (Session, Receiver<Event>) {
+        start_timed(chip, config, FAST)
+    }
+
+    fn start_timed(
+        chip: &Arc<Mutex<Chip>>,
+        config: RttConfig,
+        timing: Timing,
+    ) -> (Session, Receiver<Event>) {
         let (sender, events) = mpsc::channel();
         let session = Session::start_with(
             Arc::new(FakeBackend(chip.clone())),
@@ -624,7 +648,7 @@ mod tests {
             Box::new(move |event| {
                 let _ = sender.send(event);
             }),
-            FAST,
+            timing,
         );
         (session, events)
     }
@@ -773,6 +797,50 @@ mod tests {
         assert!(problem.is_some_and(|text| text.contains("again")));
         connected(&events);
         assert_eq!(chip.lock().unwrap().resets, 1);
+    }
+
+    #[test]
+    fn after_a_reset_the_control_block_is_found_again_at_once() {
+        // Waits of up to 10 s, so only the short first ones can find it in time.
+        let timing = Timing {
+            retry: Duration::from_secs(10),
+            ..FAST
+        };
+        let chip = plugged_chip(Some(0x2000_0400));
+        let (session, events) = start_timed(&chip, config(), timing);
+        connected(&events);
+
+        // The firmware sets RTT up again a moment after the reset.
+        chip.lock().unwrap().control_block = None;
+        session.reset();
+        waiting(&events);
+        thread::sleep(Duration::from_millis(50));
+        chip.lock().unwrap().control_block = Some(0x2000_0400);
+        let back = Instant::now();
+        connected(&events);
+        assert!(
+            back.elapsed() < Duration::from_secs(1),
+            "found again after {:?}",
+            back.elapsed()
+        );
+    }
+
+    #[test]
+    fn after_a_reset_it_is_looked_for_where_it_was_before_all_of_ram() {
+        let chip = plugged_chip(Some(0x2000_0400));
+        let (session, events) = start(&chip, config());
+        connected(&events);
+        chip.lock().unwrap().finds.clear();
+
+        chip.lock().unwrap().control_block = None;
+        session.reset();
+        waiting(&events);
+        thread::sleep(Duration::from_millis(200));
+        let finds = chip.lock().unwrap().finds.clone();
+        // Quick looks while the waits are short, then whole searches.
+        assert_eq!(finds.first(), Some(&true), "{finds:?}");
+        assert_eq!(finds.last(), Some(&false), "{finds:?}");
+        assert!(finds.windows(2).all(|two| two[0] >= two[1]), "{finds:?}");
     }
 
     #[test]

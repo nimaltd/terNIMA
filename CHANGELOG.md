@@ -5,6 +5,28 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- RTT without an ELF file connects much sooner. RAM is read a block at a
+  time from its start, and the search stops at the first control block, as
+  most firmware has it near the start of RAM. probe-rs's own search read all
+  of RAM before anything was shown: an nRF54L15, with 256 KiB of RAM, took 10
+  to 20 seconds through a J-Link, which probe-rs runs at 400 kHz unless a
+  speed is chosen. On an STM32H503 through an ST-LINK V3 at 200 kHz, a
+  control block at 0x20000c00 is found and its first text shown in 0.27 s,
+  where the old search alone took 1.05 s; at 8 MHz, in 0.1 s.
+- RTT looks for its control block again within moments after a reset, or
+  while the firmware starts: first after 25 ms, then twice as long each time,
+  up to once a second as before. While the waits are short, it looks only
+  where the control block was, so a reset does not wait for a search of all
+  of RAM.
+
+### Fixed
+
+- An RTT tab set to connect under reset left the chip stopped at its first
+  instruction, so the firmware never started and RTT was never found, until
+  Reset target. The firmware now runs once the probe has attached.
+
 ## [1.5.0] - 2026-11-09
 
 ### Added

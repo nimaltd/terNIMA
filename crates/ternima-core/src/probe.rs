@@ -55,9 +55,10 @@ pub fn list_probes() -> Vec<ProbeInfo> {
         .collect()
 }
 
-/// Opens the probe and attaches to the chip, without halting it. Gives
-/// `Err(None)` when the probe is not plugged in, and the reason when it is
-/// but did not work.
+/// Opens the probe and attaches to the chip, without halting it. Under reset,
+/// probe-rs stops the core at its first instruction instead, until something
+/// lets it run. Gives `Err(None)` when the probe is not plugged in, and the
+/// reason when it is but did not work.
 pub fn attach(target: &Target) -> Result<Session, Option<String>> {
     let probe = find_and_open(target.probe, target.speed_khz)?;
     let chip = target.chip.trim();
