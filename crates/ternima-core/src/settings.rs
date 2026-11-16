@@ -19,9 +19,10 @@ pub const FONT_SIZE_DEFAULT: u8 = 14;
 pub const MENU_FONT_SIZE_MIN: u8 = 10;
 /// Largest text size of the menus, tabs, buttons and dialogs, in pixels.
 pub const MENU_FONT_SIZE_MAX: u8 = 26;
-/// Text size of the menus, tabs, buttons and dialogs for a new install, in
-/// pixels: a quarter bigger than the 13 they were before.
-pub const MENU_FONT_SIZE_DEFAULT: u8 = 16;
+/// Text size of the menus, tabs, buttons and dialogs for a new install, and
+/// what Normal menu text size gives, in pixels: the size the styles are drawn
+/// for, so nothing is zoomed. 1.5.0 started at 16.
+pub const MENU_FONT_SIZE_DEFAULT: u8 = 13;
 
 /// Written at the top of the file, so someone who opens it knows what it is.
 const HEADER: &str = "# ternima settings. Edit them while ternima is closed.\n\n";
@@ -374,7 +375,7 @@ mod tests {
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.starts_with("# ternima settings"));
         assert!(text.contains("theme = \"system\""));
-        assert!(text.contains("menu_font_size = 16"));
+        assert!(text.contains("menu_font_size = 13"));
         assert!(text.contains("font_size = 14"));
     }
 

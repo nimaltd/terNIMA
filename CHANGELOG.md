@@ -30,6 +30,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - In the Zephyr view, a module's name has the color of its line's level: red
   for errors, yellow for warnings, green for information and grey for debug.
   Each module had a color of its own.
+- The menu text size starts at 13 pixels again, as before 1.5.0, where
+  nothing is zoomed, and View > Normal menu text size goes to 13. A size
+  chosen in Settings stays as it is.
 - RTT without an ELF file connects much sooner. RAM is read a block at a
   time from its start, and the search stops at the first control block, as
   most firmware has it near the start of RAM. probe-rs's own search read all
