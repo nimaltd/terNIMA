@@ -5,8 +5,25 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- The Zephyr view names its columns in a row over the list: Time, Level,
+  Module and Message.
+- Its columns can be made wider or narrower: drag the edge between two names,
+  so a long module name shows in full. A double-click on an edge makes the
+  column just wide enough for its longest text. Each tab keeps its widths.
+- Clear and Scroll lock for the Zephyr view, in the toolbar where the
+  terminal and the hex view have them. Clear forgets the lines kept, as
+  Ctrl+Shift+K there already did, so the plot of the lines starts again too.
+  Scroll lock keeps the list where it is while lines keep coming, at the
+  bottom too. The Scroll Lock key works there too, and Latest or sending a
+  line turns it off, as in the terminal.
+
 ### Changed
 
+- In the Zephyr view, a module's name has the color of its line's level: red
+  for errors, yellow for warnings, green for information and grey for debug.
+  Each module had a color of its own.
 - RTT without an ELF file connects much sooner. RAM is read a block at a
   time from its start, and the search stops at the first control block, as
   most firmware has it near the start of RAM. probe-rs's own search read all

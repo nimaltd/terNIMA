@@ -75,12 +75,19 @@ export type LogLine = {
   message: string;
 };
 
-/** What the Lines view leaves out. */
+/** What the Lines view leaves out, and how wide its columns are. */
 export type LinesView = {
   hidden_levels: Level[];
   hidden_modules: string[];
   /** Shows the lines that are not log lines, such as the shell's. */
   others: boolean;
+  /**
+   * The widths of the time, level and module columns in CSS pixels, once their edges are dragged; until then each
+   * column has its own width. Whole numbers only: workspace.rs keeps them as integers.
+   */
+  time_width?: number | null;
+  level_width?: number | null;
+  module_width?: number | null;
 };
 
 export const DEFAULT_LINES_VIEW: LinesView = { hidden_levels: [], hidden_modules: [], others: true };

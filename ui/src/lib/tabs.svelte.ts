@@ -687,17 +687,21 @@ export class Tab {
   }
 
   /**
-   * Scroll lock: the terminal and the hex view keep the screen where it is
-   * while lines keep coming below, to be scrolled down to; off, they follow
-   * the newest line again. Their terminals do it, as the tab says.
+   * Scroll lock: the terminal, the hex view and the Zephyr view keep the
+   * screen where it is while lines keep coming below, to be scrolled down to;
+   * off, they follow the newest line again. Each view does it, as the tab says.
    */
   setScrollLock(on: boolean): void {
     this.scrollLock = on;
   }
 
-  /** Clears the terminal, or the hex view while it is shown. */
+  /** Clears the terminal, the hex view or the Zephyr view, whichever is shown. */
   clearScreen(): void {
-    (this.view === "hex" ? this.hexTerm : this.term)?.clear();
+    if (this.view === "lines") {
+      this.clearLines();
+    } else {
+      (this.view === "hex" ? this.hexTerm : this.term)?.clear();
+    }
   }
 
   /** Connects, or starts waiting for the device. */

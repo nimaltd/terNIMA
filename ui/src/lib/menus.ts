@@ -231,7 +231,10 @@ export function buildMenus(app: AppActions): Menu[] {
           label: "Scroll lock",
           // Macs have no Scroll Lock key.
           shortcut: isMac ? undefined : "ScrollLock",
-          enabled: () => activeTab()?.view === "terminal" || activeTab()?.view === "hex",
+          enabled: () => {
+            const view = activeTab()?.view;
+            return view === "terminal" || view === "hex" || view === "lines";
+          },
           checked: () => activeTab()?.scrollLock ?? false,
           run: () => {
             const tab = activeTab();

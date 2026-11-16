@@ -3,9 +3,8 @@
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { settings, type Highlight, type HighlightColor } from "./settings.svelte";
   import type { Level } from "./serial";
-  import type { StoredLine, Tab } from "./tabs.svelte";
+  import { changed, type StoredLine, type Tab } from "./tabs.svelte";
   import { clearActiveTerminal, setActiveTerminal, type TerminalActions } from "./terminal-actions";
-  import { appScheme } from "./theme.svelte";
 
   let {
     tab,
@@ -29,7 +28,23 @@
     { level: "other", label: "Other", title: "Lines that are not log lines, such as the shell's" },
   ];
 
+  /** A column that can be made wider or narrower, by the field of `tab.linesView` that keeps its width. */
+  type Column = "time_width" | "level_width" | "module_width";
+  /** The columns with an edge to drag, left to right; the message takes the room they leave. */
+  const COLUMNS: { key: Column; label: string; cell: string; title: string }[] = [
+    { key: "time_width", label: "Time", cell: "time mono", title: "When the device logged the line, as its log has it" },
+    { key: "level_width", label: "Level", cell: "level", title: "How serious the line is: error, warning, information or debug" },
+    { key: "module_width", label: "Module", cell: "mod mono", title: "The part of the firmware that logged the line" },
+  ];
+  /** The narrowest a column can be made, the same as `min-width` below, in CSS pixels. */
+  const COLUMN_MIN = 20;
+  /** The room a column being widened leaves the message, in CSS pixels. */
+  const MESSAGE_MIN = 100;
+
   let list: HTMLDivElement;
+  let messageHead: HTMLSpanElement;
+  /** The column whose edge is being dragged: its width and the pointer's x when the drag started, and the widest it can go. */
+  let resizing: { column: Column; x: number; width: number; most: number } | null = $state(null);
   let searchInput: HTMLInputElement;
   let scrollTop = $state(0);
   let height = $state(0);
@@ -106,6 +121,12 @@
       positions = [];
       scanned = 0;
       firstLine = first;
+      if (lines.length === 0) {
+        // Cleared, by Clear or Ctrl+Shift+K: nothing is selected, and the newest lines are shown as they come, unless
+        // Scroll lock keeps the list where it is.
+        anchor = focus = null;
+        follow = !tab.scrollLock;
+      }
     }
     for (let at = scanned; at < lines.length; at++) {
       if (passes(lines[at])) {
@@ -137,6 +158,20 @@
     void tab.linesVersion;
     untrack(() => refilter(onlyBookmarks));
   });
+  // Scroll lock keeps the list where it is while lines come, at the bottom too; turned off, the list goes to the
+  // newest line and follows it again, as the terminal does. After the effects above, so the list opens at its newest
+  // lines either way.
+  $effect(() => {
+    const locked = tab.scrollLock;
+    untrack(() => {
+      if (locked) {
+        follow = false;
+      } else if (!follow) {
+        follow = true;
+        list.scrollTop = list.scrollHeight;
+      }
+    });
+  });
 
   /** The rows on screen, and a few more either side. */
   const rows = $derived.by(() => {
@@ -160,7 +195,7 @@
 
   function onscroll() {
     scrollTop = list.scrollTop;
-    follow = list.scrollTop + list.clientHeight >= list.scrollHeight - ROW;
+    follow = !tab.scrollLock && list.scrollTop + list.clientHeight >= list.scrollHeight - ROW;
   }
 
   /** The line's text in pieces, with the search's matches marked. */
@@ -183,14 +218,6 @@
 
   function ruleColor(line: StoredLine): HighlightColor | null {
     return rules.find(({ pattern }) => matches(pattern, line.text))?.rule.color ?? null;
-  }
-
-  /** A color of its own for each module, so they are told apart at a glance. */
-  function moduleColor(module: string): string {
-    let hash = 0;
-    for (const ch of module) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
-    const hue = hash % 360;
-    return appScheme() === "dark" ? `hsl(${hue} 55% 68%)` : `hsl(${hue} 60% 34%)`;
   }
 
   function toggleLevel(level: Level | "other") {
@@ -219,6 +246,82 @@
 
   function allModules(shown: boolean) {
     tab.setLinesView({ ...tab.linesView, hidden_modules: shown ? [] : modules.map(([module]) => module) });
+  }
+
+  // Columns. A width is changed on `tab.linesView` itself rather than with
+  // `setLinesView`, so the lines are not filtered again on each move.
+
+  /** A column's width as CSS, or undefined while it has its own. */
+  function widthOf(column: Column): string | undefined {
+    const width = tab.linesView[column];
+    return typeof width === "number" && Number.isFinite(width) ? `${Math.max(COLUMN_MIN, width)}px` : undefined;
+  }
+
+  /** The widest a column `width` pixels wide can go, keeping the message's room; never less than it is. */
+  function widest(width: number): number {
+    return Math.max(width, width + messageHead.getBoundingClientRect().width - MESSAGE_MIN);
+  }
+
+  function setWidth(column: Column, width: number, most: number) {
+    // Whole pixels: workspace.rs keeps them as integers.
+    tab.linesView[column] = Math.round(Math.min(most, Math.max(COLUMN_MIN, width)));
+  }
+
+  function startResize(event: PointerEvent, column: Column) {
+    if (event.button !== 0) return;
+    const grip = event.currentTarget as HTMLElement;
+    grip.setPointerCapture(event.pointerId);
+    const width = (grip.parentElement as HTMLElement).getBoundingClientRect().width;
+    resizing = { column, x: event.clientX, width, most: widest(width) };
+  }
+
+  function resize(event: PointerEvent) {
+    if (resizing) {
+      setWidth(resizing.column, resizing.width + event.clientX - resizing.x, resizing.most);
+    }
+  }
+
+  function endResize() {
+    if (resizing) {
+      resizing = null;
+      changed();
+      list.focus();
+    }
+  }
+
+  /** What a column shows: Fit makes room for the widest of it. */
+  function columnTexts(column: Column): string[] {
+    if (column === "module_width") return [...tab.moduleCounts.keys()];
+    if (column === "level_width") return LEVELS.filter(({ level }) => level !== "other").map(({ label }) => label);
+    // In a mono font the longest time is the widest, and there can be many.
+    let longest = "";
+    for (const line of tab.textLines) {
+      if (line.time && line.time.length > longest.length) longest = line.time;
+    }
+    return [longest];
+  }
+
+  let measurer: CanvasRenderingContext2D | null = null;
+
+  /** How wide the widest of `texts` is in `element`'s font, in CSS pixels. */
+  function textWidth(texts: string[], element: Element): number {
+    measurer ??= document.createElement("canvas").getContext("2d");
+    if (!measurer) return 0;
+    const style = getComputedStyle(element);
+    measurer.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    let most = 0;
+    for (const text of texts) most = Math.max(most, measurer.measureText(text).width);
+    return most;
+  }
+
+  /** Makes a column just wide enough for its widest text and its name, as far as the room allows. */
+  function fit(column: Column, grip: HTMLElement) {
+    const cell = grip.parentElement as HTMLElement;
+    const label = cell.querySelector(".label") as HTMLElement;
+    const width = Math.max(textWidth(columnTexts(column), cell), textWidth([label.textContent ?? ""], label));
+    // A pixel either side, so a fraction of one does not cut the last letter.
+    setWidth(column, Math.ceil(width) + 2, widest(cell.getBoundingClientRect().width));
+    changed();
   }
 
   // Selection.
@@ -296,7 +399,7 @@
     };
     if (event.key in moves) {
       event.preventDefault();
-      follow = event.key === "End";
+      follow = event.key === "End" && !tab.scrollLock;
       selectIndex(moves[event.key], event.shiftKey);
     }
   }
@@ -379,7 +482,13 @@
 
 <svelte:window onmousedown={onWindowMouseDown} />
 
-<div class="linesview">
+<div
+  class="linesview"
+  class:resizing={resizing !== null}
+  style:--time-width={widthOf("time_width")}
+  style:--level-width={widthOf("level_width")}
+  style:--module-width={widthOf("module_width")}
+>
   <div class="bar">
     <div class="chips" role="group" aria-label="Levels">
       {#each LEVELS as { level, label, title } (level)}
@@ -416,7 +525,7 @@
                 checked={!tab.linesView.hidden_modules.includes(module)}
                 onchange={() => toggleModule(module)}
               />
-              <span class="name mono" style:color={moduleColor(module)}>{module}</span>
+              <span class="name mono">{module}</span>
               <span class="count">{number}</span>
             </label>
           {/each}
@@ -458,12 +567,40 @@
     </span>
   </div>
 
+  <!-- The columns' names, in line with the rows below them. Dragging the edge between two names resizes the column on its left. -->
+  <div class="header row">
+    <span class="star"></span>
+    {#each COLUMNS as { key, label, cell, title } (key)}
+      <span class={cell}>
+        <span class="label" {title}>{label}</span>
+        <span
+          class="grip"
+          class:on={resizing?.column === key}
+          role="separator"
+          aria-orientation="vertical"
+          title="Drag to resize, double-click to fit"
+          onpointerdown={(event) => startResize(event, key)}
+          onpointermove={resize}
+          onpointerup={endResize}
+          onpointercancel={endResize}
+          ondblclick={(event) => fit(key, event.currentTarget)}
+        ></span>
+      </span>
+    {/each}
+    <span class="message" bind:this={messageHead}>
+      <span class="label" title="What the line says; all of it for a line that is not a log line">Message</span>
+    </span>
+  </div>
+
   {#if !follow && count > 0}
-    <!-- Scrolled up: a way back to the newest line, which the list then keeps showing. -->
+    <!-- Scrolled up, or Scroll lock on: a way back to the newest line, which the list then keeps showing. -->
     <button
       class="btn latest"
-      title="Go to the newest line and keep showing it"
+      title={tab.scrollLock
+        ? "Turn Scroll lock off, go to the newest line and follow it again"
+        : "Go to the newest line and keep showing it"}
       onclick={() => {
+        tab.setScrollLock(false);
         follow = true;
         list.scrollTop = list.scrollHeight;
         list.focus();
@@ -509,9 +646,8 @@
           {:else}
             <span class="time mono" title={new Date(line.at).toLocaleTimeString()}>{line.time ?? ""}</span>
             <span class="level {line.level ?? ''}">{line.level?.toUpperCase() ?? ""}</span>
-            <span class="mod mono" title={line.module ?? ""} style:color={line.module ? moduleColor(line.module) : ""}>
-              {line.module ?? ""}
-            </span>
+            <!-- The module in its level's color, as the level is. -->
+            <span class="mod mono {line.level ?? ''}" title={line.module ?? ""}>{line.module ?? ""}</span>
             <span class="message mono" title={line.text}>
               {#each pieces(line.level ? line.message : line.text) as piece, at (at)}
                 {#if piece.match}<mark>{piece.text}</mark>{:else}{piece.text}{/if}
@@ -733,6 +869,7 @@
     min-height: 0;
     overflow: auto;
     outline: none;
+    scrollbar-gutter: stable;
   }
 
   .space {
@@ -748,12 +885,80 @@
     align-items: center;
     height: 20px;
     padding-right: 8px;
+    overflow: hidden;
     font-size: 13px;
     white-space: nowrap;
     border-left: 3px solid transparent;
   }
 
-  .row:hover {
+  /* The column names: a row of the list's own size, so each name is over its column, with the
+     scrollbar's room kept the same. */
+  .header {
+    position: relative;
+    flex: none;
+    border-bottom: 1px solid var(--border);
+    scrollbar-gutter: stable;
+    user-select: none;
+  }
+
+  /* Each cell is as tall as the row, for its grip, which reaches past the cell's right edge into the gap. */
+  .header > span {
+    position: relative;
+    display: flex;
+    align-self: stretch;
+    align-items: center;
+    overflow: visible;
+  }
+
+  .header .label {
+    min-width: 0;
+    overflow: hidden;
+    font-family: var(--font-ui);
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--muted);
+    text-overflow: ellipsis;
+  }
+
+  /* The edge between two names, over the gap between their columns: drag it to resize the column on its left. */
+  .grip {
+    position: absolute;
+    top: 0;
+    right: -10px;
+    bottom: 0;
+    z-index: 1;
+    width: 10px;
+    cursor: col-resize;
+    touch-action: none;
+  }
+
+  .grip::after {
+    position: absolute;
+    top: 4px;
+    bottom: 4px;
+    left: calc(50% - 0.5px);
+    width: 1px;
+    content: "";
+    background: var(--border);
+  }
+
+  .grip:hover::after,
+  .grip.on::after {
+    top: 0;
+    bottom: 0;
+    left: calc(50% - 1px);
+    width: 2px;
+    background: var(--accent);
+  }
+
+  /* While an edge is dragged, the pointer keeps its look wherever it goes, and no text is selected. */
+  .resizing,
+  .resizing * {
+    cursor: col-resize;
+    user-select: none;
+  }
+
+  .list .row:hover {
     background: var(--hover);
   }
 
@@ -802,6 +1007,7 @@
   }
 
   .star {
+    flex: none;
     width: 18px;
     padding: 0;
     font: inherit;
@@ -820,39 +1026,50 @@
     color: var(--warn);
   }
 
+  /* The widths dragged, or each column's own. They give way only once the message has no room left, so their edges stay
+     on screen. A `ch` or an `em` is the same in the header as in the rows: the cells there have the rows' font. */
+  .time,
+  .level,
+  .mod {
+    flex: 0 1 auto;
+    min-width: 20px;
+    overflow: hidden;
+  }
+
   .time {
-    flex-shrink: 0;
-    width: 17ch;
+    width: var(--time-width, 17ch);
     color: var(--muted);
+    text-overflow: ellipsis;
   }
 
   .level {
-    flex-shrink: 0;
-    width: 3.2em;
+    width: var(--level-width, 3.2em);
     font-size: 11px;
     font-weight: 700;
   }
 
-  .level.err {
+  .level.err,
+  .mod.err {
     color: var(--bad);
   }
 
-  .level.wrn {
+  .level.wrn,
+  .mod.wrn {
     color: var(--warn);
   }
 
-  .level.inf {
+  .level.inf,
+  .mod.inf {
     color: var(--ok);
   }
 
-  .level.dbg {
+  .level.dbg,
+  .mod.dbg {
     color: var(--muted);
   }
 
   .mod {
-    flex-shrink: 0;
-    width: 14ch;
-    overflow: hidden;
+    width: var(--module-width, 14ch);
     text-overflow: ellipsis;
   }
 

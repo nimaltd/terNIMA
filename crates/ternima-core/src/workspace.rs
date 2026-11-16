@@ -354,7 +354,8 @@ impl Default for PlotView {
     }
 }
 
-/// What the Lines view leaves out. Its search and bookmarks are not kept.
+/// What the Lines view leaves out, and how wide its columns are. Its search
+/// and bookmarks are not kept.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LinesView {
@@ -364,6 +365,14 @@ pub struct LinesView {
     pub hidden_modules: Vec<String>,
     /// Shows the lines that are not log lines, such as the shell's.
     pub others: bool,
+    /// The widths of the time, level and module columns in CSS pixels, once
+    /// their edges are dragged; until then each column has its own width.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_width: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level_width: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub module_width: Option<u32>,
 }
 
 impl Default for LinesView {
@@ -372,6 +381,9 @@ impl Default for LinesView {
             hidden_levels: Vec::new(),
             hidden_modules: Vec::new(),
             others: true,
+            time_width: None,
+            level_width: None,
+            module_width: None,
         }
     }
 }
@@ -801,6 +813,8 @@ mod tests {
                     hidden_levels: vec![Level::Dbg],
                     hidden_modules: vec!["net_if".into()],
                     others: false,
+                    module_width: Some(240),
+                    ..LinesView::default()
                 },
                 ..nucleo()
             }],
@@ -810,6 +824,9 @@ mod tests {
         assert_eq!(Workspace::load(&path), workspace);
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains("hidden_levels = [\"dbg\"]"), "{text}");
+        // Only the column that was dragged is written.
+        assert!(text.contains("module_width = 240"), "{text}");
+        assert!(!text.contains("time_width"), "{text}");
     }
 
     #[test]

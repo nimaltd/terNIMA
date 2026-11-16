@@ -273,8 +273,14 @@
          nor for a tab that only watches variables. -->
     {#if tab.view !== "modbus" && tab.view !== "watch" && !tab.watchOnly}
       <div class="terminal">
-        {#if tab.view === "terminal" || tab.view === "hex"}
-          <button class="btn small" title="Clear the screen (Ctrl+Shift+K)" onclick={() => act(() => tab.clearScreen())}>
+        {#if tab.view === "terminal" || tab.view === "hex" || tab.view === "lines"}
+          <button
+            class="btn small"
+            title={tab.view === "lines"
+              ? "Forget the lines kept, which the plot reads too (Ctrl+Shift+K)"
+              : "Clear the screen (Ctrl+Shift+K)"}
+            onclick={() => act(() => tab.clearScreen())}
+          >
             Clear
           </button>
           <button
