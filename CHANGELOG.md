@@ -21,6 +21,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - A Series list in the Plot view, as the Zephyr view's Modules: a check box
   for each series, all on at first, with All and None. It shows and hides
   them as the check boxes in the table under the chart do.
+- A New session button on the welcome tab, under its text, as bleNIMA's,
+  libNIMA's and netNIMA's welcome pages have one. It opens the same list as
+  the + button.
 
 ### Changed
 

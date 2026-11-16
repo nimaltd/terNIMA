@@ -10,6 +10,9 @@
   import { WebLinksAddon } from "@xterm/addon-web-links";
   import { WebglAddon } from "@xterm/addon-webgl";
   import { echoed } from "./echo";
+  import NewSessionMenu from "./NewSessionMenu.svelte";
+  import type { Protocol } from "./net";
+  import type { SessionKind } from "./serial";
   import { settings, unzoomed } from "./settings.svelte";
   import { isMac } from "./shortcuts";
   import type { Tab } from "./tabs.svelte";
@@ -21,6 +24,7 @@
     hex = false,
     active,
     isAppKey,
+    onnew,
   }: {
     /** The session this terminal shows, or null for the welcome tab. */
     tab?: Tab | null;
@@ -30,10 +34,35 @@
     active: boolean;
     /** Says which keys belong to the app, so they are not sent to the device. */
     isAppKey: (event: KeyboardEvent) => boolean;
+    /** Opens a new session of a kind: given to the welcome tab, which then has a New session button under its text. */
+    onnew?: (kind: SessionKind, protocol?: Protocol) => void;
   } = $props();
 
+  let wrap: HTMLDivElement;
   let container: HTMLDivElement;
   let opened = $state(false);
+
+  /**
+   * The welcome tab's New session button, as bleNIMA's, libNIMA's and netNIMA's
+   * welcome pages have one: the line the welcome text leaves for it, where it is
+   * drawn while that line is on screen, and whether its menu is open.
+   */
+  let welcomeLine: IMarker | null = null;
+  let welcomeAt: { top: number; left: number } | null = $state(null);
+  let welcomeMenu = $state(false);
+  let wrapHeight = $state(0);
+  let buttonWidth = $state(0);
+  let menuHeight = $state(0);
+  /** The button's height, as `.btn` has it, and the gap between it and its menu. */
+  const BUTTON = 28;
+  const GAP = 4;
+  /** The menu under the button where there is room, or else over it, or else beside it as low as it fits. */
+  const menuPlace = $derived.by(() => {
+    const top = welcomeAt?.top ?? 0;
+    if (menuHeight <= wrapHeight - top - BUTTON - GAP) return { top: BUTTON + GAP, left: 0 };
+    if (menuHeight <= top - GAP) return { top: -(menuHeight + GAP), left: 0 };
+    return { top: Math.max(-top, wrapHeight - top - menuHeight - GAP), left: buttonWidth + GAP };
+  });
 
   // The search bar.
   let searchOpen = $state(false);
@@ -381,7 +410,13 @@
         tab.attach(term);
       } else {
         // The logo's colors are picked for the theme in use when the tab opens.
-        term.write(await invoke<string>("welcome_banner", { background: appScheme() }));
+        term.write(await invoke<string>("welcome_banner", { background: appScheme() }), () => {
+          if (onnew) {
+            // A line for the New session button and room under it, so what is typed is echoed below it.
+            welcomeLine = term.registerMarker(0);
+            term.write("\r\n\r\n\r\n");
+          }
+        });
       }
     }
 
@@ -400,6 +435,36 @@
     };
   });
 
+  /** Puts the welcome tab's button on the line left for it, two cells in as the text is, or hides it while that line is out of view. */
+  function placeWelcome() {
+    const screen = container.querySelector<HTMLElement>(".xterm-screen");
+    const row = welcomeLine && !welcomeLine.isDisposed ? welcomeLine.line - term.buffer.active.viewportY : -1;
+    if (!screen || row < 0 || row > term.rows - 2) {
+      welcomeAt = null;
+      welcomeMenu = false;
+      return;
+    }
+    const box = screen.getBoundingClientRect();
+    const origin = wrap.getBoundingClientRect();
+    const top = box.top - origin.top + (row * box.height) / term.rows;
+    const left = box.left - origin.left + (2 * box.width) / term.cols;
+    if (welcomeAt?.top !== top || welcomeAt.left !== left) {
+      welcomeAt = { top, left };
+    }
+  }
+
+  // Scrolled, resized or with another text size, the line moves: the button goes with it. The cursor's blink draws
+  // too, so the button is moved only when its place changed.
+  term.onRender(() => {
+    if (welcomeLine) placeWelcome();
+  });
+
+  function onWindowMouseDown(event: MouseEvent) {
+    if (welcomeMenu && !(event.target as Element).closest(".welcome-new")) {
+      welcomeMenu = false;
+    }
+  }
+
   /** Draws with WebGL where the web view has it, and keeps the DOM renderer where not. */
   function loadWebgl() {
     try {
@@ -412,8 +477,48 @@
   }
 </script>
 
-<div class="wrap">
+<svelte:window
+  onmousedown={onWindowMouseDown}
+  onkeydown={(event) => {
+    if (welcomeMenu && event.key === "Escape") {
+      welcomeMenu = false;
+    }
+  }}
+/>
+
+<div class="wrap" bind:this={wrap} bind:clientHeight={wrapHeight}>
   <div class="terminal" bind:this={container}></div>
+
+  {#if onnew && welcomeAt}
+    <!-- Under the welcome text: the + button's menu of sessions, on a button as the other apps' welcome pages have. -->
+    <div class="welcome-new" style:top={`${welcomeAt.top}px`} style:left={`${welcomeAt.left}px`}>
+      <button
+        class="btn primary"
+        aria-haspopup="menu"
+        aria-expanded={welcomeMenu}
+        title="Open a serial port, RTT, SWO, TCP, SSH or a recording in a new tab"
+        bind:offsetWidth={buttonWidth}
+        onclick={() => (welcomeMenu = !welcomeMenu)}
+      >
+        New session ▾
+      </button>
+      {#if welcomeMenu}
+        <div
+          class="welcome-menu"
+          style:top={`${menuPlace.top}px`}
+          style:left={`${menuPlace.left}px`}
+          bind:offsetHeight={menuHeight}
+        >
+          <NewSessionMenu
+            onpick={(kind, protocol) => {
+              welcomeMenu = false;
+              onnew?.(kind, protocol);
+            }}
+          />
+        </div>
+      {/if}
+    </div>
+  {/if}
 
   {#if tab?.scrollLock}
     <!-- Scroll lock keeps the screen where it is: a way back to the newest line, as the Zephyr log view has. -->
@@ -495,6 +600,16 @@
   .terminal {
     width: 100%;
     height: 100%;
+  }
+
+  /* Over the line the welcome text leaves for it. */
+  .welcome-new {
+    position: absolute;
+    z-index: 5;
+  }
+
+  .welcome-menu {
+    position: absolute;
   }
 
   /* The same place as the Zephyr log view's way back to the newest line. */

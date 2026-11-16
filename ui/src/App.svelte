@@ -385,7 +385,7 @@
       {#if tabs.length === 0}
         <div class="slot" style="inset: 0">
           <div class="layer">
-            <Terminal active={true} {isAppKey} />
+            <Terminal active={true} {isAppKey} onnew={newTab} />
           </div>
         </div>
       {/if}

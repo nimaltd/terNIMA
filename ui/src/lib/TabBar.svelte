@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { NEW_TABS } from "./new-tab";
+  import NewSessionMenu from "./NewSessionMenu.svelte";
   import { look, stateText } from "./state";
   import { closeTab, showTab, tabs, view } from "./tabs.svelte";
 
@@ -95,14 +95,8 @@
   </header>
 
   {#if choice}
-    <div class="choice" role="menu" style:left={`${choice.left}px`}>
-      <!-- The same as File > New session. -->
-      {#each NEW_TABS as { kind, protocol, label, detail } (label)}
-        <button role="menuitem" onclick={() => pick(kind, protocol)}>
-          <strong>{label}</strong>
-          <span>{detail}</span>
-        </button>
-      {/each}
+    <div class="choice" style:left={`${choice.left}px`}>
+      <NewSessionMenu onpick={pick} />
     </div>
   {/if}
 </div>
@@ -116,42 +110,6 @@
     position: absolute;
     top: calc(100% + 2px);
     z-index: 10;
-    display: flex;
-    flex-direction: column;
-    width: 290px;
-    padding: 4px;
-    background: var(--menu-bg);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    box-shadow: var(--shadow);
-  }
-
-  .choice button {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 2px;
-    padding: 7px 10px;
-    font: inherit;
-    color: var(--text);
-    text-align: left;
-    background: none;
-    border: 0;
-    border-radius: 6px;
-    cursor: default;
-  }
-
-  .choice button:hover {
-    background: var(--accent-soft);
-  }
-
-  .choice strong {
-    font-weight: 600;
-  }
-
-  .choice span {
-    font-size: 12px;
-    color: var(--muted);
   }
 
   .tabs {
