@@ -5,6 +5,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-11-17
+
 ### Added
 
 - Detect names every STM32 line probe-rs knows: the C0, L1, U0, U3, WBA and
@@ -538,7 +540,8 @@ yet; the README says how to open them.
   at all for 2 s, as when flow control holds it, drops the rest and stays
   open.
 
-[Unreleased]: https://github.com/nimaltd/ternima/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/nimaltd/ternima/compare/v1.6.1...HEAD
+[1.6.1]: https://github.com/nimaltd/ternima/releases/tag/v1.6.1
 [1.6.0]: https://github.com/nimaltd/ternima/releases/tag/v1.6.0
 [1.5.0]: https://github.com/nimaltd/ternima/releases/tag/v1.5.0
 [1.4.0]: https://github.com/nimaltd/ternima/releases/tag/v1.4.0
