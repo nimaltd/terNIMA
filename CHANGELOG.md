@@ -5,6 +5,34 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Detect names every STM32 line probe-rs knows: the C0, L1, U0, U3, WBA and
+  H7R/S lines are new, with the F750, F768, F778, L081, L471 and the WB1M and
+  WL5M modules.
+- Detect names a Nordic chip of any revision: by its part and the first two
+  letters of its variant, which give its memory, as AA in nRF52840_xxAA.
+  probe-rs's own tables list only some revisions.
+- Detect finds the RP2040, through a probe that reaches its multi-drop bus,
+  such as a CMSIS-DAP probe. An ST-Link does not.
+- When no one knows the chip, Detect says who made it, from its ROM table.
+
+### Fixed
+
+- Detect finds a chip whose firmware keeps the probe out, by sleeping deeply
+  or by taking the debug pins: when the chip does not answer, it is read again
+  with its reset line held, which starts the firmware again, and Connect under
+  reset is turned on for the tab. An STM32G431 was found so.
+- Detect finds the nRF54L15 by its part number. probe-rs knows only one early
+  sample of it, so other revisions were not found. The nRF54L10 and nRF54L05
+  are named too, though probe-rs cannot connect to them yet.
+- Detect reads the maker in the chip's ROM table first, so a chip by another
+  maker is no longer taken for an STM32 terNIMA does not know.
+- Detect picks an STM32's part by its flash size too, and on the STM32H7 and
+  G4 by its package and its cores: a NUCLEO-H743ZI is found as STM32H743ZI,
+  not as the first of the 60 parts that share its DEV_ID, STM32H742AG. The
+  parts that answer the same stay in the list to pick from.
+
 ## [1.6.0] - 2026-11-16
 
 ### Added

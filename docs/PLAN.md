@@ -543,8 +543,13 @@ Done when it replaces PuTTY or Tera Term for everyday UART work.
   probe-rs turns the STM32H5 trace pin on at the wrong address, so ternima also sets
   it at 0x44024004 (worth reporting to probe-rs)
 - [x] Finding the chip by itself: an STM32's DBGMCU ID register gives its family (the H503
-  answers DEV_ID 0x474), and probe-rs's own detection covers the chips it can tell apart.
-  The Detect button, and the dialog by itself when the chip is empty
+  answers DEV_ID 0x474), with its flash size, and on the H7 and G4 its package and cores,
+  to narrow down the part (the H743 answers STM32H743ZI). A Nordic chip's FICR gives its
+  part and memory in any revision, the RP2040 answers on its multi-drop bus, and probe-rs's
+  own detection covers the chips it can tell apart. The ROM table's maker says which to
+  read. A chip that does not answer is read again under reset (an STM32G431 whose firmware
+  sleeps). The Detect button, and the dialog by itself when the chip is empty. Not
+  possible: Espressif chips, which probe-rs 0.32 does not support at all
 - [x] RTT over TCP: J-Link's RTT server on 19021, with its channel asked for in the
   first 100 ms, and OpenOCD's `rtt server`. Tried against a stand-in J-Link server;
   not yet against real J-Link software or OpenOCD

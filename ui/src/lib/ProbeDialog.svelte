@@ -130,16 +130,21 @@
     found = "";
     try {
       const result = await detectChip(target.probe, target.speed_khz);
+      // A chip that answers only with its reset held needs it to connect too.
+      if (result.under_reset) {
+        target.under_reset = true;
+      }
+      const reset = result.under_reset ? " It answered only with its reset held, so Connect under reset is on." : "";
       if (result.chip) {
         target.chip = result.chip;
         chips = result.candidates;
         nameChip();
         found =
           result.candidates.length > 1
-            ? `Found ${result.description}. It comes in other packages too: pick yours from the list if you like.`
-            : `Found ${result.description}.`;
+            ? `Found ${result.description}. The parts in the list answer the same: pick yours if it is another one.${reset}`
+            : `Found ${result.description}.${reset}`;
       } else {
-        found = `Found ${result.description}. Type its name.`;
+        found = `Found ${result.description}. Type its name.${reset}`;
       }
     } catch (problem) {
       error = String(problem);

@@ -65,9 +65,14 @@ export type Detected = {
   /** Every chip it may be: the same silicon often comes in several packages. */
   candidates: string[];
   description: string;
+  /** The chip answered only with its reset line held, so a tab on it connects under reset too. */
+  under_reset: boolean;
 };
 
-/** Finds out which chip is on the board through a probe. Only reads, for STM32. */
+/**
+ * Finds out which chip is on the board through a probe. It only reads, unless
+ * the chip answers only with its reset line held.
+ */
 export function detectChip(probe: ProbeId, speedKhz: number): Promise<Detected> {
   return invoke<Detected>("detect_chip", { probe, speedKhz });
 }

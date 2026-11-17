@@ -369,7 +369,8 @@ pub fn search_chips(text: String, limit: usize) -> Vec<String> {
     probe::search_chips(&text, limit)
 }
 
-/// Finds out which chip is on the board through a probe. Only reads, for STM32.
+/// Finds out which chip is on the board through a probe. It only reads, unless
+/// the chip answers only with its reset line held.
 #[tauri::command(async)]
 pub fn detect_chip(
     probe: Option<probe::ProbeId>,

@@ -7,6 +7,7 @@ fn main() {
             println!("found: {}", found.description);
             println!("chip: {:?}", found.chip);
             println!("candidates: {:?}", found.candidates);
+            println!("under reset: {}", found.under_reset);
         }
         Err(problem) => println!("{problem}"),
     }
