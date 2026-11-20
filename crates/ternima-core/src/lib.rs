@@ -4,6 +4,7 @@
 //! they can be tested on their own.
 
 mod ansi;
+pub mod awake;
 mod banner;
 pub mod code;
 pub mod detect;
@@ -16,6 +17,7 @@ pub mod openocd;
 pub mod probe;
 pub mod record;
 pub mod replay;
+pub mod rtos;
 pub mod rtt;
 pub mod send;
 pub mod serial;

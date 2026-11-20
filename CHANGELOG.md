@@ -5,6 +5,86 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- The RTOS's tasks in the Live view, over the variables: Zephyr's threads
+  and FreeRTOS's tasks, each with what it is doing, its priority, the most
+  of its stack it has used of its size, and its share of the CPU. The
+  running one stands out. FreeRTOS's heap shows too. They are read every
+  second as the chip runs, without stopping it, through the kernel's own
+  lists, laid out as the ELF file's debug information says, so no RTT is
+  needed. What the firmware leaves out that would show more is named, as
+  `CONFIG_THREAD_NAME=y`. Example `tasks` reads them from the command line.
+- A timeline at the top of the Live view: a lane for each task, showing
+  where it ran, and one for each watched variable, over the same time. The
+  running task is sampled through the probe as fast as it answers, about
+  2,700 times a second with an ST-Link V3, so a task that runs for less
+  than that misses some samples. It records from when the Live view is
+  first shown, in every view after that. Pause halts the chip, in a tab
+  with a probe of its own, and holds the whole Live view still, the tasks
+  and values too; Resume runs it again, and the timeline shows where it was
+  halted, missing nothing. Ending the tab runs it again too. Through a
+  debugger's server, whose debugger has the chip, Pause holds the view
+  still while the recording goes on. The wheel zooms, down to a
+  microsecond across; Shift with the wheel, a drag and the scrollbar under
+  it move along the time; pointing at a run of a task or an interrupt
+  tells how long it lasted. Save and Open keep it in a file to look at
+  later.
+- Live through a debug probe, under + and File > New session: a probe tab
+  without RTT, on the Live view.
+- In an SWO tab, the timeline has every task switch and every interrupt,
+  timed by the chip to the clock cycle and kept to the nanosecond: a DWT
+  comparator sends each value written to the kernel's pointer to the
+  running task, the exception trace each interrupt entered and left, and
+  the ITM's timestamps say when. Many switches in a millisecond show apart,
+  and nothing in the firmware changes. Where the chip has more to send than
+  SWO carries, as switches microseconds apart with the interrupts traced,
+  it drops some and holds back the timestamps: the timeline leaves a gap
+  there rather than guess, and says so. An ST-Link loses some of SWO's
+  bytes through some of its reads of the tasks: each read is checked
+  against the computer's clock, and only where time was lost does it leave
+  a gap, the chip's time set on by as much. While the switches are traced,
+  the stacks are looked through at one read of the tasks in thirty, as that
+  read is the longest. It needs a Cortex-M3, M4, M7 or M33 with its SWO
+  pin; checked on a Cortex-M33. Example `trace` does it from the command
+  line.
+- The timeline has a lane for each interrupt, under the tasks, named as
+  the firmware names it, TIM7 rather than IRQ 50, from the enumeration of
+  them in the ELF file's debug information: CMSIS's `IRQn_Type`, or a Rust
+  PAC's `Interrupt`. A line runs between the tasks, the interrupts and the
+  variables. Its Variables and Interrupts switches show them or leave them
+  out, and are kept with the tab. Without the interrupts SWO has room for
+  switches a few microseconds apart, as at 24 MHz with an ST-Link V3, which
+  the list of baud rates now has.
+
+### Changed
+
+- The Watch view is called Live, as it shows the tasks too, and the Zephyr
+  view is called Log.
+- The Live view's columns have widths of their own, so nothing moves as
+  the values change, and a read that finds no tasks leaves the last ones on
+  screen, dimmed, instead of the table going away.
+- The ELF file is read again at each connection, and when it is built anew
+  while connected, so the Live view always shows the newest firmware.
+- The Live view reads several times faster: in words, not bytes, with the
+  probe's core taken once for many reads. The stacks are looked through at
+  one read of the tasks in five, as the most they used changes seldom.
+- An SWO tab traces the exceptions only while its timeline shows the
+  interrupts, which leaves SWO more room for what the firmware prints.
+
+### Fixed
+
+- An STM32 whose firmware sleeps, as an RTOS's idle thread does, read as
+  zeros: watched variables, tasks that vanished, RTT not found. The probe
+  cannot reach its RAM while the bus matrix's clock is stopped, so terNIMA
+  turns on the clock of the first DMA controller, as Zephyr does for RTT,
+  halting the chip for a moment to do it, and again after a reset. The
+  firmware still sleeps; the clock costs a little current. It covers the
+  C0, F0 to F7, G0, G4, H5, L0 to L5, U0, U5, WB, WBA and WL lines; the H7
+  keeps its debug clocks on through probe-rs.
+- SWO's decoder gets back in step at the next sync packet when a byte was
+  lost on the way, instead of reading what follows wrong.
+
 ## [1.6.1] - 2026-11-17
 
 ### Added

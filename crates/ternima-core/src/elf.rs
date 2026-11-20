@@ -190,13 +190,16 @@ fn natural(name: &str) -> Vec<(String, u64)> {
     parts
 }
 
-type Slice<'a> = EndianSlice<'a, RunTimeEndian>;
-type Dwarf<'a> = gimli::Dwarf<Slice<'a>>;
-type Unit<'a> = gimli::Unit<Slice<'a>>;
-type Entry<'a> = gimli::DebuggingInformationEntry<Slice<'a>>;
+pub(crate) type Slice<'a> = EndianSlice<'a, RunTimeEndian>;
+pub(crate) type Dwarf<'a> = gimli::Dwarf<Slice<'a>>;
+pub(crate) type Unit<'a> = gimli::Unit<Slice<'a>>;
+pub(crate) type Entry<'a> = gimli::DebuggingInformationEntry<Slice<'a>>;
 
-/// The variables in the debug information, each with the source file of its unit.
-fn from_dwarf(file: &object::File) -> gimli::Result<Vec<(Variable, String)>> {
+/// Runs `read` on an ELF file's DWARF sections, empty where it has none.
+pub(crate) fn with_dwarf<T>(
+    file: &object::File,
+    read: impl FnOnce(&Dwarf) -> gimli::Result<T>,
+) -> gimli::Result<T> {
     let endian = if file.is_little_endian() {
         RunTimeEndian::Little
     } else {
@@ -209,7 +212,15 @@ fn from_dwarf(file: &object::File) -> gimli::Result<Vec<(Variable, String)>> {
             .unwrap_or(Cow::Borrowed(&[])))
     })?;
     let dwarf = sections.borrow(|section| EndianSlice::new(section, endian));
+    read(&dwarf)
+}
 
+/// The variables in the debug information, each with the source file of its unit.
+fn from_dwarf(file: &object::File) -> gimli::Result<Vec<(Variable, String)>> {
+    with_dwarf(file, variables_in)
+}
+
+fn variables_in(dwarf: &Dwarf) -> gimli::Result<Vec<(Variable, String)>> {
     let mut found = Vec::new();
     let mut seen = HashSet::new();
     let mut units = dwarf.units();
@@ -234,13 +245,13 @@ fn from_dwarf(file: &object::File) -> gimli::Result<Vec<(Variable, String)>> {
                 | gimli::DW_TAG_class_type
                 | gimli::DW_TAG_union_type => {
                     if entry.has_children() {
-                        let name = name_of(&dwarf, &unit, entry)?.unwrap_or_default();
+                        let name = name_of(dwarf, &unit, entry)?.unwrap_or_default();
                         scopes.push((depth, name));
                     }
                 }
                 gimli::DW_TAG_variable => {
                     let mut parts = Vec::new();
-                    global(&dwarf, &unit, entry, &scopes, &mut parts)?;
+                    global(dwarf, &unit, entry, &scopes, &mut parts)?;
                     for part in parts {
                         if seen.insert((part.name.clone(), part.address)) {
                             found.push((part, source.clone()));
@@ -302,7 +313,11 @@ fn global(
 /// The address of a variable that has one for the whole run: not one on the
 /// stack, in a register, or local to a thread. Globals the linker merged are
 /// an address and an offset into it.
-fn fixed_address(dwarf: &Dwarf, unit: &Unit, entry: &Entry) -> gimli::Result<Option<u64>> {
+pub(crate) fn fixed_address(
+    dwarf: &Dwarf,
+    unit: &Unit,
+    entry: &Entry,
+) -> gimli::Result<Option<u64>> {
     let Some(AttributeValue::Exprloc(expression)) = entry.attr_value(gimli::DW_AT_location) else {
         return Ok(None);
     };
@@ -477,7 +492,7 @@ fn open(
 
 /// How many elements a one-dimensional array has; `None` for an array of
 /// arrays, or one of no fixed length.
-fn array_length(unit: &Unit, offset: UnitOffset) -> gimli::Result<Option<u64>> {
+pub(crate) fn array_length(unit: &Unit, offset: UnitOffset) -> gimli::Result<Option<u64>> {
     let mut tree = unit.entries_tree(Some(offset))?;
     let mut ranges = tree.root()?.children();
     let mut length = None;
@@ -508,7 +523,7 @@ fn array_length(unit: &Unit, offset: UnitOffset) -> gimli::Result<Option<u64>> {
 }
 
 /// How many bytes a type takes.
-fn size_of(unit: &Unit, offset: UnitOffset, depth: usize) -> gimli::Result<Option<u64>> {
+pub(crate) fn size_of(unit: &Unit, offset: UnitOffset, depth: usize) -> gimli::Result<Option<u64>> {
     if depth > DEPTH_MAX * 4 {
         return Ok(None);
     }
@@ -538,7 +553,7 @@ fn size_of(unit: &Unit, offset: UnitOffset, depth: usize) -> gimli::Result<Optio
 }
 
 /// Where a member is in its struct: 0 in a union, which gives none.
-fn member_offset(unit: &Unit, member: &Entry) -> gimli::Result<Option<u64>> {
+pub(crate) fn member_offset(unit: &Unit, member: &Entry) -> gimli::Result<Option<u64>> {
     match member.attr_value(gimli::DW_AT_data_member_location) {
         None => Ok(Some(0)),
         Some(AttributeValue::Exprloc(expression)) => {
@@ -552,20 +567,20 @@ fn member_offset(unit: &Unit, member: &Entry) -> gimli::Result<Option<u64>> {
     }
 }
 
-fn byte_size(entry: &Entry) -> Option<u64> {
+pub(crate) fn byte_size(entry: &Entry) -> Option<u64> {
     entry
         .attr_value(gimli::DW_AT_byte_size)
         .and_then(|size| size.udata_value())
 }
 
-fn type_of(entry: &Entry) -> Option<UnitOffset> {
+pub(crate) fn type_of(entry: &Entry) -> Option<UnitOffset> {
     match entry.attr_value(gimli::DW_AT_type) {
         Some(AttributeValue::UnitRef(offset)) => Some(offset),
         _ => None,
     }
 }
 
-fn name_of(dwarf: &Dwarf, unit: &Unit, entry: &Entry) -> gimli::Result<Option<String>> {
+pub(crate) fn name_of(dwarf: &Dwarf, unit: &Unit, entry: &Entry) -> gimli::Result<Option<String>> {
     match entry.attr_value(gimli::DW_AT_name) {
         Some(value) => Ok(Some(
             dwarf
@@ -575,6 +590,108 @@ fn name_of(dwarf: &Dwarf, unit: &Unit, entry: &Entry) -> gimli::Result<Option<St
         )),
         None => Ok(None),
     }
+}
+
+/// The enumerations a firmware names its chip's interrupts in, the likeliest
+/// first: CMSIS's, as `TIM7_IRQn = 50`, and a Rust PAC's.
+const INTERRUPT_ENUMS: [&str; 3] = ["IRQn_Type", "IRQn", "Interrupt"];
+
+/// The names of the chip's interrupts, from the enumeration of them the
+/// firmware was built with, by exception number, 16 and on: `TIM7` for 66.
+/// None where the debug information has no such enumeration.
+pub fn interrupt_names(data: &[u8]) -> Result<Vec<(u16, String)>, String> {
+    let file =
+        object::File::parse(data).map_err(|error| format!("It is not an ELF file: {error}"))?;
+    with_dwarf(&file, interrupts_in)
+        .map_err(|error| format!("Its debug information could not be read: {error}"))
+}
+
+fn interrupts_in(dwarf: &Dwarf) -> gimli::Result<Vec<(u16, String)>> {
+    // The likeliest found so far, by its place in INTERRUPT_ENUMS.
+    let mut best: Option<(usize, Vec<(u16, String)>)> = None;
+    let mut units = dwarf.units();
+    while let Some(header) = units.next()? {
+        let unit = dwarf.unit(header)?;
+        let mut entries = unit.entries();
+        while let Some(entry) = entries.next_dfs()? {
+            // CMSIS names an enumeration of no name of its own with a typedef.
+            let enumeration = match entry.tag() {
+                gimli::DW_TAG_enumeration_type => entry.offset(),
+                gimli::DW_TAG_typedef => match type_of(entry) {
+                    Some(offset) => offset,
+                    None => continue,
+                },
+                _ => continue,
+            };
+            let Some(name) = name_of(dwarf, &unit, entry)? else {
+                continue;
+            };
+            let Some(rank) = INTERRUPT_ENUMS.iter().position(|known| *known == name) else {
+                continue;
+            };
+            if best.as_ref().is_some_and(|(best, _)| *best <= rank) {
+                continue;
+            }
+            let found = enumerators(dwarf, &unit, enumeration)?;
+            if found.is_empty() {
+                continue;
+            }
+            if rank == 0 {
+                return Ok(found);
+            }
+            best = Some((rank, found));
+        }
+    }
+    Ok(best.map(|(_, found)| found).unwrap_or_default())
+}
+
+/// The IRQs an enumeration names, by exception number, each without
+/// CMSIS's `_IRQn`. The core's own exceptions, which CMSIS numbers below 0,
+/// are left out: the core names them.
+fn enumerators(
+    dwarf: &Dwarf,
+    unit: &Unit,
+    offset: UnitOffset,
+) -> gimli::Result<Vec<(u16, String)>> {
+    let mut found: Vec<(u16, String)> = Vec::new();
+    let mut tree = unit.entries_tree(Some(offset))?;
+    let root = tree.root()?;
+    if root.entry().tag() != gimli::DW_TAG_enumeration_type {
+        return Ok(found);
+    }
+    let mut children = root.children();
+    while let Some(child) = children.next()? {
+        let entry = child.entry();
+        if entry.tag() != gimli::DW_TAG_enumerator {
+            continue;
+        }
+        // Compilers write a value below 0 signed, and the others unsigned.
+        let value = match entry.attr_value(gimli::DW_AT_const_value) {
+            Some(AttributeValue::Sdata(value)) => value,
+            Some(value) => match value.udata_value().map(i64::try_from) {
+                Some(Ok(value)) => value,
+                _ => continue,
+            },
+            None => continue,
+        };
+        let Some(number) = value
+            .checked_add(16)
+            .filter(|_| value >= 0)
+            .and_then(|number| u16::try_from(number).ok())
+        else {
+            continue;
+        };
+        if found.iter().any(|(known, _)| *known == number) {
+            continue;
+        }
+        let Some(name) = name_of(dwarf, unit, entry)? else {
+            continue;
+        };
+        let name = name.strip_suffix("_IRQn").unwrap_or(&name).to_string();
+        found.push((number, name));
+    }
+    found.sort();
+    Ok(found)
 }
 
 /// Without debug information: the symbol table's data, by size, as unsigned
@@ -611,18 +728,17 @@ fn from_symbols(file: &object::File) -> Vec<(Variable, String)> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod test_dwarf {
     use gimli::write::{
         Address, AttributeValue as Value, EndianVec, Expression, LineProgram, Sections,
         UnitEntryId, UnitId,
     };
-    use gimli::{Encoding, Format, LittleEndian};
+    use gimli::{DwAte, Encoding, Format, LittleEndian};
+    use object::SymbolKind;
     use object::write::{Object as Writer, Symbol, SymbolSection};
     use object::{Architecture, BinaryFormat, Endianness, SectionKind, SymbolFlags, SymbolScope};
 
-    use super::*;
-
-    const ENCODING: Encoding = Encoding {
+    pub(crate) const ENCODING: Encoding = Encoding {
         format: Format::Dwarf32,
         version: 4,
         address_size: 4,
@@ -630,13 +746,13 @@ mod tests {
 
     /// Builds DWARF for a firmware's variables, as a compiler would: a unit
     /// for each source file, what is added going in the last one.
-    struct Firmware {
+    pub(crate) struct Firmware {
         dwarf: gimli::write::Dwarf,
         unit: UnitId,
     }
 
     impl Firmware {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             let mut dwarf = gimli::write::Dwarf::new();
             let unit = dwarf
                 .units
@@ -645,7 +761,7 @@ mod tests {
         }
 
         /// A unit for another source file, compiled from `path`.
-        fn source(&mut self, path: &str) {
+        pub(crate) fn source(&mut self, path: &str) {
             self.unit = self
                 .dwarf
                 .units
@@ -658,11 +774,11 @@ mod tests {
             );
         }
 
-        fn root(&self) -> UnitEntryId {
+        pub(crate) fn root(&self) -> UnitEntryId {
             self.dwarf.units.get(self.unit).root()
         }
 
-        fn add(
+        pub(crate) fn add(
             &mut self,
             parent: UnitEntryId,
             tag: gimli::DwTag,
@@ -679,7 +795,7 @@ mod tests {
             id
         }
 
-        fn set(&mut self, id: UnitEntryId, name: gimli::DwAt, value: Value) {
+        pub(crate) fn set(&mut self, id: UnitEntryId, name: gimli::DwAt, value: Value) {
             self.dwarf
                 .units
                 .get_mut(self.unit)
@@ -687,20 +803,20 @@ mod tests {
                 .set(name, value);
         }
 
-        fn base(&mut self, name: &str, encoding: DwAte, size: u64) -> UnitEntryId {
+        pub(crate) fn base(&mut self, name: &str, encoding: DwAte, size: u64) -> UnitEntryId {
             let id = self.add(self.root(), gimli::DW_TAG_base_type, Some(name));
             self.set(id, gimli::DW_AT_encoding, Value::Encoding(encoding));
             self.set(id, gimli::DW_AT_byte_size, Value::Udata(size));
             id
         }
 
-        fn typedef(&mut self, name: &str, of: UnitEntryId) -> UnitEntryId {
+        pub(crate) fn typedef(&mut self, name: &str, of: UnitEntryId) -> UnitEntryId {
             let id = self.add(self.root(), gimli::DW_TAG_typedef, Some(name));
             self.set(id, gimli::DW_AT_type, Value::UnitRef(of));
             id
         }
 
-        fn structure(
+        pub(crate) fn structure(
             &mut self,
             name: &str,
             size: u64,
@@ -709,14 +825,27 @@ mod tests {
             let id = self.add(self.root(), gimli::DW_TAG_structure_type, Some(name));
             self.set(id, gimli::DW_AT_byte_size, Value::Udata(size));
             for &(member, of, at) in members {
-                let member = self.add(id, gimli::DW_TAG_member, Some(member));
+                let member = self.add(
+                    id,
+                    gimli::DW_TAG_member,
+                    Some(member).filter(|name| !name.is_empty()),
+                );
                 self.set(member, gimli::DW_AT_type, Value::UnitRef(of));
                 self.set(member, gimli::DW_AT_data_member_location, Value::Udata(at));
             }
             id
         }
 
-        fn array(&mut self, of: UnitEntryId, count: u64) -> UnitEntryId {
+        pub(crate) fn pointer(&mut self, of: Option<UnitEntryId>) -> UnitEntryId {
+            let id = self.add(self.root(), gimli::DW_TAG_pointer_type, None);
+            self.set(id, gimli::DW_AT_byte_size, Value::Udata(4));
+            if let Some(of) = of {
+                self.set(id, gimli::DW_AT_type, Value::UnitRef(of));
+            }
+            id
+        }
+
+        pub(crate) fn array(&mut self, of: UnitEntryId, count: u64) -> UnitEntryId {
             let id = self.add(self.root(), gimli::DW_TAG_array_type, None);
             self.set(id, gimli::DW_AT_type, Value::UnitRef(of));
             let range = self.add(id, gimli::DW_TAG_subrange_type, None);
@@ -724,7 +853,7 @@ mod tests {
             id
         }
 
-        fn variable(
+        pub(crate) fn variable(
             &mut self,
             parent: UnitEntryId,
             name: &str,
@@ -740,7 +869,7 @@ mod tests {
         }
 
         /// The ELF file, with the DWARF sections and the symbols given.
-        fn elf(mut self, symbols: &[(&str, u64, u64)]) -> Vec<u8> {
+        pub(crate) fn elf(mut self, symbols: &[(&str, u64, u64)]) -> Vec<u8> {
             let mut sections = Sections::new(EndianVec::new(LittleEndian));
             self.dwarf.write(&mut sections).unwrap();
             let mut elf = Writer::new(BinaryFormat::Elf, Architecture::Arm, Endianness::Little);
@@ -775,6 +904,16 @@ mod tests {
             elf.write().unwrap()
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use gimli::write::{Address, AttributeValue as Value, Expression};
+    use object::write::{Object as Writer, Symbol, SymbolSection};
+    use object::{Architecture, BinaryFormat, Endianness, SectionKind, SymbolFlags, SymbolScope};
+
+    use super::test_dwarf::Firmware;
+    use super::*;
 
     fn find<'a>(found: &'a [Variable], name: &str) -> &'a Variable {
         found
@@ -993,6 +1132,70 @@ mod tests {
         assert_eq!(find(&found, "'uart.c'::state").address, 0x2000_0000);
         assert_eq!(find(&found, "'spi.c'::state").address, 0x2000_0004);
         assert_eq!(found.len(), 2);
+    }
+
+    /// An enumeration of interrupts as CMSIS writes it: of no name of its
+    /// own, named by a typedef, the core's exceptions below 0.
+    fn cmsis_interrupts(firmware: &mut Firmware, name: &str) {
+        let root = firmware.root();
+        let int = firmware.base("int", gimli::DW_ATE_signed, 4);
+        let enumeration = firmware.add(root, gimli::DW_TAG_enumeration_type, None);
+        firmware.set(enumeration, gimli::DW_AT_byte_size, Value::Udata(1));
+        firmware.set(enumeration, gimli::DW_AT_type, Value::UnitRef(int));
+        for (enumerator, value) in [
+            ("PendSV_IRQn", Value::Sdata(-2)),
+            ("WWDG_IRQn", Value::Data1(0)),
+            ("TIM7_IRQn", Value::Data1(50)),
+            ("FMAC_IRQn", Value::Data2(133)),
+        ] {
+            let id = firmware.add(enumeration, gimli::DW_TAG_enumerator, Some(enumerator));
+            firmware.set(id, gimli::DW_AT_const_value, value);
+        }
+        let typedef = firmware.add(root, gimli::DW_TAG_typedef, Some(name));
+        firmware.set(typedef, gimli::DW_AT_type, Value::UnitRef(enumeration));
+    }
+
+    #[test]
+    fn interrupts_are_named_from_cmsis() {
+        let mut firmware = Firmware::new();
+        // A Rust PAC's names, less likely to be the chip's than CMSIS's.
+        let root = firmware.root();
+        let pac = firmware.add(root, gimli::DW_TAG_enumeration_type, Some("Interrupt"));
+        let usart = firmware.add(pac, gimli::DW_TAG_enumerator, Some("USART1"));
+        firmware.set(usart, gimli::DW_AT_const_value, Value::Udata(37));
+        firmware.source("main.c");
+        cmsis_interrupts(&mut firmware, "IRQn_Type");
+
+        let names = interrupt_names(&firmware.elf(&[])).unwrap();
+        assert_eq!(
+            names,
+            [
+                (16, "WWDG".to_string()),
+                (66, "TIM7".to_string()),
+                (149, "FMAC".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn interrupts_are_named_from_a_rust_pac() {
+        let mut firmware = Firmware::new();
+        let root = firmware.root();
+        let module = firmware.add(root, gimli::DW_TAG_namespace, Some("stm32h503"));
+        let pac = firmware.add(module, gimli::DW_TAG_enumeration_type, Some("Interrupt"));
+        for (name, value) in [("TIM7", 50), ("USART1", 37)] {
+            let id = firmware.add(pac, gimli::DW_TAG_enumerator, Some(name));
+            firmware.set(id, gimli::DW_AT_const_value, Value::Udata(value));
+        }
+        let names = interrupt_names(&firmware.elf(&[])).unwrap();
+        assert_eq!(
+            names,
+            [(53, "USART1".to_string()), (66, "TIM7".to_string())]
+        );
+        // Without any such enumeration: no names.
+        let mut firmware = Firmware::new();
+        cmsis_interrupts(&mut firmware, "mode_t");
+        assert!(interrupt_names(&firmware.elf(&[])).unwrap().is_empty());
     }
 
     #[test]

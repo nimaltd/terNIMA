@@ -9,9 +9,9 @@ export type TcpConfig = {
   protocol: Protocol;
   /** The RTT channel J-Link's server uses both ways. */
   channel: number;
-  /** Where OpenOCD's Tcl server listens on `host`, through which the Watch view reads the variables. */
+  /** Where OpenOCD's Tcl server listens on `host`, through which the Live view reads the variables. */
   tcl_port?: number;
-  /** The firmware's ELF file, where the Watch view finds its variables. */
+  /** The firmware's ELF file, where the Live view finds its variables. */
   elf?: string | null;
 };
 
@@ -55,7 +55,7 @@ export const PROTOCOLS: Record<Protocol, { name: string; port: number | null; hi
     port: 9090,
     hint:
       'Start it in OpenOCD: rtt setup <RAM address> <RAM size> "SEGGER RTT", then rtt start, ' +
-      "then rtt server start 9090 0 for channel 0. The debugger keeps the probe, and the Watch view reads " +
+      "then rtt server start 9090 0 for channel 0. The debugger keeps the probe, and the Live view reads " +
       "the variables through OpenOCD's Tcl port.",
   },
 };

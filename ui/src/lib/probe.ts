@@ -108,7 +108,7 @@ export type SwoConfig = {
   /** The ITM stimulus port shown, 0 to 31. */
   port: number;
   all_ports: boolean;
-  /** The firmware's ELF file, where the Watch view finds its variables. */
+  /** The firmware's ELF file, where the Live view finds its variables. */
   elf?: string | null;
 };
 
@@ -129,7 +129,7 @@ export const DEFAULT_SWO: SwoConfig = {
 };
 
 /** SWO baud rates offered in the list. Any other number can be typed. */
-export const SWO_BAUDS = [500_000, 1_000_000, 2_000_000, 4_000_000, 6_000_000, 8_000_000, 12_000_000];
+export const SWO_BAUDS = [500_000, 1_000_000, 2_000_000, 4_000_000, 6_000_000, 8_000_000, 12_000_000, 24_000_000];
 
 /** "32 MHz", "2 MHz", "500 kHz", "115200 Hz" */
 export function hzText(hz: number): string {

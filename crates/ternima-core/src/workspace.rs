@@ -97,14 +97,15 @@ pub enum View {
     Terminal,
     /// Every byte sent and received in hex, 16 to a line.
     Hex,
-    /// Every line in a list, with Zephyr's logs read into level and module
+    /// The Log view: every line in a list, with Zephyr's logs read into level and module
     /// for filters, search, highlights and bookmarks.
     Lines,
     /// The numbers in the lines, drawn over time.
     Plot,
     /// A Modbus master or slave, and the frames on the line, on a serial tab.
     Modbus,
-    /// The variables of an RTT tab's chip, read as it runs, by name from its ELF file.
+    /// The Live view: the variables of a probe tab's chip, read by name from its ELF
+    /// file as it runs, and the tasks of its RTOS.
     Watch,
 }
 
@@ -238,7 +239,7 @@ pub enum ValueMode {
     Regex,
     /// The values read on the Modbus line of a serial tab.
     Modbus,
-    /// The variables an RTT tab's Watch view reads.
+    /// The variables an RTT tab's Live view reads.
     Watch,
 }
 
@@ -431,7 +432,7 @@ pub const HISTORY_MAX: usize = 100;
 /// How often watched variables can be read, in ms: from 100 a second to one a minute.
 const WATCH_EVERY: (u32, u32) = (10, 60_000);
 
-/// The variables a tab's Watch view reads, and how often.
+/// The variables a tab's Live view reads, and how often.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WatchSetup {
@@ -443,6 +444,12 @@ pub struct WatchSetup {
     /// They are shown beside the terminal too.
     #[serde(skip_serializing_if = "is_false")]
     pub beside: bool,
+    /// The timeline leaves out the variables.
+    #[serde(skip_serializing_if = "is_false")]
+    pub timeline_hide_variables: bool,
+    /// The timeline leaves out the interrupts, which an SWO tab then does not trace.
+    #[serde(skip_serializing_if = "is_false")]
+    pub timeline_hide_interrupts: bool,
 }
 
 impl Default for WatchSetup {
@@ -451,6 +458,8 @@ impl Default for WatchSetup {
             names: Vec::new(),
             every_ms: 50,
             beside: false,
+            timeline_hide_variables: false,
+            timeline_hide_interrupts: false,
         }
     }
 }
@@ -1006,6 +1015,8 @@ mode = "tcp"
                     names: vec!["sensor.temp".into(), "counter".into()],
                     every_ms: 2,
                     beside: true,
+                    timeline_hide_interrupts: true,
+                    ..WatchSetup::default()
                 },
                 ..rtt_tab()
             }],

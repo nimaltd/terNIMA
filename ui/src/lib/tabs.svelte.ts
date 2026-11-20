@@ -5,6 +5,8 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import type { Terminal } from "@xterm/xterm";
 import { echoed } from "./echo";
 import { shortNames } from "./watch";
+import { TASKS_EVERY_MS, type RtosFound, type RtosSnapshot } from "./rtos";
+import { Timeline } from "./timeline";
 import { HexDump } from "./hexdump";
 import { DEFAULT_MODBUS, ModbusSession, type ModbusSetup, type Sample } from "./modbus.svelte";
 import { DEFAULT_TCP, address, protocolText, type TcpConfig } from "./net";
@@ -95,6 +97,23 @@ const LATIN1 = new TextDecoder("latin1");
 const SPREAD_MS = 200;
 /** The most watched values a tab keeps for the plot; a tenth of them go when there are more. */
 const WATCH_SAMPLES_MAX = 100_000;
+/** How often a connected tab looks whether its ELF file was built anew. */
+const ELF_LOOK_EVERY_MS = 2000;
+
+/** A timeline opened from a file, with the variables in it. */
+export type OpenedTimeline = { path: string; name: string; timeline: Timeline; samples: Sample[]; series: string[] };
+
+/** What the Live view showed when its timeline was paused. */
+export type LiveFrozen = {
+  /** When, in ms since 1970. */
+  at: number;
+  tasks: RtosSnapshot | null;
+  lastTasks: RtosSnapshot | null;
+  /** The watched variables then, with their values, smallest and largest. */
+  names: string[];
+  values: (number | null)[];
+  range: ({ min: number; max: number } | null)[];
+};
 
 /**
  * A line as the Lines view keeps it: numbered from the tab's first, with when
@@ -188,7 +207,7 @@ export class Tab {
   sending: { name: string; sent: number; total: number } | null = $state(null);
   /** Scroll lock: the screen stays where it is while lines keep coming below it. */
   scrollLock = $state(false);
-  /** The variables the Watch view reads from an RTT tab's chip, and how often. */
+  /** The variables the Live view reads from an RTT tab's chip, and how often. */
   watch: WatchSetup = $state({ ...DEFAULT_WATCH });
   /** The watched variables' newest values, in their order, and the smallest and largest of each. */
   watchValues: (number | null)[] = $state([]);
@@ -196,6 +215,45 @@ export class Tab {
   /** Whether the ELF file has each watched variable, and why none can be read, if so. */
   watchFound: boolean[] = $state([]);
   watchProblem: string | null = $state(null);
+  /** The RTOS found in the ELF file, its tasks as last read, and why they cannot be read. */
+  rtos: RtosFound | null = $state(null);
+  tasks: RtosSnapshot | null = $state(null);
+  tasksProblem: string | null = $state(null);
+  /** The last read that found tasks, kept on screen while a read finds none. */
+  lastTasks: RtosSnapshot | null = $state(null);
+  /**
+   * Which task ran when, sampled, for the timeline at the top of the Live
+   * view. Plain, as it can be big: `timelineVersion` changes with it.
+   */
+  readonly timeline = new Timeline();
+  timelineVersion = $state(0);
+  /**
+   * The timeline records from when the Live view is first shown, in any view
+   * after that: a tab only read through RTT never samples. Paused, the Live
+   * view holds still while it goes on recording, so it misses nothing.
+   */
+  timelinePaused = $state(false);
+  private timelineStarted = $state(false);
+  /**
+   * The Live view as the timeline was paused: its tasks and values stay so
+   * on screen while paused, as the timeline does, though the chip runs on.
+   */
+  timelineFrozen: LiveFrozen | null = $state.raw(null);
+  /** A timeline opened from a file, shown instead of this tab's own while it is open. */
+  openedTimeline: OpenedTimeline | null = $state.raw(null);
+  /** When the chip last dropped some of an SWO tab's trace, as too much for SWO: ms since 1970. */
+  swoDroppedAt = $state(0);
+  /** Whether the chip is halted, by the Live view's Pause, as its session tells. */
+  chipHalted = $state(false);
+  /**
+   * Changes each time the ELF file is read again: at each connection, and
+   * when it is built anew while connected, so what the Live view shows
+   * comes from the newest firmware.
+   */
+  elfRead = $state(0);
+  /** When the ELF file was last changed, as last looked at. */
+  private elfModified: number | null = null;
+  private elfTimer: ReturnType<typeof setInterval> | undefined;
   /**
    * The watched values over time, for the plot. Plain values, as there can be
    * many: `watchVersion` changes with them.
@@ -268,7 +326,7 @@ export class Tab {
     }
     this.history = setup.history ?? [];
     this.watch = { ...DEFAULT_WATCH, ...setup.watch };
-    // The Watch view reads through a probe: it is on the tabs that have one.
+    // The Live view reads through a probe: it is on the tabs that have one.
     if (!this.canWatch) {
       if (this.view === "watch") this.view = "terminal";
       if (this.plotView.mode === "watch") this.plotView.mode = "auto";
@@ -286,14 +344,19 @@ export class Tab {
   }
 
   /**
-   * Whether the tab reaches the chip's memory, for the Watch view: RTT and
+   * Whether the tab reaches the chip's memory, for the Live view: RTT and
    * SWO tabs through their probe, and OpenOCD's RTT server through its Tcl port.
    */
   get canWatch(): boolean {
     return this.kind === "rtt" || this.kind === "swo" || (this.kind === "tcp" && this.tcp.protocol === "openocd");
   }
 
-  /** The firmware's ELF file, where the Watch view finds the variables. */
+  /** Whether the tab can halt its chip, for Pause: through its own probe, not a debugger's server. */
+  get canHalt(): boolean {
+    return this.kind === "rtt" || this.kind === "swo";
+  }
+
+  /** The firmware's ELF file, where the Live view finds the variables. */
   get elf(): string | null {
     if (this.kind === "serial") return this.serial.elf ?? null;
     if (this.kind === "rtt") return this.rtt.elf ?? null;
@@ -317,10 +380,11 @@ export class Tab {
     if (this.kind === "rtt") {
       this.reconfigureRtt({ ...this.rtt, elf: path });
     } else if (this.kind === "swo" || this.kind === "tcp") {
-      // Only the Watch view reads it: the session goes on as it is.
+      // Only the Live view reads it: the session goes on as it is.
       if (this.kind === "swo") this.swo = { ...this.swo, elf: path };
       else this.tcp = { ...this.tcp, elf: path };
       this.sendWatch();
+      this.sendTasks();
       changed();
     }
   }
@@ -433,9 +497,10 @@ export class Tab {
 
   /** Shows the terminal or another view. */
   setView(view: View): void {
-    // Without a terminal, its views are the Watch view: as Plot toggled off.
+    // Without a terminal, its views are the Live view: as Plot toggled off.
     this.view = this.watchOnly && view !== "plot" ? "watch" : view;
     this.listenForModbus();
+    this.sendTasks();
     changed();
   }
 
@@ -528,7 +593,102 @@ export class Tab {
       });
   }
 
-  /** Values the session read: the newest for the Watch view, and all of them for the plot. */
+  /**
+   * Reads the RTOS's tasks while the Live view shows, found through the ELF
+   * file again, as after the firmware was built anew; and stops otherwise.
+   */
+  sendTasks(): void {
+    if (!this.canWatch || !this.running) {
+      return;
+    }
+    if (this.view === "watch") {
+      this.timelineStarted = true;
+    }
+    const recording = this.timelineRecording;
+    const elf = this.view === "watch" || recording ? (this.elf ?? "") : "";
+    this.sendTrace();
+    invoke<RtosFound | null>("tasks_session", { id: this.id, elf, everyMs: TASKS_EVERY_MS, sample: recording })
+      .then((found) => {
+        if (elf) {
+          this.rtos = found;
+          if (!found) {
+            this.tasks = null;
+            this.lastTasks = null;
+          }
+        }
+        this.tasksProblem = null;
+      })
+      .catch((problem) => {
+        this.rtos = null;
+        this.tasks = null;
+        this.lastTasks = null;
+        this.tasksProblem = String(problem);
+      });
+  }
+
+  /** Whether the timeline records now: the running task sampled as fast as the probe answers, or traced. Paused too. */
+  get timelineRecording(): boolean {
+    return this.timelineStarted;
+  }
+
+  /** Shows the variables, or the interrupts, in the timeline, or leaves them out. */
+  setTimelineShows(part: "variables" | "interrupts", shown: boolean): void {
+    if (part === "variables") {
+      this.watch.timeline_hide_variables = !shown;
+    } else {
+      this.watch.timeline_hide_interrupts = !shown;
+      this.sendTrace();
+    }
+    changed();
+  }
+
+  /**
+   * Has an SWO tab trace every exception while the timeline records and
+   * shows the interrupts: only then, as they take much of SWO's room.
+   */
+  private sendTrace(): void {
+    if (this.kind !== "swo" || !this.running) {
+      return;
+    }
+    const interrupts = this.timelineRecording && this.watch.timeline_hide_interrupts !== true;
+    invoke("trace_session", { id: this.id, interrupts }).catch((problem) => console.error(problem));
+  }
+
+  /**
+   * Pauses: halts the chip, where the tab has its own probe, and holds the
+   * Live view still, its timeline, tasks and values, to look at them; or
+   * has the chip run again and shows them live. Halted, the chip does
+   * nothing to record; a tab that cannot halt it goes on recording.
+   */
+  setTimelinePaused(paused: boolean): void {
+    if (this.canHalt && this.running) {
+      invoke("halt_session", { id: this.id, halt: paused }).catch((problem) => this.note(String(problem)));
+    }
+    this.timelinePaused = paused;
+    this.timelineFrozen = paused
+      ? {
+          at: Date.now(),
+          tasks: this.tasks,
+          lastTasks: this.lastTasks,
+          names: [...this.watchSent],
+          values: [...this.watchValues],
+          range: [...this.watchRange],
+        }
+      : null;
+  }
+
+  /** Forgets what the timeline recorded. */
+  clearTimeline(): void {
+    this.timeline.clear();
+    this.timelineVersion++;
+  }
+
+  /** The names of the watched variables as their samples have them, for the timeline. */
+  get watchSeriesNames(): string[] {
+    return this.watchSeries;
+  }
+
+  /** Values the session read: the newest for the Live view, and all of them for the plot. */
   private onWatched(values: (number | null)[], at: number): void {
     const names = this.watchSent;
     // From before the list changed.
@@ -687,7 +847,7 @@ export class Tab {
   }
 
   /**
-   * Scroll lock: the terminal, the hex view and the Zephyr view keep the
+   * Scroll lock: the terminal, the hex view and the Log view keep the
    * screen where it is while lines keep coming below, to be scrolled down to;
    * off, they follow the newest line again. Each view does it, as the tab says.
    */
@@ -695,7 +855,7 @@ export class Tab {
     this.scrollLock = on;
   }
 
-  /** Clears the terminal, the hex view or the Zephyr view, whichever is shown. */
+  /** Clears the terminal, the hex view or the Log view, whichever is shown. */
   clearScreen(): void {
     if (this.view === "lines") {
       this.clearLines();
@@ -758,6 +918,7 @@ export class Tab {
         if (this.watch.names.length > 0) {
           this.sendWatch();
         }
+        this.sendTasks();
         // The terminal may have changed size, or opened, while the session started.
         if (this.term) {
           this.resized(this.term.cols, this.term.rows);
@@ -911,6 +1072,7 @@ export class Tab {
     if (!this.running) {
       return;
     }
+    this.unfollowElf();
     if (this.connected) {
       this.leaveProgram();
       this.note(`closed at ${clock(Date.now())}`);
@@ -924,6 +1086,10 @@ export class Tab {
     this.status = null;
     this.question = null;
     this.lines = null;
+    this.tasks = null;
+    this.lastTasks = null;
+    // Ending the session ran the chip again.
+    this.chipHalted = false;
     this.connectedAt = null;
     this.logPath = null;
     this.recordPath = null;
@@ -954,6 +1120,7 @@ export class Tab {
       void invoke("reconfigure_rtt_session", { id: this.id, config: $state.snapshot(rtt) });
       if (rtt.elf !== elfBefore) {
         this.sendWatch();
+        this.sendTasks();
       }
       if (this.connected && rtt.up_channel !== channelBefore) {
         const channel = this.channels?.up.find((up) => up.number === rtt.up_channel);
@@ -971,6 +1138,7 @@ export class Tab {
       void invoke("reconfigure_swo_session", { id: this.id, config: $state.snapshot(swo) });
       if (swo.elf !== elfBefore) {
         this.sendWatch();
+        this.sendTasks();
       }
     }
     changed();
@@ -990,6 +1158,7 @@ export class Tab {
       if (this.watch.names.length > 0) {
         this.sendWatch();
       }
+      this.sendTasks();
     }
     changed();
   }
@@ -1457,6 +1626,22 @@ export class Tab {
       case "watch_problem":
         this.watchProblem = event.problem;
         return;
+      case "tasks":
+        this.tasks = event.snapshot;
+        if (event.snapshot.tasks.length > 0) this.lastTasks = event.snapshot;
+        this.timeline.learn(event.snapshot);
+        return;
+      case "running":
+        this.timeline.add(event.running);
+        this.timelineVersion++;
+        return;
+      case "interrupts":
+        this.timeline.addInterrupts(event.interrupts, event.base);
+        this.timelineVersion++;
+        return;
+      case "halted":
+        this.chipHalted = event.halted;
+        return;
       case "rtt_state":
         if (event.state === "connected" || event.state === "watching") {
           this.rttAddress = event.state === "connected" ? event.address : null;
@@ -1466,6 +1651,7 @@ export class Tab {
           if (this.watch.names.length > 0) {
             this.sendWatch();
           }
+          this.sendTasks();
         } else {
           this.onWaiting(event.problem);
         }
@@ -1476,6 +1662,7 @@ export class Tab {
           if (this.watch.names.length > 0) {
             this.sendWatch();
           }
+          this.sendTasks();
         } else {
           this.onWaiting(event.problem);
         }
@@ -1483,6 +1670,7 @@ export class Tab {
       case "tcp_state":
         if (event.state === "connected") {
           this.onConnected(event.address, `${event.address}, ${protocolText(this.tcp)}`);
+          this.sendTasks();
         } else {
           this.onWaiting(event.problem);
         }
@@ -1511,6 +1699,7 @@ export class Tab {
         changed();
         return;
       case "overflow":
+        this.swoDroppedAt = Date.now();
         this.note(`SWO overflow: the chip dropped trace data ${event.count} times. A higher baud rate helps.`);
         return;
     }
@@ -1531,12 +1720,47 @@ export class Tab {
     this.connectedAt = now;
     this.target = target;
     this.status = { state: "connected" };
+    this.followElf();
+  }
+
+  /**
+   * Reads the ELF file again now, as the session did on connecting, and
+   * again each time it is built anew while connected.
+   */
+  private followElf(): void {
+    this.unfollowElf();
+    if (!this.canWatch || !this.elf) {
+      return;
+    }
+    this.elfRead++;
+    const path = this.elf;
+    const look = () =>
+      invoke<number | null>("file_modified", { path }).then((modified) => {
+        const before = this.elfModified;
+        this.elfModified = modified;
+        if (modified === null || before === null || modified === before || path !== this.elf) {
+          return;
+        }
+        // Built anew: its variables and tasks may have moved.
+        this.elfRead++;
+        if (this.watch.names.length > 0) this.sendWatch();
+        this.sendTasks();
+      });
+    this.elfModified = null;
+    void look();
+    this.elfTimer = setInterval(() => void look(), ELF_LOOK_EVERY_MS);
+  }
+
+  private unfollowElf(): void {
+    clearInterval(this.elfTimer);
+    this.elfTimer = undefined;
   }
 
   private onWaiting(problem: string | null): void {
     const now = Date.now();
     const before = this.status?.state === "waiting" ? this.status.problem : null;
     if (this.connected) {
+      this.unfollowElf();
       this.lostAt = now;
       this.lines = null;
       this.connectedAt = null;

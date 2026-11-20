@@ -6,8 +6,8 @@
   import type { Protocol } from "./net";
   import type { SessionKind } from "./serial";
 
-  /** Opens the dialog for a new session of a kind; a TCP one can start with a protocol. */
-  let { onnew }: { onnew: (kind: SessionKind, protocol?: Protocol) => void } = $props();
+  /** Opens the dialog for a new session of a kind; a TCP one can start with a protocol, a probe one without RTT. */
+  let { onnew }: { onnew: (kind: SessionKind, protocol?: Protocol, live?: boolean) => void } = $props();
 
   let bar: HTMLDivElement;
   let add: HTMLButtonElement;
@@ -22,9 +22,9 @@
     }
   }
 
-  function pick(kind: SessionKind, protocol?: Protocol) {
+  function pick(kind: SessionKind, protocol?: Protocol, live?: boolean) {
     choice = null;
-    onnew(kind, protocol);
+    onnew(kind, protocol, live);
   }
 
   function onWindowMouseDown(event: MouseEvent) {

@@ -21,7 +21,7 @@
     { view: "hex", label: "Hex", title: "Every byte sent and received in hex (Ctrl+Shift+H)" },
     {
       view: "lines",
-      label: "Zephyr",
+      label: "Log",
       title: "Every line in a list: Zephyr's logs by level and module, search, highlight, bookmark (Ctrl+Shift+J)",
     },
     {
@@ -36,13 +36,13 @@
     },
     {
       view: "watch",
-      label: "Watch",
-      title: "The firmware's variables, read through the probe as the chip runs, by name from its ELF file",
+      label: "Live",
+      title: "The firmware's variables and its RTOS's tasks, read through the probe as the chip runs, by name from its ELF file",
     },
   ];
 
   /**
-   * Modbus is for serial tabs, and Watch for the tabs with a probe. A tab
+   * Modbus is for serial tabs, and Live for the tabs with a probe. A tab
    * that only watches variables has nothing for the terminal views.
    */
   const views = $derived(
@@ -146,7 +146,7 @@
     {:else if tab.kind === "rtt"}
       <button class="btn target" title={tab.watchOnly ? "Watch settings" : "RTT settings"} onclick={onsettings}>
         <span class="mono">{tab.rtt.chip || "No chip"}</span>
-        <span class="muted">{tab.watchOnly ? "Watch" : "RTT"}</span>
+        <span class="muted">{tab.watchOnly ? "Live" : "RTT"}</span>
         <span class="muted">▾</span>
       </button>
 

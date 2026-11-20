@@ -26,6 +26,7 @@
   let {
     kind,
     tab = null,
+    live = false,
     onclose,
     onserver,
   }: {
@@ -33,6 +34,8 @@
     kind: "rtt" | "swo";
     /** The tab whose settings to change, or null for a new session. */
     tab?: Tab | null;
+    /** A new session starts without RTT, on the Live view. */
+    live?: boolean;
     onclose: () => void;
     /** Opens the dialog for RTT from a debugger's own server instead, for a new session. */
     onserver?: () => void;
@@ -42,8 +45,8 @@
 
   // A copy of the tab's settings, taken once: nothing changes until Save.
   const start = untrack(() => tab?.setup() ?? null);
-  let rtt: RttConfig = $state({ ...DEFAULT_RTT, ...start?.rtt });
-  const LABEL = $derived(KIND === "swo" ? "SWO" : rtt.watch_only ? "Watch" : "RTT");
+  let rtt: RttConfig = $state({ ...DEFAULT_RTT, watch_only: untrack(() => live), ...start?.rtt });
+  const LABEL = $derived(KIND === "swo" ? "SWO" : rtt.watch_only ? "Live" : "RTT");
   let swo: SwoConfig = $state({ ...DEFAULT_SWO, ...start?.swo });
   /** The settings both kinds have: which probe, which chip, and how to attach. */
   const own = KIND === "rtt" ? rtt : swo;
@@ -344,9 +347,9 @@
 
   <label class="dlg-label elf">
     {#if KIND === "swo"}
-      Firmware ELF file, for the variables in the Watch view (optional)
+      Firmware ELF file, for the variables and tasks in the Live view (optional)
     {:else if rtt.watch_only}
-      Firmware ELF file, for the variables in the Watch view
+      Firmware ELF file, for the variables and tasks in the Live view
     {:else}
       Firmware ELF file, to find RTT quickly and exactly, and the variables (optional)
     {/if}
@@ -354,11 +357,11 @@
       {#if KIND === "rtt"}
         <input
           class="field mono"
-          placeholder={rtt.watch_only ? "Or choose it in the Watch view" : "Without it, RAM is searched"}
+          placeholder={rtt.watch_only ? "Or choose it in the Live view" : "Without it, RAM is searched"}
           bind:value={rtt.elf}
         />
       {:else}
-        <input class="field mono" placeholder="Or choose it in the Watch view" bind:value={swo.elf} />
+        <input class="field mono" placeholder="Or choose it in the Live view" bind:value={swo.elf} />
       {/if}
       <button class="btn" onclick={browse}>Browse...</button>
     </span>
@@ -451,7 +454,7 @@
       <input type="checkbox" bind:checked={target.under_reset} /> Connect under reset
     </label>
     {#if KIND === "rtt"}
-      <label class="dlg-check" title="Off, only the variables in the Watch view are read: for firmware without RTT">
+      <label class="dlg-check" title="Off, only the Live view's variables and tasks are read: for firmware without RTT">
         <input
           type="checkbox"
           checked={!rtt.watch_only}

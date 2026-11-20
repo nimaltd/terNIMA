@@ -1,4 +1,4 @@
-//! Lists the variables in an ELF file that the Watch view can read: each
+//! Lists the variables in an ELF file that the Live view can read: each
 //! one's address, kind and type, and how many there are.
 //! Run with `cargo run -p ternima-core --example variables -- <file.elf> [part of a name]`.
 

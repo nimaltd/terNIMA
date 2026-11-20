@@ -60,7 +60,7 @@ pub struct TcpConfig {
     /// view reads the variables. The other protocols leave it alone.
     #[serde(skip_serializing_if = "is_tcl_port")]
     pub tcl_port: u16,
-    /// The firmware's ELF file, where the Watch view finds its variables.
+    /// The firmware's ELF file, where the Live view finds its variables.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub elf: Option<String>,
 }

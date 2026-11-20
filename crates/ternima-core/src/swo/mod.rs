@@ -4,7 +4,8 @@
 mod config;
 mod itm;
 mod session;
+pub mod trace;
 
 pub use config::SwoConfig;
-pub use itm::{ItmDecoder, ItmPacket};
+pub use itm::{ExceptionEvent, ItmDecoder, ItmPacket};
 pub use session::{Event, ProbeRs, Session, SwoBackend, SwoLink, SwoState};

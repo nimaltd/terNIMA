@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::ops::Range;
+use std::time::Duration;
 
 use probe_rs::config::MemoryRegion;
 use probe_rs::rtt::{Rtt, find_rtt_control_block_in_raw_file};
@@ -9,7 +10,9 @@ use probe_rs::{Core, MemoryInterface, Session};
 use serde::Serialize;
 
 use super::config::RttConfig;
+use crate::awake::Awake;
 use crate::probe::{self, Target};
+use crate::watch::MemoryRead;
 
 /// One RTT channel, as the firmware set it up.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -61,9 +64,20 @@ pub trait RttLink: Send {
     fn reset(&mut self) -> Result<(), LinkProblem>;
     /// Reads the chip's memory while it runs, as the watched variables are read.
     fn read_memory(&mut self, address: u64, buf: &mut [u8]) -> Result<(), LinkProblem>;
+    /// Reads the chip's memory many times over with the core taken once,
+    /// which is quicker: `work` gets a reader that fills a block from an
+    /// address and says whether it could.
+    fn read_many(&mut self, work: &mut dyn FnMut(&mut MemoryRead<'_>)) {
+        work(&mut |address, block| self.read_memory(address, block).is_ok());
+    }
     /// Whether the chip can still be reached through the probe, for a
     /// session that only reads variables and has no control block to check.
     fn reachable(&mut self) -> Result<(), LinkProblem>;
+    /// Halts the core, or has it run again.
+    fn halt(&mut self, halt: bool) -> Result<(), LinkProblem> {
+        let _ = halt;
+        Ok(())
+    }
 }
 
 /// Real probes, through probe-rs.
@@ -90,6 +104,7 @@ impl RttBackend for ProbeRs {
             session,
             rtt: None,
             found: None,
+            awake: Awake::new(&config.chip),
         }))
     }
 }
@@ -100,6 +115,16 @@ struct ProbeRsLink {
     /// Where the control block was found last, looked at first when it is
     /// looked for again: after a reset, the firmware puts it there again.
     found: Option<u64>,
+    /// Keeps a sleeping STM32's RAM readable.
+    awake: Awake,
+}
+
+/// The chip's core, with an STM32's DMA clock checked first, so that its
+/// memory reads right while it sleeps.
+fn awake_core<'a>(session: &'a mut Session, awake: &mut Awake) -> Result<Core<'a>, LinkProblem> {
+    let mut core = session.core(0).map_err(lost)?;
+    awake.check(&mut core);
+    Ok(core)
 }
 
 impl RttLink for ProbeRsLink {
@@ -109,7 +134,7 @@ impl RttLink for ProbeRsLink {
             (Some(path), None) => Some(symbol_address(path)?),
             (None, None) => None,
         };
-        let mut core = self.session.core(0).map_err(lost)?;
+        let mut core = awake_core(&mut self.session, &mut self.awake)?;
         let mut rtt = match exact {
             Some(address) => Rtt::attach_at(&mut core, address).map_err(from_rtt)?,
             None => find_in_ram(&mut core, self.found, quick)?,
@@ -140,7 +165,7 @@ impl RttLink for ProbeRsLink {
 
     fn read(&mut self, channel: usize, buf: &mut [u8]) -> Result<usize, LinkProblem> {
         let rtt = self.rtt.as_mut().ok_or_else(not_found)?;
-        let mut core = self.session.core(0).map_err(lost)?;
+        let mut core = awake_core(&mut self.session, &mut self.awake)?;
         let up = rtt.up_channel(channel).ok_or_else(|| {
             LinkProblem::NoControlBlock(format!("The firmware has no up channel {channel}."))
         })?;
@@ -149,7 +174,7 @@ impl RttLink for ProbeRsLink {
 
     fn write(&mut self, channel: usize, data: &[u8]) -> Result<usize, LinkProblem> {
         let rtt = self.rtt.as_mut().ok_or_else(not_found)?;
-        let mut core = self.session.core(0).map_err(lost)?;
+        let mut core = awake_core(&mut self.session, &mut self.awake)?;
         let down = rtt.down_channel(channel).ok_or_else(|| {
             LinkProblem::NoControlBlock(format!("The firmware has no down channel {channel}."))
         })?;
@@ -161,7 +186,7 @@ impl RttLink for ProbeRsLink {
             return Ok(false);
         };
         let address = rtt.ptr();
-        let mut core = self.session.core(0).map_err(lost)?;
+        let mut core = awake_core(&mut self.session, &mut self.awake)?;
         let mut id = [0; 16];
         core.read_8(address, &mut id).map_err(lost)?;
         Ok(id == Rtt::RTT_ID)
@@ -170,16 +195,36 @@ impl RttLink for ProbeRsLink {
     fn reset(&mut self) -> Result<(), LinkProblem> {
         self.rtt = None;
         let mut core = self.session.core(0).map_err(lost)?;
-        core.reset().map_err(lost)
+        core.reset().map_err(lost)?;
+        // A reset turns the DMA clock off.
+        self.awake.after_reset();
+        Ok(())
+    }
+
+    fn halt(&mut self, halt: bool) -> Result<(), LinkProblem> {
+        let mut core = self.session.core(0).map_err(lost)?;
+        if halt {
+            core.halt(HALT_WAIT).map(|_| ()).map_err(lost)
+        } else {
+            core.run().map_err(lost)
+        }
     }
 
     fn read_memory(&mut self, address: u64, buf: &mut [u8]) -> Result<(), LinkProblem> {
-        let mut core = self.session.core(0).map_err(lost)?;
-        core.read_8(address, buf).map_err(lost)
+        let mut core = awake_core(&mut self.session, &mut self.awake)?;
+        // In words where it can: a byte at a time is many times slower.
+        core.read(address, buf).map_err(lost)
+    }
+
+    fn read_many(&mut self, work: &mut dyn FnMut(&mut MemoryRead<'_>)) {
+        match awake_core(&mut self.session, &mut self.awake) {
+            Ok(mut core) => work(&mut |address, block| core.read(address, block).is_ok()),
+            Err(_) => work(&mut |_, _| false),
+        }
     }
 
     fn reachable(&mut self) -> Result<(), LinkProblem> {
-        let mut core = self.session.core(0).map_err(lost)?;
+        let mut core = awake_core(&mut self.session, &mut self.awake)?;
         core.status().map(|_| ()).map_err(lost)
     }
 }
@@ -284,6 +329,9 @@ fn symbol_address(path: &str) -> Result<u64, LinkProblem> {
 fn not_found() -> LinkProblem {
     LinkProblem::NoControlBlock("The control block has not been found yet.".into())
 }
+
+/// The longest a core takes to halt.
+const HALT_WAIT: Duration = Duration::from_millis(500);
 
 fn lost(error: probe_rs::Error) -> LinkProblem {
     LinkProblem::Lost(error.to_string())

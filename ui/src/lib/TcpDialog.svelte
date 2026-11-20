@@ -72,7 +72,7 @@
       error = "Enter OpenOCD's Tcl port: a whole number from 1 to 65535, 6666 unless OpenOCD is told otherwise.";
       return;
     }
-    // The Watch view's ELF file stays as it was.
+    // The Live view's ELF file stays as it was.
     const tcp: TcpConfig = { ...first, host: host.trim(), port, protocol, channel, tcl_port: tclPort };
     const sessionName = name.trim() || suggested;
 
@@ -135,7 +135,7 @@
     {:else if protocol === "openocd"}
       <label
         class="dlg-label"
-        title="OpenOCD's Tcl server, through which the Watch view reads the variables as the chip runs: 6666 unless OpenOCD is told otherwise"
+        title="OpenOCD's Tcl server, through which the Live view reads the variables as the chip runs: 6666 unless OpenOCD is told otherwise"
       >
         Tcl port, for Watch
         <input class="field mono" inputmode="numeric" bind:value={tclText} oninput={() => (error = "")} />

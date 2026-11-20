@@ -3,12 +3,13 @@
 
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use crate::net;
 use crate::watch::{Watched, Watcher};
+use crate::{net, rtos};
 
 /// The port OpenOCD's Tcl server listens on, unless told otherwise.
 pub const TCL_PORT: u16 = 6666;
@@ -27,10 +28,15 @@ pub enum Event {
     /// The watched variables' values, in their order: `None` for one that
     /// could not be read, or is not in the firmware.
     Watch(Vec<Option<f64>>),
+    /// The RTOS's tasks, as they were.
+    Tasks(rtos::Snapshot),
+    /// Which tasks ran, sampled: the switches since it was last told.
+    Running(rtos::Running),
 }
 
 enum Command {
     Watch(Vec<Option<Watched>>, Duration),
+    Tasks(Option<Arc<rtos::Layout>>, Duration, bool),
     Close,
 }
 
@@ -69,6 +75,12 @@ impl Session {
     pub fn watch(&self, watch: Vec<Option<Watched>>, every: Duration) {
         let _ = self.commands.send(Command::Watch(watch, every));
     }
+
+    /// Reads the tasks of the RTOS laid out so every `every`, and with
+    /// `sample` which task runs, as fast as the server answers. `None` stops it.
+    pub fn tasks(&self, layout: Option<Arc<rtos::Layout>>, every: Duration, sample: bool) {
+        let _ = self.commands.send(Command::Tasks(layout, every, sample));
+    }
 }
 
 impl Drop for Session {
@@ -97,6 +109,9 @@ impl Worker {
             if self.watcher.next_in().is_none() {
                 match self.commands.recv() {
                     Ok(Command::Watch(watch, every)) => self.watcher.set(watch, every),
+                    Ok(Command::Tasks(layout, every, sample)) => {
+                        self.watcher.set_tasks(layout, every, sample)
+                    }
                     Ok(Command::Close) | Err(_) => return,
                 }
                 continue;
@@ -149,26 +164,32 @@ impl Worker {
             match self.commands.recv_timeout(left) {
                 Err(RecvTimeoutError::Timeout) => {}
                 Ok(Command::Watch(watch, every)) => self.watcher.set(watch, every),
+                Ok(Command::Tasks(layout, every, sample)) => {
+                    self.watcher.set_tasks(layout, every, sample)
+                }
                 Ok(Command::Close) | Err(RecvTimeoutError::Disconnected) => return None,
             }
             let mut lost = None;
-            let read = |address, block: &mut [u8]| {
-                if lost.is_some() {
-                    return false;
-                }
-                match read_memory(&mut stream, &mut answers, address, block) {
-                    Ok(read) => read,
-                    Err(error) => {
-                        lost = Some(error);
-                        false
-                    }
-                }
-            };
-            if let Some(values) = self.watcher.read_if_due(read) {
-                if let Some(error) = lost {
-                    return Some(format!("Lost OpenOCD's Tcl server: {error}"));
-                }
+            let values = self
+                .watcher
+                .read_if_due(reader(&mut stream, &mut answers, &mut lost));
+            let tasks = self
+                .watcher
+                .tasks_if_due(reader(&mut stream, &mut answers, &mut lost));
+            let running = self
+                .watcher
+                .running_if_due(reader(&mut stream, &mut answers, &mut lost));
+            if let Some(error) = lost {
+                return Some(format!("Lost OpenOCD's Tcl server: {error}"));
+            }
+            if let Some(values) = values {
                 (self.on_event)(Event::Watch(values));
+            }
+            if let Some(tasks) = tasks {
+                (self.on_event)(Event::Tasks(tasks));
+            }
+            if let Some(running) = running {
+                (self.on_event)(Event::Running(running));
             }
         }
     }
@@ -179,6 +200,10 @@ impl Worker {
             Err(RecvTimeoutError::Timeout) => true,
             Ok(Command::Watch(watch, every)) => {
                 self.watcher.set(watch, every);
+                true
+            }
+            Ok(Command::Tasks(layout, every, sample)) => {
+                self.watcher.set_tasks(layout, every, sample);
                 true
             }
             Ok(Command::Close) | Err(RecvTimeoutError::Disconnected) => false,
@@ -196,6 +221,26 @@ impl Worker {
 /// What came from the server and has not been taken as an answer yet.
 #[derive(Default)]
 struct Answers(Vec<u8>);
+
+/// Reads memory through the server until it is lost, which `lost` then says.
+fn reader<'a>(
+    stream: &'a mut TcpStream,
+    answers: &'a mut Answers,
+    lost: &'a mut Option<io::Error>,
+) -> impl FnMut(u64, &mut [u8]) -> bool + 'a {
+    move |address, block| {
+        if lost.is_some() {
+            return false;
+        }
+        match read_memory(stream, answers, address, block) {
+            Ok(read) => read,
+            Err(error) => {
+                *lost = Some(error);
+                false
+            }
+        }
+    }
+}
 
 impl Answers {
     /// The next answer, without its end byte.

@@ -602,8 +602,26 @@ Done when you can find one module's errors in a busy Zephyr log in seconds.
 
 - [x] Crash and address decoding from the ELF: in the terminal and the Lines view, on every
   kind of tab with an ELF file, serial too
-- [x] Live variable watch and plot: the Watch view of RTT tabs, the variables found by name
-  in the ELF's debug information and read through the probe as the chip runs
+- [x] Live variable watch and plot: the Live view (once called Watch) of RTT tabs, the
+  variables found by name in the ELF's debug information and read through the probe as the
+  chip runs
+- [x] RTOS tasks in the Live view: Zephyr's threads (the kernel's list with
+  CONFIG_THREAD_MONITOR, or the k_thread structs the firmware defines) and FreeRTOS's tasks
+  (its ready, delayed, suspended and deleted lists), with state, priority, stack use from the
+  kernel's fill, and CPU share from the run-time counters. Struct layouts from DWARF, so any
+  config of the kernel reads. Read on a NUCLEO-H503RB running Zephyr 4.3; FreeRTOS only
+  through tests so far
+- [x] Timeline at the top of the Live view: which task ran when, from the running task's
+  pointer sampled as fast as the probe answers (about 2,700 a second with an ST-Link V3),
+  and the watched variables over the same time; saved to and opened from a JSON file
+- [x] Every task switch and interrupt, timed exactly, in an SWO tab: a DWT comparator on
+  the running task's pointer, its writes sent over SWO with the ITM's timestamps, and the
+  exception trace. Checked on the NUCLEO-H503RB, Cortex-M33, at 24 MHz: ping-pong threads
+  switching every 6 µs come through apart. ARMv7-M's encoding is from the manual, not yet
+  checked on a chip. Times count from a whole ms, to keep their nanoseconds; the timeline
+  zooms to a microsecond across, scrolls, and names the interrupts from CMSIS's `IRQn_Type`
+- [x] A sleeping STM32 stays readable: its first DMA controller's clock turned on, as
+  Zephyr does for RTT, with the RCC register of each line taken from ST's headers
 - [ ] SVD register viewer
 - [x] SWO / ITM (done in Phase 2)
 

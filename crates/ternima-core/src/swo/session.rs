@@ -12,8 +12,11 @@ use serde::Serialize;
 
 use super::config::SwoConfig;
 use super::itm::{ItmDecoder, ItmPacket};
+use super::trace::{self, Interrupt, Tracer};
+use crate::awake::Awake;
 use crate::probe::{self, Target};
-use crate::watch::{Watched, Watcher};
+use crate::rtos;
+use crate::watch::{MemoryRead, Watched, Watcher};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -36,6 +39,16 @@ pub enum Event {
     /// The watched variables' values, in their order: `None` for one that
     /// could not be read, or is not in the firmware.
     Watch(Vec<Option<f64>>),
+    /// The RTOS's tasks, as they were.
+    Tasks(rtos::Snapshot),
+    /// Which tasks ran, sampled or traced: the switches since it was last told.
+    Running(rtos::Running),
+    /// The exceptions traced since it was last told: each interrupt
+    /// entered, left and returned to, at times in ms after the first, the
+    /// whole ms since 1970 they count from.
+    Interrupts(f64, Vec<Interrupt>),
+    /// Whether the chip is halted, by the Live view's Pause, told when that changes.
+    Halted(bool),
 }
 
 /// Starts tracing on a chip.
@@ -54,6 +67,24 @@ pub trait SwoLink: Send {
     fn reset(&mut self) -> Result<(), String>;
     /// Reads the chip's memory while it runs, as the watched variables are read.
     fn read_memory(&mut self, address: u64, buf: &mut [u8]) -> Result<(), String>;
+    /// Has the chip send each value written to `writes`, the kernel's
+    /// pointer to the running task, and with `exceptions` each exception;
+    /// says whether it can send the writes.
+    fn trace(&mut self, writes: Option<u64>, exceptions: bool) -> Result<bool, String> {
+        let _ = (writes, exceptions);
+        Ok(false)
+    }
+    /// Halts the core, or has it run again.
+    fn halt(&mut self, halt: bool) -> Result<(), String> {
+        let _ = halt;
+        Ok(())
+    }
+    /// Reads the chip's memory many times over with the core taken once,
+    /// which is quicker: `work` gets a reader that fills a block from an
+    /// address and says whether it could.
+    fn read_many(&mut self, work: &mut dyn FnMut(&mut MemoryRead<'_>)) {
+        work(&mut |address, block| self.read_memory(address, block).is_ok());
+    }
 }
 
 /// Real probes, through probe-rs.
@@ -70,7 +101,11 @@ impl SwoBackend for ProbeRs {
         let mut link = ProbeRsLink {
             session,
             config: config.clone(),
+            awake: Awake::new(&config.chip),
         };
+        // Before the trace is turned on: a sleeping STM32 would lose the
+        // change to its trace pin.
+        link.check_awake();
         link.trace_on().map_err(Some)?;
         Ok(Box::new(link))
     }
@@ -79,9 +114,22 @@ impl SwoBackend for ProbeRs {
 struct ProbeRsLink {
     session: ProbeSession,
     config: SwoConfig,
+    /// Keeps a sleeping STM32's memory readable.
+    awake: Awake,
 }
 
 impl ProbeRsLink {
+    /// Checks an STM32's DMA clock when it is time to, so that its memory
+    /// reads right while it sleeps.
+    fn check_awake(&mut self) {
+        if !self.awake.due() {
+            return;
+        }
+        if let Ok(mut core) = self.session.core(0) {
+            self.awake.check(&mut core);
+        }
+    }
+
     fn trace_on(&mut self) -> Result<(), String> {
         let swo = probe_rs::architecture::arm::SwoConfig::new(self.config.clock_hz)
             .set_baud(self.config.baud)
@@ -119,6 +167,7 @@ impl ProbeRsLink {
 
 impl SwoLink for ProbeRsLink {
     fn read(&mut self) -> Result<Vec<u8>, String> {
+        self.check_awake();
         self.session
             .read_trace_data()
             .map_err(|error| error.to_string())
@@ -129,14 +178,42 @@ impl SwoLink for ProbeRsLink {
             .core(0)
             .and_then(|mut core| core.reset())
             .map_err(|error| error.to_string())?;
+        // A reset turns the DMA clock off.
+        self.awake.after_reset();
         self.trace_on()
     }
 
     fn read_memory(&mut self, address: u64, buf: &mut [u8]) -> Result<(), String> {
-        self.session
-            .core(0)
-            .and_then(|mut core| core.read_8(address, buf))
-            .map_err(|error| error.to_string())
+        let mut core = self.session.core(0).map_err(|error| error.to_string())?;
+        self.awake.check(&mut core);
+        // In words where it can: a byte at a time is many times slower.
+        core.read(address, buf).map_err(|error| error.to_string())
+    }
+
+    fn read_many(&mut self, work: &mut dyn FnMut(&mut MemoryRead<'_>)) {
+        match self.session.core(0) {
+            Ok(mut core) => {
+                self.awake.check(&mut core);
+                work(&mut |address, block| core.read(address, block).is_ok());
+            }
+            Err(_) => work(&mut |_, _| false),
+        }
+    }
+
+    fn trace(&mut self, writes: Option<u64>, exceptions: bool) -> Result<bool, String> {
+        let mut core = self.session.core(0).map_err(|error| error.to_string())?;
+        trace::trace_exceptions(&mut core, exceptions).map_err(|error| error.to_string())?;
+        trace::trace_writes(&mut core, writes).map_err(|error| error.to_string())
+    }
+
+    fn halt(&mut self, halt: bool) -> Result<(), String> {
+        let mut core = self.session.core(0).map_err(|error| error.to_string())?;
+        if halt {
+            core.halt(HALT_WAIT).map(|_| ())
+        } else {
+            core.run()
+        }
+        .map_err(|error| error.to_string())
     }
 }
 
@@ -144,8 +221,14 @@ enum Command {
     Reset,
     Reconfigure(SwoConfig),
     Watch(Vec<Option<Watched>>, Duration),
+    Tasks(Option<Arc<rtos::Layout>>, Duration, bool),
+    Interrupts(bool),
+    Halt(bool),
     Close,
 }
+
+/// The longest a core takes to halt.
+const HALT_WAIT: Duration = Duration::from_millis(500);
 
 /// How often things happen. Tests make the times shorter.
 #[derive(Clone, Copy)]
@@ -166,6 +249,14 @@ const TIMING: Timing = Timing {
     idle: Duration::from_millis(5),
     overflow: Duration::from_secs(1),
 };
+
+/// Memory read for this long, the probe may have lost some of SWO's bytes,
+/// as an ST-Link V3 does through some reads: the tracer checks.
+const READ_MAY_LOSE: Duration = Duration::from_millis(2);
+/// While the switches are traced, the stacks are looked through at one read
+/// of the tasks in this many: that read is four times as long, and the
+/// longer a read, the more of SWO's bytes the probe loses through it.
+const STACKS_EVERY_TRACED: u64 = 30;
 
 /// An SWO session. Dropping it lets go of the probe.
 pub struct Session {
@@ -199,6 +290,9 @@ impl Session {
             timing,
             state: None,
             watcher: Watcher::default(),
+            tasks: (None, Duration::from_secs(1), false),
+            interrupts: false,
+            halted: false,
         };
         let thread = thread::Builder::new()
             .name("ternima-swo".into())
@@ -224,6 +318,24 @@ impl Session {
     /// `None` stands for one not in the firmware. An empty list stops it.
     pub fn watch(&self, watch: Vec<Option<Watched>>, every: Duration) {
         let _ = self.commands.send(Command::Watch(watch, every));
+    }
+
+    /// Reads the tasks of the RTOS laid out so every `every` while the chip
+    /// is attached, and with `sample` which task runs, as fast as the probe
+    /// answers. `None` stops it.
+    pub fn tasks(&self, layout: Option<Arc<rtos::Layout>>, every: Duration, sample: bool) {
+        let _ = self.commands.send(Command::Tasks(layout, every, sample));
+    }
+
+    /// Traces every exception, for the timeline's interrupts, or stops.
+    pub fn trace_interrupts(&self, on: bool) {
+        let _ = self.commands.send(Command::Interrupts(on));
+    }
+
+    /// Halts the chip, or has it run again: the Live view's Pause. Ending
+    /// the session runs it again too.
+    pub fn halt(&self, halt: bool) {
+        let _ = self.commands.send(Command::Halt(halt));
     }
 }
 
@@ -253,9 +365,32 @@ struct Worker {
     state: Option<SwoState>,
     /// The variables read as the chip runs.
     watcher: Watcher,
+    /// The RTOS's tasks as last asked for: its layout, how often, and
+    /// whether the running task is followed, for the timeline.
+    tasks: (Option<Arc<rtos::Layout>>, Duration, bool),
+    /// Whether the exceptions are traced, for the timeline.
+    interrupts: bool,
+    /// Whether the chip is halted, by the Live view's Pause.
+    halted: bool,
 }
 
 impl Worker {
+    /// Has the chip trace what the timeline asks: each switch of the running
+    /// task through a DWT comparator, or else it is sampled; and the
+    /// exceptions, only when asked, as they take much of SWO's room.
+    fn apply_trace(&mut self, link: &mut dyn SwoLink, tracer: &mut Tracer) {
+        let (layout, every, follow) = self.tasks.clone();
+        let running = layout
+            .as_deref()
+            .filter(|_| follow)
+            .map(|layout| layout.running_at().0);
+        let traced = link.trace(running, self.interrupts).unwrap_or(false) && running.is_some();
+        tracer.trace_switches(traced);
+        self.watcher.set_tasks(layout, every, follow && !traced);
+        self.watcher
+            .stacks_every(traced.then_some(STACKS_EVERY_TRACED));
+    }
+
     fn run(mut self) {
         loop {
             let started = match self.config.problem() {
@@ -285,6 +420,8 @@ impl Worker {
             baud: self.config.baud,
         });
         let mut decoder = ItmDecoder::new();
+        let mut tracer = Tracer::new(self.config.clock_hz);
+        self.apply_trace(link.as_mut(), &mut tracer);
         let mut pending = Vec::new();
         let mut batch_started: Option<Instant> = None;
         let mut overflows = 0;
@@ -302,16 +439,51 @@ impl Worker {
                         break Ended::Lost(problem);
                     }
                     decoder = ItmDecoder::new();
+                    // Turning SWO on again turned the exception trace on.
+                    tracer = Tracer::new(self.config.clock_hz);
+                    self.apply_trace(link.as_mut(), &mut tracer);
+                    // A reset runs the chip.
+                    self.ran_again();
                 }
                 Ok(Command::Watch(watch, every)) => self.watcher.set(watch, every),
-                Err(TryRecvError::Empty) => {}
+                Ok(Command::Tasks(layout, every, sample)) => {
+                    self.tasks = (layout, every, sample);
+                    self.apply_trace(link.as_mut(), &mut tracer);
+                }
+                Ok(Command::Interrupts(on)) => {
+                    self.interrupts = on;
+                    self.apply_trace(link.as_mut(), &mut tracer);
+                }
+                Ok(Command::Halt(halt)) if halt != self.halted => {
+                    if let Err(problem) = link.halt(halt) {
+                        break Ended::Lost(problem);
+                    }
+                    // What SWO still had was sent before the halt.
+                    if halt && let Ok(raw) = link.read() {
+                        for packet in decoder.feed(&raw) {
+                            tracer.feed(&packet);
+                            if let ItmPacket::Data { port, bytes } = packet
+                                && (self.config.all_ports || port == self.config.port)
+                            {
+                                pending.extend_from_slice(&bytes);
+                                batch_started.get_or_insert_with(Instant::now);
+                            }
+                        }
+                    }
+                    tracer.halt(halt);
+                    self.watcher.halt(halt);
+                    self.halted = halt;
+                    self.emit(Event::Halted(halt));
+                }
+                Ok(Command::Halt(_)) | Err(TryRecvError::Empty) => {}
             }
 
             let raw = match link.read() {
-                Ok(raw) => raw,
+                Ok(read) => read,
                 Err(problem) => break Ended::Lost(problem),
             };
             for packet in decoder.feed(&raw) {
+                tracer.feed(&packet);
                 match packet {
                     ItmPacket::Data { port, bytes } => {
                         if self.config.all_ports || port == self.config.port {
@@ -320,6 +492,16 @@ impl Worker {
                         }
                     }
                     ItmPacket::Overflow => overflows += 1,
+                    _ => {}
+                }
+            }
+            tracer.chunk_fed();
+            if let Some(traced) = tracer.take_if_due() {
+                if let Some(running) = traced.running {
+                    self.emit(Event::Running(running));
+                }
+                if !traced.interrupts.is_empty() {
+                    self.emit(Event::Interrupts(traced.base, traced.interrupts));
                 }
             }
 
@@ -333,19 +515,54 @@ impl Worker {
                 overflow_told = Instant::now();
             }
 
-            let read = |address, block: &mut [u8]| link.read_memory(address, block).is_ok();
-            if let Some(values) = self.watcher.read_if_due(read) {
-                self.emit(Event::Watch(values));
+            if self.watcher.due() {
+                let watcher = &mut self.watcher;
+                let (mut values, mut tasks, mut running) = (None, None, None);
+                let reading = Instant::now();
+                link.read_many(&mut |read| {
+                    values = watcher.read_if_due(&mut *read);
+                    tasks = watcher.tasks_if_due(&mut *read);
+                    running = watcher.running_if_due(&mut *read);
+                });
+                // Through a long read, as of the tasks, the probe may lose
+                // some of what came over SWO.
+                if reading.elapsed() >= READ_MAY_LOSE {
+                    tracer.may_have_lost();
+                }
+                if let Some(values) = values {
+                    self.emit(Event::Watch(values));
+                }
+                if let Some(tasks) = tasks {
+                    tracer.know(tasks.tasks.iter().map(|task| task.address));
+                    self.emit(Event::Tasks(tasks));
+                }
+                if let Some(running) = running {
+                    self.emit(Event::Running(running));
+                }
             }
-            if raw.is_empty() {
+            if raw.is_empty() && !self.watcher.sampling() {
                 thread::sleep(self.timing.idle);
             }
         };
 
+        // Never left halted: closed, or attached again, the chip runs.
+        if self.halted {
+            let _ = link.halt(false);
+            self.ran_again();
+        }
         if !pending.is_empty() {
             self.emit(Event::Data(pending));
         }
         ended
+    }
+
+    /// The chip runs again, as after a reset: told, if it was halted.
+    fn ran_again(&mut self) {
+        if self.halted {
+            self.halted = false;
+            self.watcher.halt(false);
+            self.emit(Event::Halted(false));
+        }
     }
 
     /// Waits while not reading. Returns false when the session should end.
@@ -368,6 +585,10 @@ impl Worker {
                 Ok(Command::Reset) => {}
                 // Kept for when the chip is attached.
                 Ok(Command::Watch(watch, every)) => self.watcher.set(watch, every),
+                Ok(Command::Tasks(layout, every, sample)) => self.tasks = (layout, every, sample),
+                Ok(Command::Interrupts(on)) => self.interrupts = on,
+                // Nothing to halt while not attached.
+                Ok(Command::Halt(_)) => {}
             }
         }
     }

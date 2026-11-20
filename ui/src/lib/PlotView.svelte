@@ -1672,7 +1672,7 @@
       <h3>{chartGuide.title}, from the firmware's variables</h3>
       <p>{chartGuide.what}</p>
       <p>
-        Nothing to print: add variables in the <b>Watch</b> view, by their names in the firmware's ELF file. They are
+        Nothing to print: add variables in the <b>Live</b> view, by their names in the firmware's ELF file. They are
         read through the probe as the chip runs, each a series named after its variable.
       </p>
       {#if !closable}<p class="waiting">No values yet.</p>{/if}
@@ -1755,7 +1755,7 @@
       />
     {/if}
 
-    <!-- Which series are drawn, as the Zephyr view's Modules picks modules. The histogram counts one series, which
+    <!-- Which series are drawn, as the Log view's Modules picks modules. The histogram counts one series, which
          its own Series list picks. -->
     {#if kind !== "histogram"}
       <div class="series-menu">
@@ -2234,7 +2234,7 @@
     font-size: 12px;
   }
 
-  /* The Series menu: the same look as the Zephyr view's Modules. */
+  /* The Series menu: the same look as the Log view's Modules. */
   .series-menu {
     position: relative;
   }

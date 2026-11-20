@@ -25,26 +25,31 @@
   }
 </script>
 
-<!-- The watched variables beside a terminal view, so both are in view: the Watch view has the rest. -->
+<!-- The watched variables beside a terminal view, so both are in view: the Live view has the rest. -->
 <aside class="watchpanel" aria-label="Watched variables">
   <header>
-    <button class="title" title="Open the Watch view, to add variables or see their min and max" onclick={() => tab.setView("watch")}>
-      Watch
+    <button class="title" title="Open the Live view, to add variables or see their min and max" onclick={() => tab.setView("watch")}>
+      Live
     </button>
-    <button class="icon" title="Hide: the Watch view keeps them" onclick={() => tab.setWatchBeside(false)}>×</button>
+    <button class="icon" title="Hide: the Live view keeps them" onclick={() => tab.setWatchBeside(false)}>×</button>
   </header>
   {#if tab.watchProblem}
     <p class="problem">{tab.watchProblem}</p>
   {/if}
   {#if tab.watch.names.length === 0}
-    <p class="empty">Add variables in the Watch view.</p>
+    <p class="empty">Add variables in the Live view.</p>
   {:else}
     <table>
+      <colgroup>
+        <col style:width="45%" />
+        <col style:width="55%" />
+      </colgroup>
       <tbody>
         {#each tab.watch.names as name, index (name)}
+          {@const value = valueText(tab.watchValues[index], kinds.get(name), tab.watchRange[index])}
           <tr>
             <td class="name mono" title={name}>{names[index]}</td>
-            <td class="value mono">{valueText(tab.watchValues[index], kinds.get(name), tab.watchRange[index])}</td>
+            <td class="value mono" title={value.trim()}>{value}</td>
           </tr>
         {/each}
       </tbody>
@@ -100,28 +105,28 @@
     cursor: default;
   }
 
+  /* Columns of set widths: nothing moves as the values change. */
   table {
     width: 100%;
     border-collapse: collapse;
+    table-layout: fixed;
   }
 
   td {
     padding: 2px 4px;
+    overflow: hidden;
     font-variant-numeric: tabular-nums;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     border-bottom: 1px solid var(--border);
   }
 
   .name {
-    max-width: 130px;
-    overflow: hidden;
     color: var(--muted);
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .value {
     font-weight: 600;
-    white-space: nowrap;
   }
 
   .empty,

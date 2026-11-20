@@ -46,6 +46,8 @@ How to use every part of terNIMA, step by step and with pictures, is in the **[h
 - SEGGER RTT through CMSIS-DAP, J-Link and ST-Link probes, with no vendor software needed
 - SWO through the same probes: ITM output such as printf, from one stimulus port or all of them
 - Live variables: watch and plot the firmware's globals, struct members and array elements by name from its ELF file, read as the chip runs: through the probe of an RTT or SWO tab, with or without RTT in the firmware, or through OpenOCD while you debug. Beside the terminal, or in a view of their own
+- RTOS tasks: Zephyr's threads and FreeRTOS's tasks in the Live view, each with what it is doing, its priority, its stack and its share of the CPU, read as the chip runs, with no RTT needed
+- A timeline of which task ran when, with the watched variables over the same time: sampled through the probe thousands of times a second, or in an SWO tab every switch and every interrupt, named as the firmware names it and timed by the chip to the clock cycle. Zoom in to a microsecond, scroll back, pause it all, save it and open it later
 - Crash decoding: under a code address in the output, as in a Zephyr fatal error, a HardFault or an ESP32 backtrace, the function, file and line from the ELF file, on plain serial too
 - RTT over TCP while your IDE is debugging, from J-Link or OpenOCD
 - TCP and Telnet sessions, for devices and serial bridges on the network
@@ -80,7 +82,7 @@ A probe has one owner: while your IDE debugs through it, terNIMA cannot open it 
 
   The address and size say where to look for RTT: your chip's RAM. Port 9090 then serves channel 0.
 
-  The Watch view of that tab reads the variables through OpenOCD's Tcl port, 6666 unless OpenOCD is told otherwise, as the chip runs. Nothing else is needed: a debugger attached to the same OpenOCD keeps working.
+  The Live view of that tab reads the variables through OpenOCD's Tcl port, 6666 unless OpenOCD is told otherwise, as the chip runs. Nothing else is needed: a debugger attached to the same OpenOCD keeps working.
 
 ---
 

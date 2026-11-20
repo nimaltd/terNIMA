@@ -1,4 +1,4 @@
-// Watched variables' names and values as the Watch view and the panel beside
+// Watched variables' names and values as the Live view and the panel beside
 // the terminal show them. It has no imports, so its tests run in Node as they are.
 
 /**

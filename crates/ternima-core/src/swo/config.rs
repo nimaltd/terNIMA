@@ -26,7 +26,7 @@ pub struct SwoConfig {
     pub port: u8,
     /// Shows every stimulus port instead of only `port`.
     pub all_ports: bool,
-    /// The firmware's ELF file, where the Watch view finds its variables.
+    /// The firmware's ELF file, where the Live view finds its variables.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub elf: Option<String>,
 }

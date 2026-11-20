@@ -10,6 +10,7 @@ use serde::Serialize;
 
 use super::config::RttConfig;
 use super::link::{ChannelInfo, LinkProblem, RttBackend, RttLink};
+use crate::rtos;
 use crate::watch::{Watched, Watcher};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -37,6 +38,12 @@ pub enum Event {
     /// The watched variables' values, in their order: `None` for one that
     /// could not be read, or is not in the firmware.
     Watch(Vec<Option<f64>>),
+    /// The RTOS's tasks, as they were.
+    Tasks(rtos::Snapshot),
+    /// Which tasks ran, sampled: the switches since it was last told.
+    Running(rtos::Running),
+    /// Whether the chip is halted, by the Live view's Pause, told when that changes.
+    Halted(bool),
 }
 
 enum Command {
@@ -44,6 +51,8 @@ enum Command {
     Reset,
     Reconfigure(RttConfig),
     Watch(Vec<Option<Watched>>, Duration),
+    Tasks(Option<Arc<rtos::Layout>>, Duration, bool),
+    Halt(bool),
     Close,
 }
 
@@ -107,6 +116,7 @@ impl Session {
             timing,
             state: None,
             watcher: Watcher::default(),
+            halted: false,
         };
         let thread = thread::Builder::new()
             .name("ternima-rtt".into())
@@ -138,6 +148,19 @@ impl Session {
     /// An empty list stops it.
     pub fn watch(&self, watch: Vec<Option<Watched>>, every: Duration) {
         self.send(Command::Watch(watch, every));
+    }
+
+    /// Reads the tasks of the RTOS laid out so every `every` while the chip
+    /// is attached, also before its RTT is found, and with `sample` which task
+    /// runs, as fast as the probe answers. `None` stops it.
+    pub fn tasks(&self, layout: Option<Arc<rtos::Layout>>, every: Duration, sample: bool) {
+        self.send(Command::Tasks(layout, every, sample));
+    }
+
+    /// Halts the chip, or has it run again: the Live view's Pause. Ending
+    /// the session runs it again too.
+    pub fn halt(&self, halt: bool) {
+        self.send(Command::Halt(halt));
     }
 
     fn send(&self, command: Command) {
@@ -189,6 +212,8 @@ struct Worker {
     state: Option<RttState>,
     /// The variables read as the chip runs, how often, and when next.
     watcher: Watcher,
+    /// Whether the chip is halted, by the Live view's Pause.
+    halted: bool,
 }
 
 impl Worker {
@@ -224,12 +249,44 @@ impl Worker {
         }
     }
 
+    /// Serves the chip attached, until the probe is lost or the session
+    /// ends: never leaving it halted.
+    fn serve(&mut self, mut link: Box<dyn RttLink>) -> Ended {
+        let ended = if self.config.watch_only {
+            self.serve_watch(link.as_mut())
+        } else {
+            self.serve_rtt(link.as_mut())
+        };
+        if self.halted {
+            let _ = link.halt(false);
+            self.ran_again();
+        }
+        ended
+    }
+
+    /// Halts the chip or has it run again, and tells it.
+    fn halt(&mut self, link: &mut dyn RttLink, halt: bool) -> Result<(), LinkProblem> {
+        if halt != self.halted {
+            link.halt(halt)?;
+            self.watcher.halt(halt);
+            self.halted = halt;
+            self.emit(Event::Halted(halt));
+        }
+        Ok(())
+    }
+
+    /// The chip runs again, as after a reset: told, if it was halted.
+    fn ran_again(&mut self) {
+        if self.halted {
+            self.halted = false;
+            self.watcher.halt(false);
+            self.emit(Event::Halted(false));
+        }
+    }
+
     /// Finds the control block, reads it, and finds it again after a reset,
     /// until the probe is lost or the session ends.
-    fn serve(&mut self, mut link: Box<dyn RttLink>) -> Ended {
-        if self.config.watch_only {
-            return self.serve_watch(link.as_mut());
-        }
+    fn serve_rtt(&mut self, link: &mut dyn RttLink) -> Ended {
         // How long to wait before looking for the control block again. While
         // the waits are short, only where it was last is looked at.
         let mut again = self.timing.search;
@@ -246,13 +303,14 @@ impl Worker {
                     self.set_state(RttState::Waiting {
                         problem: Some(problem),
                     });
-                    match self.wait_watching(link.as_mut(), again) {
+                    match self.wait_watching(link, again) {
                         Waited::Stop => return Ended::Closed,
                         Waited::Reopen => return Ended::Reopen,
                         Waited::Reset => {
                             if link.reset().is_err() {
                                 return Ended::Lost;
                             }
+                            self.ran_again();
                             again = self.timing.search;
                         }
                         Waited::Go => again = (again * 2).min(self.timing.retry),
@@ -272,7 +330,7 @@ impl Worker {
                 address: attached.address,
             });
 
-            match self.pump(link.as_mut()) {
+            match self.pump(link) {
                 Pumped::Closed => return Ended::Closed,
                 Pumped::Reopen => return Ended::Reopen,
                 Pumped::Lost(problem) => {
@@ -306,6 +364,7 @@ impl Worker {
                         });
                         return Ended::Lost;
                     }
+                    self.ran_again();
                     // Told again, so the app knows the reset is done.
                     self.state = None;
                     self.set_state(watching.clone());
@@ -358,8 +417,9 @@ impl Worker {
                 }
             }
 
-            // Read again at once while data flows; rest a little when it does not.
-            if count == 0 {
+            // Read again at once while data flows or the running task is
+            // sampled; rest a little otherwise.
+            if count == 0 && !self.watcher.sampling() {
                 thread::sleep(self.timing.idle);
             }
         };
@@ -388,27 +448,54 @@ impl Worker {
                     }
                 }
                 Command::Reset => {
-                    return Some(match link.reset() {
+                    let reset = link.reset();
+                    if reset.is_ok() {
+                        self.ran_again();
+                    }
+                    return Some(match reset {
                         Ok(()) => Pumped::Search,
                         Err(LinkProblem::Lost(problem)) => Pumped::Lost(problem),
                         Err(LinkProblem::NoControlBlock(_)) => Pumped::Search,
                     });
+                }
+                Command::Halt(halt) => {
+                    if let Err(LinkProblem::Lost(problem)) = self.halt(link, halt) {
+                        return Some(Pumped::Lost(problem));
+                    }
                 }
                 Command::Reconfigure(config) => {
                     self.config = config;
                     return Some(Pumped::Reopen);
                 }
                 Command::Watch(watch, every) => self.watcher.set(watch, every),
+                Command::Tasks(layout, every, sample) => {
+                    self.watcher.set_tasks(layout, every, sample)
+                }
                 Command::Close => return Some(Pumped::Closed),
             }
         }
     }
 
-    /// Reads the watched variables when it is their time, and tells their values.
+    /// Reads the watched variables and the tasks when it is their time, and tells them.
     fn watch_now(&mut self, link: &mut dyn RttLink) {
-        let read = |address, block: &mut [u8]| link.read_memory(address, block).is_ok();
-        if let Some(values) = self.watcher.read_if_due(read) {
+        if !self.watcher.due() {
+            return;
+        }
+        let watcher = &mut self.watcher;
+        let (mut values, mut tasks, mut running) = (None, None, None);
+        link.read_many(&mut |read| {
+            values = watcher.read_if_due(&mut *read);
+            tasks = watcher.tasks_if_due(&mut *read);
+            running = watcher.running_if_due(&mut *read);
+        });
+        if let Some(values) = values {
             self.emit(Event::Watch(values));
+        }
+        if let Some(tasks) = tasks {
+            self.emit(Event::Tasks(tasks));
+        }
+        if let Some(running) = running {
+            self.emit(Event::Running(running));
         }
     }
 
@@ -435,6 +522,13 @@ impl Worker {
                 }
                 Ok(Command::Reset) => return Waited::Reset,
                 Ok(Command::Watch(watch, every)) => self.watcher.set(watch, every),
+                Ok(Command::Tasks(layout, every, sample)) => {
+                    self.watcher.set_tasks(layout, every, sample)
+                }
+                // A probe gone is found out by the next read.
+                Ok(Command::Halt(halt)) => {
+                    let _ = self.halt(link, halt);
+                }
                 // Nothing to send it to.
                 Ok(Command::Write(_)) => {}
             }
@@ -473,8 +567,11 @@ impl Worker {
                 Ok(Command::Reset) => return Waited::Reset,
                 // Kept for when the chip is attached.
                 Ok(Command::Watch(watch, every)) => self.watcher.set(watch, every),
-                // Nothing to send it to.
-                Ok(Command::Write(_)) => {}
+                Ok(Command::Tasks(layout, every, sample)) => {
+                    self.watcher.set_tasks(layout, every, sample)
+                }
+                // Nothing to send it to, or to halt.
+                Ok(Command::Write(_) | Command::Halt(_)) => {}
             }
         }
     }

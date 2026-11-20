@@ -18,7 +18,7 @@ use ternima_core::logfile::{LogSetup, Logger};
 use ternima_core::record::{self, Direction, Recorder};
 use ternima_core::replay::{self, Player};
 use ternima_core::send::{self, Pace, Stopped};
-use ternima_core::{code, elf, net, openocd, probe, rtt, serial, ssh, swo, watch};
+use ternima_core::{code, elf, net, openocd, probe, rtos, rtt, serial, ssh, swo, watch};
 
 /// The most time, in ms, that lines read at once are spread over, the same
 /// as SPREAD_MS in tabs.svelte.ts, which does it for live sessions.
@@ -74,11 +74,11 @@ struct Entry {
     log: SharedLog,
     /// Set while a file is being sent; setting the flag stops it.
     sending: Option<Arc<AtomicBool>>,
-    /// A TCP session's settings and its page's events, for its Watch view.
+    /// A TCP session's settings and its page's events, for its Live view.
     tcp: Option<TcpWatch>,
 }
 
-/// What a TCP tab's Watch view reads through: OpenOCD's Tcl server, on the
+/// What a TCP tab's Live view reads through: OpenOCD's Tcl server, on the
 /// host its RTT server is on, from when it watches.
 struct TcpWatch {
     config: net::TcpConfig,
@@ -180,7 +180,7 @@ pub enum SessionEvent {
     LogStopped {
         problem: String,
     },
-    /// The watched variables' values, in the order the Watch view asked for
+    /// The watched variables' values, in the order the Live view asked for
     /// them: `null` for one that could not be read. With when they were read,
     /// in ms since 1970.
     Watch {
@@ -190,6 +190,24 @@ pub enum SessionEvent {
     /// Why the watched variables cannot be read now, or `null` once they can.
     WatchProblem {
         problem: Option<String>,
+    },
+    /// The RTOS's tasks, as they were when read.
+    Tasks {
+        snapshot: rtos::Snapshot,
+    },
+    /// Which tasks ran, sampled or traced, since the last of these: for the timeline.
+    Running {
+        running: rtos::Running,
+    },
+    /// The exceptions an SWO tab traced since the last of these: for the
+    /// timeline. Their times are in ms after `base`, a whole ms since 1970.
+    Interrupts {
+        base: f64,
+        interrupts: Vec<swo::trace::Interrupt>,
+    },
+    /// Whether the chip is halted, by the Live view's Pause.
+    Halted {
+        halted: bool,
     },
 }
 
@@ -463,6 +481,9 @@ pub fn open_rtt_session(
                 values,
                 at: now_ms(),
             }),
+            rtt::Event::Tasks(snapshot) => events.send(SessionEvent::Tasks { snapshot }),
+            rtt::Event::Running(running) => events.send(SessionEvent::Running { running }),
+            rtt::Event::Halted(halted) => events.send(SessionEvent::Halted { halted }),
         };
     });
     sessions.insert(id, Running::Rtt(session), shared);
@@ -505,6 +526,12 @@ pub fn open_swo_session(
                 values,
                 at: now_ms(),
             }),
+            swo::Event::Tasks(snapshot) => events.send(SessionEvent::Tasks { snapshot }),
+            swo::Event::Running(running) => events.send(SessionEvent::Running { running }),
+            swo::Event::Interrupts(base, interrupts) => {
+                events.send(SessionEvent::Interrupts { base, interrupts })
+            }
+            swo::Event::Halted(halted) => events.send(SessionEvent::Halted { halted }),
         };
     });
     sessions.insert(id, Running::Swo(session), shared);
@@ -816,6 +843,35 @@ pub fn save_bytes(path: String, data: Vec<u8>) -> Result<(), String> {
     std::fs::write(&path, data).map_err(|error| format!("Could not save {path}: {error}"))
 }
 
+/// When a file was last changed, in ms since 1970: `null` for one that is not
+/// there. A tab looks at its ELF file's so, to read it again once rebuilt.
+#[tauri::command(async)]
+pub fn file_modified(path: String) -> Option<f64> {
+    let modified = std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()?;
+    let since = modified.duration_since(UNIX_EPOCH).ok()?;
+    Some(since.as_secs_f64() * 1000.0)
+}
+
+/// The biggest text file opened: a timeline of hours is far smaller.
+const OPEN_TEXT_MAX: u64 = 512 * 1024 * 1024;
+
+/// Reads a text file the user chose, such as a timeline saved before.
+#[tauri::command(async)]
+pub fn open_text(path: String) -> Result<String, String> {
+    let size = std::fs::metadata(&path)
+        .map_err(|error| format!("Could not open {path}: {error}"))?
+        .len();
+    if size > OPEN_TEXT_MAX {
+        return Err(format!(
+            "{path} is too big to open: {} MB.",
+            size / 1024 / 1024
+        ));
+    }
+    std::fs::read_to_string(&path).map_err(|error| format!("Could not open {path}: {error}"))
+}
+
 #[tauri::command(async)]
 pub fn close_session(id: u32, sessions: State<Sessions>) {
     let old = sessions.lock().remove(&id);
@@ -1013,10 +1069,18 @@ fn variables_in(path: &str) -> Result<Arc<Vec<elf::Variable>>, String> {
     Ok(variables)
 }
 
-/// Every variable in an ELF file that the Watch view can read, by name.
+/// Every variable in an ELF file that the Live view can read, by name.
 #[tauri::command(async)]
 pub fn elf_variables(path: String) -> Result<Vec<elf::Variable>, String> {
     variables_in(&path).map(|variables| variables.as_ref().clone())
+}
+
+/// The names of the chip's interrupts in an ELF file, by exception number,
+/// for the timeline: none when its debug information has none.
+#[tauri::command(async)]
+pub fn elf_interrupts(path: String) -> Result<Vec<(u16, String)>, String> {
+    let data = std::fs::read(&path).map_err(|error| format!("Could not read {path}: {error}"))?;
+    elf::interrupt_names(&data)
 }
 
 type KnownCode = (PathBuf, SystemTime, Arc<code::CodeMap>);
@@ -1100,26 +1164,122 @@ pub fn watch_session(
             (Running::Rtt(session), _) => session.watch(watch, every),
             (Running::Swo(session), _) => session.watch(watch, every),
             (Running::Tcp(_), Some(tcp)) if tcp.config.protocol == net::Protocol::Openocd => {
-                let events = tcp.events.clone();
-                let reader = tcp.openocd.get_or_insert_with(|| {
-                    openocd::Session::start(&tcp.config.host, tcp.config.tcl_port, move |event| {
-                        let _ = match event {
-                            openocd::Event::Watch(values) => events.send(SessionEvent::Watch {
-                                values,
-                                at: now_ms(),
-                            }),
-                            openocd::Event::Problem(problem) => {
-                                events.send(SessionEvent::WatchProblem { problem })
-                            }
-                        };
-                    })
-                });
-                reader.watch(watch, every);
+                openocd_reader(tcp).watch(watch, every);
             }
             _ => {}
         }
     }
     Ok(found)
+}
+
+/// The reader of a TCP tab's chip, through OpenOCD's Tcl server: started
+/// when the Live view first reads something.
+fn openocd_reader(tcp: &mut TcpWatch) -> &openocd::Session {
+    let events = tcp.events.clone();
+    tcp.openocd.get_or_insert_with(|| {
+        openocd::Session::start(&tcp.config.host, tcp.config.tcl_port, move |event| {
+            let _ = match event {
+                openocd::Event::Watch(values) => events.send(SessionEvent::Watch {
+                    values,
+                    at: now_ms(),
+                }),
+                openocd::Event::Tasks(snapshot) => events.send(SessionEvent::Tasks { snapshot }),
+                openocd::Event::Running(running) => events.send(SessionEvent::Running { running }),
+                openocd::Event::Problem(problem) => {
+                    events.send(SessionEvent::WatchProblem { problem })
+                }
+            };
+        })
+    })
+}
+
+/// An RTOS found in an ELF file, with the config options it leaves out.
+type RtosLayout = (Arc<rtos::Layout>, Vec<String>);
+/// The RTOS of the ELF file read last, with when the file was changed.
+type KnownRtos = (PathBuf, SystemTime, Option<RtosLayout>);
+static RTOS: Mutex<Option<KnownRtos>> = Mutex::new(None);
+
+fn rtos_in(path: &str) -> Result<Option<RtosLayout>, String> {
+    let path = PathBuf::from(path);
+    let modified = std::fs::metadata(&path)
+        .and_then(|metadata| metadata.modified())
+        .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
+    let mut known = RTOS.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((known_path, known_modified, found)) = known.as_ref()
+        && *known_path == path
+        && *known_modified == modified
+    {
+        return Ok(found.clone());
+    }
+    let data = std::fs::read(&path)
+        .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
+    let found = rtos::Layout::find(&data)?.map(|found| (Arc::new(found.layout), found.missing));
+    *known = Some((path, modified, found.clone()));
+    Ok(found)
+}
+
+/// The RTOS the Live view found in a firmware.
+#[derive(Clone, Serialize)]
+pub struct RtosFound {
+    kernel: rtos::Kernel,
+    /// The config options the firmware leaves out, with what each would show.
+    missing: Vec<String>,
+}
+
+/// Reads the tasks of the RTOS in a tab's ELF file every `every_ms`, and
+/// with `sample` which one runs, for the timeline; and says which RTOS it
+/// is: `null` for a firmware without one. No file stops it.
+#[tauri::command(async)]
+pub fn tasks_session(
+    id: u32,
+    elf: String,
+    every_ms: u32,
+    sample: bool,
+    sessions: State<Sessions>,
+) -> Result<Option<RtosFound>, String> {
+    let found = if elf.trim().is_empty() {
+        None
+    } else {
+        rtos_in(&elf)?
+    };
+    let layout = found.as_ref().map(|(layout, _)| layout.clone());
+    let every = Duration::from_millis(u64::from(every_ms.max(100)));
+    if let Some(entry) = sessions.lock().get_mut(&id) {
+        match (&entry.running, &mut entry.tcp) {
+            (Running::Rtt(session), _) => session.tasks(layout, every, sample),
+            (Running::Swo(session), _) => session.tasks(layout, every, sample),
+            (Running::Tcp(_), Some(tcp)) if tcp.config.protocol == net::Protocol::Openocd => {
+                openocd_reader(tcp).tasks(layout, every, sample);
+            }
+            _ => {}
+        }
+    }
+    Ok(found.map(|(layout, missing)| RtosFound {
+        kernel: layout.kernel(),
+        missing,
+    }))
+}
+
+/// Has an SWO tab trace every exception, for the timeline's interrupts, or stop.
+#[tauri::command]
+pub fn trace_session(id: u32, interrupts: bool, sessions: State<Sessions>) {
+    if let Some(entry) = sessions.lock().get(&id)
+        && let Running::Swo(session) = &entry.running
+    {
+        session.trace_interrupts(interrupts);
+    }
+}
+
+/// Halts the chip of a probe tab, or has it run again: the Live view's
+/// Pause. Its session tells when it is.
+#[tauri::command]
+pub fn halt_session(id: u32, halt: bool, sessions: State<Sessions>) -> Result<(), String> {
+    match sessions.lock().get(&id).map(|entry| &entry.running) {
+        Some(Running::Rtt(session)) => session.halt(halt),
+        Some(Running::Swo(session)) => session.halt(halt),
+        _ => return Err("This tab cannot halt the chip.".into()),
+    }
+    Ok(())
 }
 
 /// Now, in ms since 1970, as the page keeps time.
@@ -1156,7 +1316,7 @@ pub fn reconfigure_tcp_session(id: u32, config: net::TcpConfig, sessions: State<
     if let Running::Tcp(session) = &entry.running {
         session.reconfigure(config.clone());
     }
-    // The Watch view's reader starts again where the settings say, when it is next told what to read.
+    // The Live view's reader starts again where the settings say, when it is next told what to read.
     let old = entry.tcp.as_mut().and_then(|tcp| {
         tcp.config = config;
         tcp.openocd.take()

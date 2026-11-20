@@ -2,10 +2,12 @@
   import { onMount, tick, untrack } from "svelte";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { open } from "@tauri-apps/plugin-dialog";
-  import { elfVariables, type Variable } from "./serial";
+  import { elfInterrupts, elfVariables, type Variable } from "./serial";
   import { fileName, type Tab } from "./tabs.svelte";
   import { clearActiveTerminal, setActiveTerminal, type TerminalActions } from "./terminal-actions";
   import { valueText } from "./watch";
+  import { KERNEL_NAMES, STATES, bytes, stackFill, stackPeak, type RtosTask } from "./rtos";
+  import TimelineView from "./TimelineView.svelte";
 
   let {
     tab,
@@ -64,13 +66,16 @@
     return "";
   });
 
-  // The file's variables, read again when another file is chosen.
+  // The file's variables, read again when another file is chosen, at each
+  // connection, and when it is built anew while connected.
   $effect(() => {
     const path = tab.elf ?? "";
+    void tab.elfRead;
     untrack(() => void read(path));
   });
 
   async function read(path: string) {
+    void nameInterrupts(path);
     if (!path) {
       variables = [];
       problem = null;
@@ -86,6 +91,18 @@
     } finally {
       reading = false;
     }
+  }
+
+  /** The timeline names the interrupts as the firmware does: TIM7, not IRQ 50. */
+  async function nameInterrupts(path: string) {
+    let names: [number, string][] = [];
+    try {
+      names = path ? await elfInterrupts(path) : [];
+    } catch {
+      // Without them, they are named by number.
+    }
+    tab.timeline.interruptNames = new Map(names);
+    tab.timelineVersion++;
   }
 
   async function chooseElf() {
@@ -109,6 +126,7 @@
   function reload() {
     void read(tab.elf ?? "");
     tab.sendWatch();
+    tab.sendTasks();
   }
 
   function add(variable: Variable) {
@@ -157,21 +175,62 @@
     if (to instanceof Node && !box.contains(to)) listing = false;
   }
 
-  /** A value of a row as its kind is written, with the decimals the row keeps. */
-  function shown(value: number | null | undefined, variable: Variable | undefined, index: number): string {
-    return valueText(value, variable?.kind, tab.watchRange[index]);
+  /** A value of a row as its kind is written, with the decimals the row keeps for its range. */
+  function shown(value: number | null | undefined, variable: Variable | undefined, range: Range | null | undefined): string {
+    return valueText(value, variable?.kind, range);
+  }
+
+  type Range = { min: number; max: number };
+
+  /** A watched variable's value, smallest and largest: as they were when the timeline was paused, while it is. */
+  function watched(name: string, index: number): { value: number | null | undefined; range: Range | null | undefined } {
+    const frozen = tab.timelineFrozen;
+    const kept = frozen ? frozen.names.indexOf(name) : -1;
+    if (frozen && kept >= 0) return { value: frozen.values[kept], range: frozen.range[kept] };
+    return { value: tab.watchValues[index], range: tab.watchRange[index] };
+  }
+
+  /** A time of day, as 18:14:12. */
+  function clockText(at: number): string {
+    return new Date(at).toLocaleTimeString([], { hour12: false });
   }
 
   function hex(address: number): string {
     return `0x${address.toString(16).padStart(8, "0")}`;
   }
 
+  /** What a task's stack holds: the most it has used of its size, or what is known of it. */
+  function stackText(task: RtosTask): string {
+    const peak = stackPeak(task);
+    if (task.stack_size !== null) {
+      const used = peak ?? task.stack_used;
+      return used === null ? bytes(task.stack_size) : `${bytes(used)} of ${bytes(task.stack_size)}`;
+    }
+    if (task.stack_free !== null) return `${bytes(task.stack_free)} never used`;
+    return task.stack_used === null ? "" : `${bytes(task.stack_used)} in use`;
+  }
+
+  /** All that is known of a task's stack, in words. */
+  function stackTitle(task: RtosTask): string {
+    const lines: string[] = [];
+    if (task.stack_size !== null) lines.push(`Size: ${task.stack_size.toLocaleString()} bytes`);
+    const peak = stackPeak(task);
+    if (peak !== null) lines.push(`The most it has used: ${peak.toLocaleString()} bytes`);
+    if (task.stack_used !== null) lines.push(`In use when it last left the CPU: ${task.stack_used.toLocaleString()} bytes`);
+    if (task.stack_free !== null) lines.push(`Never used: ${task.stack_free.toLocaleString()} bytes`);
+    return lines.join("\n");
+  }
+
+  /** The kernel's word for its tasks. */
+  const taskWord = $derived(tab.rtos?.kernel === "zephyr" ? "threads" : "tasks");
+
   /** The table as text, one variable a line, for copying and saving. */
   function text(): string {
     return tab.watch.names
       .map((name, index) => {
         const variable = byName.get(name);
-        const value = shown(tab.watchValues[index], variable, index).trim();
+        const now = watched(name, index);
+        const value = shown(now.value, variable, now.range).trim();
         return [name, variable?.type_name ?? "", variable ? hex(variable.address) : "", value].join("\t");
       })
       .join("\n");
@@ -312,36 +371,141 @@
     {/if}
   </div>
 
-  {#if problem ?? tab.watchProblem}
-    <p class="problem">{problem ?? tab.watchProblem}</p>
+  {#if problem ?? tab.watchProblem ?? tab.tasksProblem}
+    <p class="problem">{problem ?? tab.watchProblem ?? tab.tasksProblem}</p>
   {/if}
 
+  <!-- The timeline on top, the tables under it. Every column has its width: nothing moves as the values change. -->
   <div class="table">
+    {#if tab.rtos || tab.watch.names.length > 0 || tab.openedTimeline || tab.kind === "swo"}
+      <TimelineView {tab} />
+    {/if}
+    {#if tab.rtos}
+      <!-- Paused, the tasks stay as they were then, as the timeline does. -->
+      {@const frozen = tab.timelineFrozen}
+      {@const snapshot = frozen ? frozen.tasks : tab.tasks}
+      <!-- A read that finds none leaves the last ones on screen, dimmed, so the variables under them stay put. -->
+      {@const list = snapshot && snapshot.tasks.length > 0 ? snapshot : frozen ? frozen.lastTasks : tab.lastTasks}
+      <section class="tasks" aria-label="{KERNEL_NAMES[tab.rtos.kernel]} {taskWord}">
+        <div class="tasks-bar">
+          <b>{KERNEL_NAMES[tab.rtos.kernel]} {taskWord}</b>
+          {#if list}
+            <span class="muted">{list.tasks.length}</span>
+          {/if}
+          {#if list?.heap}
+            {@const heap = list.heap}
+            <span
+              class="muted"
+              title="The kernel's heap: what is used now, and the most it has ever had in use"
+            >
+              Heap {bytes(heap.size - heap.free)} of {bytes(heap.size)}{heap.lowest_free !== null
+                ? `, at most ${bytes(heap.size - heap.lowest_free)}`
+                : ""}
+            </span>
+          {/if}
+          {#if snapshot?.problem}
+            <span class="warning">{snapshot.problem}{list ? ` Shown: the ${taskWord} as last read.` : ""}</span>
+          {:else if frozen}
+            <span class="paused" title="Resume, over the timeline, shows them live again">
+              Paused at {clockText(frozen.at)}: {tab.chipHalted
+                ? "the chip is halted"
+                : "as they were then, while the chip runs on"}
+            </span>
+          {:else}
+            <span class="muted">Read every second as the chip runs, without stopping it</span>
+          {/if}
+        </div>
+        {#if !list && !snapshot?.problem}
+          <p class="note">
+            {#if snapshot}
+              No {taskWord} yet.
+            {:else}
+              {tab.connected ? `Reading the ${taskWord}...` : `Connect to read the ${taskWord}.`}
+            {/if}
+          </p>
+        {/if}
+        {#if list}
+          <table class="task-table" class:old={list !== snapshot}>
+            <colgroup>
+              <col style:width="28%" />
+              <col style:width="14%" />
+              <col style:width="10%" />
+              <col style:width="34%" />
+              <col style:width="14%" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>State</th>
+                <th title={tab.rtos.kernel === "zephyr" ? "Lower is more urgent; below 0 is cooperative" : "Higher is more urgent"}>Priority</th>
+                <th title="The most of its stack it has used, of its size">Stack</th>
+                <th class="number" title="Its share of the CPU over the last second">CPU</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each list.tasks as task (task.address)}
+                {@const fill = stackFill(task)}
+                <tr class:running={task.state === "running"}>
+                  <td class="name mono" title="{task.name}, its control block at {hex(task.address)}">{task.name}</td>
+                  <td><span class="state {task.state}" title={STATES[task.state].title}>{STATES[task.state].text}</span></td>
+                  <td class="mono">{task.priority}</td>
+                  <td class="stack" title={stackTitle(task)}>
+                    {#if fill !== null}
+                      <span class="meter"><span class="level" class:warn={fill >= 0.75} class:full={fill >= 0.9} style:width="{Math.round(fill * 100)}%"></span></span>
+                    {/if}
+                    <span class="mono">{stackText(task)}</span>
+                  </td>
+                  <td class="mono number">{task.cpu === null ? "" : `${task.cpu.toFixed(1)}%`}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        {/if}
+        {#if tab.rtos.missing.length > 0}
+          <p class="note missing-options">
+            For more, turn on in the firmware: {tab.rtos.missing.join("; ")}.
+          </p>
+        {/if}
+      </section>
+    {/if}
     {#if tab.watch.names.length > 0}
       <table>
+        <colgroup>
+          <col style:width="22%" />
+          <col style:width="13%" />
+          <col style:width="11%" />
+          <col style:width="18%" />
+          <col style:width="18%" />
+          <col style:width="18%" />
+          <col style:width="32px" />
+        </colgroup>
         <thead>
           <tr>
-            <th class="name">Variable</th>
-            <th class="type">Type</th>
-            <th class="address">Address</th>
+            <th>Variable</th>
+            <th>Type</th>
+            <th>Address</th>
             <th>Value</th>
             <th>Min</th>
             <th>Max</th>
-            <th class="remove"></th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
           {#each tab.watch.names as name, index (name)}
             {@const variable = byName.get(name)}
             {@const missing = tab.watchFound.length > 0 && tab.watchFound[index] === false}
-            {@const range = tab.watchRange[index]}
+            {@const now = watched(name, index)}
+            {@const range = now.range}
+            {@const value = missing ? "not in the ELF" : shown(now.value, variable, range)}
+            {@const min = range ? shown(range.min, variable, range) : ""}
+            {@const max = range ? shown(range.max, variable, range) : ""}
             <tr class:missing>
               <td class="name mono" title={name}>{name}</td>
-              <td class="type">{variable?.type_name ?? ""}</td>
+              <td class="type" title={variable?.type_name}>{variable?.type_name ?? ""}</td>
               <td class="address mono">{variable ? hex(variable.address) : ""}</td>
-              <td class="mono value">{missing ? "not in the ELF" : shown(tab.watchValues[index], variable, index)}</td>
-              <td class="mono">{range ? shown(range.min, variable, index) : ""}</td>
-              <td class="mono">{range ? shown(range.max, variable, index) : ""}</td>
+              <td class="mono value" title={value.trim()}>{value}</td>
+              <td class="mono" title={min.trim()}>{min}</td>
+              <td class="mono" title={max.trim()}>{max}</td>
               <td class="remove">
                 <button class="icon" title="Stop watching it" onclick={() => tab.removeWatch(name)}>×</button>
               </td>
@@ -352,7 +516,10 @@
     {:else}
       <div class="empty">
         {#if !tab.elf}
-          <p>Choose the firmware's ELF file, built with debug information (-g), to watch its variables.</p>
+          <p>
+            Choose the firmware's ELF file, built with debug information (-g), to watch its variables, and the tasks
+            of its RTOS: Zephyr or FreeRTOS.
+          </p>
           <button class="btn" onclick={chooseElf}>Choose the ELF file...</button>
         {:else if reading}
           <p>Reading the ELF file...</p>
@@ -525,10 +692,12 @@
     overflow: auto;
   }
 
+  /* The columns take the widths their colgroup gives, whatever the values in them. */
   table {
     width: 100%;
     font-size: 13px;
     border-collapse: collapse;
+    table-layout: fixed;
   }
 
   /* Left aligned, with fixed decimals: each value's digits stay where they are as it changes. */
@@ -546,16 +715,18 @@
 
   td {
     padding: 3px 8px;
+    overflow: hidden;
     text-align: left;
     font-variant-numeric: tabular-nums;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     border-bottom: 1px solid var(--border);
   }
 
-  td.name {
-    max-width: 320px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  /* Shares of the CPU, their points under each other. */
+  th.number,
+  td.number {
+    text-align: right;
   }
 
   td.type,
@@ -574,11 +745,6 @@
   tr.missing td.value {
     font-weight: 400;
     color: var(--bad);
-  }
-
-  th.remove,
-  td.remove {
-    width: 32px;
   }
 
   .icon {
@@ -606,5 +772,119 @@
 
   .empty p {
     margin: 0 0 10px;
+  }
+
+  /* The RTOS's tasks, over the variables. */
+  .tasks {
+    margin-bottom: 14px;
+  }
+
+  .tasks-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    align-items: baseline;
+    padding: 2px 8px 6px;
+    font-size: 12px;
+  }
+
+  .tasks-bar b {
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .tasks .note {
+    padding: 2px 8px 6px;
+  }
+
+  .warning {
+    color: var(--warn);
+  }
+
+  .paused {
+    color: var(--accent);
+  }
+
+  /* As last read, while the newest read finds none. */
+  .task-table.old {
+    opacity: 0.5;
+  }
+
+  .missing-options {
+    padding-top: 6px;
+  }
+
+  /* One table scrolls under the other's headings otherwise. */
+  .task-table th {
+    position: static;
+  }
+
+  .task-table tr.running td {
+    background: var(--accent-soft);
+  }
+
+  .task-table tr.running td.name {
+    font-weight: 600;
+  }
+
+  .state {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+    font-size: 12px;
+  }
+
+  .state::before {
+    width: 7px;
+    height: 7px;
+    content: "";
+    background: var(--muted);
+    border-radius: 50%;
+  }
+
+  .state.running::before {
+    background: var(--accent);
+  }
+
+  .state.ready::before {
+    background: var(--text);
+  }
+
+  .state.blocked::before,
+  .state.suspended::before {
+    background: var(--warn);
+  }
+
+  .state.dead::before {
+    background: var(--bad);
+  }
+
+  td.stack {
+    white-space: nowrap;
+  }
+
+  .meter {
+    display: inline-block;
+    width: 72px;
+    height: 6px;
+    margin-right: 8px;
+    vertical-align: middle;
+    background: var(--border);
+    border-radius: 3px;
+  }
+
+  .level {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+    border-radius: 3px;
+  }
+
+  .level.warn {
+    background: var(--warn);
+  }
+
+  .level.full {
+    background: var(--bad);
   }
 </style>

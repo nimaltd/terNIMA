@@ -5,6 +5,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type { ModbusSetup } from "./modbus.svelte";
 import type { NetState, TcpConfig } from "./net";
 import type { ChannelInfo, RttConfig, RttState, SwoConfig, SwoState } from "./probe";
+import type { RtosSnapshot } from "./rtos";
+import type { RtosRunning, TracedInterrupt } from "./timeline";
 import type { SshConfig, SshQuestion, SshState } from "./ssh";
 
 export type UsbId = {
@@ -203,7 +205,7 @@ export type SessionSetup = {
   watch?: WatchSetup;
 };
 
-/** The variables an RTT tab's Watch view reads, and how often. */
+/** The variables an RTT tab's Live view reads, and how often. */
 export type WatchSetup = {
   /** Their names, as the ELF file has them: counter, sensor.temp. */
   names: string[];
@@ -211,18 +213,27 @@ export type WatchSetup = {
   every_ms: number;
   /** They are shown beside the terminal too. */
   beside?: boolean;
+  /** The timeline leaves out the variables. */
+  timeline_hide_variables?: boolean;
+  /** The timeline leaves out the interrupts, which an SWO tab then does not trace. */
+  timeline_hide_interrupts?: boolean;
 };
 
 export const DEFAULT_WATCH: WatchSetup = { names: [], every_ms: 50, beside: false };
 
 export type VariableKind = "bool" | "u8" | "i8" | "u16" | "i16" | "u32" | "i32" | "u64" | "i64" | "f32" | "f64";
 
-/** A variable in a firmware's ELF file that the Watch view can read. */
+/** A variable in a firmware's ELF file that the Live view can read. */
 export type Variable = { name: string; address: number; kind: VariableKind; type_name: string };
 
 /** Every variable in an ELF file that can be watched, by name. Rejects with why it cannot be read. */
 export function elfVariables(path: string): Promise<Variable[]> {
   return invoke<Variable[]>("elf_variables", { path });
+}
+
+/** The names of the chip's interrupts in an ELF file, by exception number: [66, "TIM7"]. */
+export function elfInterrupts(path: string): Promise<[number, string][]> {
+  return invoke<[number, string][]>("elf_interrupts", { path });
 }
 
 export type SplitDirection = "right" | "down";
@@ -265,6 +276,10 @@ export type SessionEvent =
   | { kind: "watch"; values: (number | null)[]; at: number }
   /** Why the watched variables cannot be read now, or null once they can. */
   | { kind: "watch_problem"; problem: string | null }
+  | { kind: "tasks"; snapshot: RtosSnapshot }
+  | { kind: "running"; running: RtosRunning }
+  | { kind: "interrupts"; base: number; interrupts: TracedInterrupt[] }
+  | { kind: "halted"; halted: boolean }
   | {
       kind: "replayed";
       pieces: { sent: boolean; bytes: number[]; at: number }[];
