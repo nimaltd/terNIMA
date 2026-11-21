@@ -155,6 +155,7 @@ fn main() {
             sessions::list_probes,
             sessions::search_chips,
             sessions::detect_chip,
+            sessions::detect_clock,
             sessions::open_session,
             sessions::open_rtt_session,
             sessions::open_swo_session,

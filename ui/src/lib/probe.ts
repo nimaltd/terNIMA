@@ -77,6 +77,33 @@ export function detectChip(probe: ProbeId, speedKhz: number): Promise<Detected> 
   return invoke<Detected>("detect_chip", { probe, speedKhz });
 }
 
+/** A chip's core clock as found: the firmware's own SystemCoreClock, or counted, and then about only while it sleeps. */
+export type Clock = { hz: number; from_firmware: boolean; about: boolean };
+
+/**
+ * Finds the core clock: through the tab `id`'s own session when it has the
+ * probe, or else through the probe. Rejects with why it could not.
+ */
+export function detectClock(
+  id: number | null,
+  probe: ProbeId | null,
+  chip: string,
+  speedKhz: number,
+  elf: string | null,
+): Promise<Clock> {
+  return invoke<Clock>("detect_clock", { id, probe, chip, speedKhz, elf });
+}
+
+/** The ST-Link V2s, which take SWO at 2 MHz at most; a V3 takes 24 MHz. */
+const STLINK_V2 = ["3748", "374a", "374b", "3752"];
+
+/** The fastest SWO baud rate the probe takes that divides the clock exactly, or null when none does. */
+export function fastestSwoBaud(clockHz: number, probe: ProbeId | null | undefined): number | null {
+  const v2 = probe?.vid.toLowerCase() === "0483" && STLINK_V2.includes(probe.pid.toLowerCase());
+  const most = v2 ? 2_000_000 : 24_000_000;
+  return [...SWO_BAUDS].reverse().find((rate) => rate <= most && clockHz % rate === 0) ?? null;
+}
+
 export function sameProbe(a: ProbeId | null | undefined, b: ProbeId | null | undefined): boolean {
   return !!a && !!b && a.vid === b.vid && a.pid === b.pid && (a.serial ?? null) === (b.serial ?? null);
 }

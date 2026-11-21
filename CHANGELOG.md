@@ -33,6 +33,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   a file to look at later.
 - Live through a debug probe, under + and File > New session: a probe tab
   without RTT, on the Live view.
+- Detect beside an SWO tab's core clock: it reads the firmware's own
+  `SystemCoreClock`, when the ELF file has one, checked against the core's
+  cycle counter, or else counts the cycles alone; and takes the fastest SWO
+  baud rate the probe takes that divides the clock. A connected tab
+  measures through its own probe.
 - In an SWO tab, the timeline has every task switch and every interrupt,
   timed by the chip to the clock cycle and kept to the nanosecond: a DWT
   comparator sends each value written to the kernel's pointer to the

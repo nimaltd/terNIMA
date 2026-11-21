@@ -8,6 +8,8 @@
     SPEEDS,
     SWO_BAUDS,
     detectChip,
+    detectClock,
+    fastestSwoBaud,
     hzText,
     listProbes,
     sameProbe,
@@ -124,6 +126,35 @@
   }
 
   /** Asks the chip what it is, through the probe chosen. */
+  /** Finding the core clock, and what was found. */
+  let clocking = $state(false);
+  let clockFound = $state("");
+
+  /** Finds the core clock, from the firmware and the core's cycle counter, and the fastest baud rate for it. */
+  async function detectClockHz() {
+    clocking = true;
+    error = "";
+    clockFound = "";
+    try {
+      const id = tab?.running && tab.kind === "swo" ? tab.id : null;
+      const clock = await detectClock(id, target.probe ?? null, target.chip.trim(), target.speed_khz, swo.elf?.trim() || null);
+      clockText = String(clock.hz);
+      const baud = fastestSwoBaud(clock.hz, target.probe);
+      if (baud) baudText = String(baud);
+      const how = clock.from_firmware
+        ? "the firmware's SystemCoreClock, checked on the core"
+        : clock.about
+          ? "counted on the core, which slept much of the time: some stop counting asleep, so check it"
+          : "counted on the core";
+      found = "";
+      clockFound = `${hzText(clock.hz)}: ${how}.${baud ? ` SWO at ${hzText(baud)}, the fastest the probe takes that divides it.` : ""}`;
+    } catch (problem) {
+      error = String(problem);
+    } finally {
+      clocking = false;
+    }
+  }
+
   async function detect() {
     if (!target.probe) {
       return;
@@ -409,13 +440,24 @@
     <div class="dlg-grid">
       <label class="dlg-label">
         Core clock in Hz
-        <input
-          class="field mono"
-          inputmode="numeric"
-          placeholder="64000000"
-          bind:value={clockText}
-          oninput={() => (error = "")}
-        />
+        <span class="file">
+          <input
+            class="field mono"
+            inputmode="numeric"
+            placeholder="64000000"
+            bind:value={clockText}
+            oninput={() => {
+              error = "";
+              clockFound = "";
+            }}
+          />
+          <button
+            class="btn"
+            disabled={!target.probe || !target.chip.trim() || clocking}
+            title="Read the firmware's SystemCoreClock and count the core's cycles, and take the fastest baud rate for it"
+            onclick={detectClockHz}>{clocking ? "Measuring..." : "Detect"}</button
+          >
+        </span>
       </label>
       <label class="dlg-label">
         SWO baud rate
@@ -443,6 +485,9 @@
         </select>
       </label>
     </div>
+    {#if clockFound}
+      <p class="dlg-hint found">{clockFound}</p>
+    {/if}
     <p class="dlg-hint">
       The baud rate must divide the clock exactly. The firmware sets the clock; SWO needs the trace pin
       (often PB3 on STM32) wired to the probe.
@@ -536,6 +581,10 @@
   .file {
     display: flex;
     gap: 8px;
+  }
+
+  .dlg-hint.found {
+    color: var(--text);
   }
 
   .file .field {

@@ -592,6 +592,14 @@ pub(crate) fn name_of(dwarf: &Dwarf, unit: &Unit, entry: &Entry) -> gimli::Resul
     }
 }
 
+/// Where a global is, by its name in the symbol table, as `SystemCoreClock`.
+pub fn symbol_address(data: &[u8], name: &str) -> Option<u64> {
+    let file = object::File::parse(data).ok()?;
+    file.symbols()
+        .find(|symbol| symbol.is_definition() && symbol.name() == Ok(name))
+        .map(|symbol| symbol.address())
+}
+
 /// The enumerations a firmware names its chip's interrupts in, the likeliest
 /// first: CMSIS's, as `TIM7_IRQn = 50`, and a Rust PAC's.
 const INTERRUPT_ENUMS: [&str; 3] = ["IRQn_Type", "IRQn", "Interrupt"];
@@ -1196,6 +1204,13 @@ mod tests {
         let mut firmware = Firmware::new();
         cmsis_interrupts(&mut firmware, "mode_t");
         assert!(interrupt_names(&firmware.elf(&[])).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_global_is_found_by_its_name() {
+        let elf = Firmware::new().elf(&[("SystemCoreClock", 0x2000_0010, 4)]);
+        assert_eq!(symbol_address(&elf, "SystemCoreClock"), Some(0x2000_0010));
+        assert_eq!(symbol_address(&elf, "uwTick"), None);
     }
 
     #[test]

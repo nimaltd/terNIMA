@@ -6,6 +6,7 @@
 mod ansi;
 pub mod awake;
 mod banner;
+pub mod clock;
 pub mod code;
 pub mod detect;
 pub mod elf;

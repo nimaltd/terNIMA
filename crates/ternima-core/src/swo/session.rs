@@ -14,6 +14,7 @@ use super::config::SwoConfig;
 use super::itm::{ItmDecoder, ItmPacket};
 use super::trace::{self, Interrupt, Tracer};
 use crate::awake::Awake;
+use crate::clock::{self, Clock};
 use crate::probe::{self, Target};
 use crate::rtos;
 use crate::watch::{MemoryRead, Watched, Watcher};
@@ -78,6 +79,12 @@ pub trait SwoLink: Send {
     fn halt(&mut self, halt: bool) -> Result<(), String> {
         let _ = halt;
         Ok(())
+    }
+    /// Finds the core's clock, the firmware's `SystemCoreClock` read at
+    /// `system_core_clock` when it has one.
+    fn find_clock(&mut self, system_core_clock: Option<u64>) -> Result<Clock, String> {
+        let _ = system_core_clock;
+        Err("This chip's clock cannot be measured here.".into())
     }
     /// Reads the chip's memory many times over with the core taken once,
     /// which is quicker: `work` gets a reader that fills a block from an
@@ -206,6 +213,12 @@ impl SwoLink for ProbeRsLink {
         trace::trace_writes(&mut core, writes).map_err(|error| error.to_string())
     }
 
+    fn find_clock(&mut self, system_core_clock: Option<u64>) -> Result<Clock, String> {
+        self.check_awake();
+        let mut core = self.session.core(0).map_err(|error| error.to_string())?;
+        clock::find(&mut core, system_core_clock)
+    }
+
     fn halt(&mut self, halt: bool) -> Result<(), String> {
         let mut core = self.session.core(0).map_err(|error| error.to_string())?;
         if halt {
@@ -224,6 +237,7 @@ enum Command {
     Tasks(Option<Arc<rtos::Layout>>, Duration, bool),
     Interrupts(bool),
     Halt(bool),
+    Clock(Option<u64>, Sender<Result<Clock, String>>),
     Close,
 }
 
@@ -336,6 +350,15 @@ impl Session {
     /// the session runs it again too.
     pub fn halt(&self, halt: bool) {
         let _ = self.commands.send(Command::Halt(halt));
+    }
+
+    /// Finds the chip's core clock, through the probe this session has: the
+    /// answer comes back on what this gives. `system_core_clock` is where
+    /// the firmware keeps its own, when its ELF file has it.
+    pub fn clock(&self, system_core_clock: Option<u64>) -> Receiver<Result<Clock, String>> {
+        let (reply, answer) = mpsc::channel();
+        let _ = self.commands.send(Command::Clock(system_core_clock, reply));
+        answer
     }
 }
 
@@ -475,6 +498,11 @@ impl Worker {
                     self.halted = halt;
                     self.emit(Event::Halted(halt));
                 }
+                Ok(Command::Clock(system_core_clock, reply)) => {
+                    let _ = reply.send(link.find_clock(system_core_clock));
+                    // A quarter of a second of reads: SWO's bytes may have gone.
+                    tracer.may_have_lost();
+                }
                 Ok(Command::Halt(_)) | Err(TryRecvError::Empty) => {}
             }
 
@@ -587,8 +615,11 @@ impl Worker {
                 Ok(Command::Watch(watch, every)) => self.watcher.set(watch, every),
                 Ok(Command::Tasks(layout, every, sample)) => self.tasks = (layout, every, sample),
                 Ok(Command::Interrupts(on)) => self.interrupts = on,
-                // Nothing to halt while not attached.
+                // Nothing to halt or measure while not attached.
                 Ok(Command::Halt(_)) => {}
+                Ok(Command::Clock(_, reply)) => {
+                    let _ = reply.send(Err("The tab is not connected to the chip yet.".into()));
+                }
             }
         }
     }

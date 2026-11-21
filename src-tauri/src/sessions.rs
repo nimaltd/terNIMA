@@ -1270,6 +1270,48 @@ pub fn trace_session(id: u32, interrupts: bool, sessions: State<Sessions>) {
     }
 }
 
+/// Finds the chip's core clock, for SWO: through the tab's own session when
+/// it has the probe, or else through the probe, attached for it. The
+/// firmware's own `SystemCoreClock` is read too, when its ELF file has one.
+#[tauri::command(async)]
+pub fn detect_clock(
+    id: Option<u32>,
+    probe: Option<probe::ProbeId>,
+    chip: String,
+    speed_khz: u32,
+    elf: Option<String>,
+    sessions: State<Sessions>,
+) -> Result<ternima_core::clock::Clock, String> {
+    let system_core_clock = elf
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .and_then(|path| std::fs::read(path).ok())
+        .and_then(|data| elf::symbol_address(&data, "SystemCoreClock"));
+    // Asked of the session, and waited for with the sessions let go.
+    let asked = id.and_then(
+        |id| match sessions.lock().get(&id).map(|entry| &entry.running) {
+            Some(Running::Swo(session)) => Some(session.clock(system_core_clock)),
+            _ => None,
+        },
+    );
+    if let Some(answer) = asked {
+        return answer
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .map_err(|_| "The tab did not answer: is it connected to the chip?".to_string())?;
+    }
+    let mut session = probe::attach(&probe::Target {
+        probe: probe.as_ref(),
+        chip: &chip,
+        speed_khz,
+        under_reset: false,
+    })
+    .map_err(|problem| problem.unwrap_or_else(|| "The probe is not plugged in.".into()))?;
+    let mut core = session.core(0).map_err(|error| error.to_string())?;
+    ternima_core::awake::Awake::new(&chip).check(&mut core);
+    ternima_core::clock::find(&mut core, system_core_clock)
+}
+
 /// Halts the chip of a probe tab, or has it run again: the Live view's
 /// Pause. Its session tells when it is.
 #[tauri::command]
