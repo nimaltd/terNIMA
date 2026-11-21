@@ -5,6 +5,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-11-21
+
 ### Added
 
 - The RTOS's tasks in the Live view, over the variables: Zephyr's threads
@@ -642,7 +644,8 @@ yet; the README says how to open them.
   at all for 2 s, as when flow control holds it, drops the rest and stays
   open.
 
-[Unreleased]: https://github.com/nimaltd/ternima/compare/v1.6.1...HEAD
+[Unreleased]: https://github.com/nimaltd/ternima/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/nimaltd/ternima/releases/tag/v1.7.0
 [1.6.1]: https://github.com/nimaltd/ternima/releases/tag/v1.6.1
 [1.6.0]: https://github.com/nimaltd/ternima/releases/tag/v1.6.0
 [1.5.0]: https://github.com/nimaltd/ternima/releases/tag/v1.5.0
