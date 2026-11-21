@@ -9,8 +9,10 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 use super::config::RttConfig;
-use super::link::{ChannelInfo, LinkProblem, RttBackend, RttLink};
+use super::link::{ChannelInfo, Drain, LinkProblem, RttBackend, RttLink};
+use super::sysview;
 use crate::rtos;
+use crate::swo::trace::{Interrupt, Tracer};
 use crate::watch::{Watched, Watcher};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -40,8 +42,13 @@ pub enum Event {
     Watch(Vec<Option<f64>>),
     /// The RTOS's tasks, as they were.
     Tasks(rtos::Snapshot),
-    /// Which tasks ran, sampled: the switches since it was last told.
+    /// Which tasks ran, sampled, or every switch as SystemView tells: the
+    /// switches since it was last told.
     Running(rtos::Running),
+    /// The exceptions SystemView told since it was last told: each interrupt
+    /// entered, left and returned to, at times in ms after the first, the
+    /// whole ms since 1970 they count from.
+    Interrupts(f64, Vec<Interrupt>),
     /// Whether the chip is halted, by the Live view's Pause, told when that changes.
     Halted(bool),
 }
@@ -117,6 +124,8 @@ impl Session {
             state: None,
             watcher: Watcher::default(),
             halted: false,
+            tasks: (None, Duration::from_secs(1), false),
+            sysview: None,
         };
         let thread = thread::Builder::new()
             .name("ternima-rtt".into())
@@ -214,6 +223,58 @@ struct Worker {
     watcher: Watcher,
     /// Whether the chip is halted, by the Live view's Pause.
     halted: bool,
+    /// The RTOS's tasks as last asked for: its layout, how often, and
+    /// whether the running task is sampled, for the timeline.
+    tasks: (Option<Arc<rtos::Layout>>, Duration, bool),
+    /// SystemView, while the firmware sends it.
+    sysview: Option<SysView>,
+}
+
+/// SystemView read from its channel: every task switch and interrupt, which
+/// the timeline then has instead of samples.
+struct SysView {
+    up: usize,
+    down: usize,
+    /// When it was last started: started again when no sync came.
+    started: Instant,
+    decoder: sysview::Decoder,
+    to_trace: sysview::ToTrace,
+    /// Once the firmware told its clock.
+    tracer: Option<Tracer>,
+    /// When its channel was read last.
+    read_at: Instant,
+}
+
+/// How long SystemView may send with no sync before it is started again.
+const SYSVIEW_SYNC_WAIT: Duration = Duration::from_secs(1);
+/// How long a long read of memory, as of the tasks and their stacks, goes
+/// on before SystemView's channel is read between its blocks. Switches
+/// microseconds apart can take more than half of what a probe reads, as
+/// 360 KB a second of an ST-Link V3's 600: read this often, the firmware's
+/// buffer fills no more than between the reads of the channel alone, where
+/// every 4 ms it filled near 8 KB.
+const DRAIN_EVERY: Duration = Duration::from_millis(1);
+
+/// Starts SystemView on its channels: stopped first, and what it sent read
+/// away, so the sync and what the firmware is find room in its buffer: one
+/// left recording, its buffer full, would drop them.
+fn start_sysview(link: &mut dyn RttLink, up: usize, down: usize) -> Result<(), LinkProblem> {
+    link.write(down, &[sysview::STOP])?;
+    let mut away = vec![0; 16 * 1024];
+    let until = Instant::now() + Duration::from_millis(50);
+    while Instant::now() < until {
+        link.read(up, &mut away)?;
+    }
+    link.write(down, &[sysview::START])?;
+    Ok(())
+}
+
+/// The number of the channel of this name.
+fn channel_named(channels: &[ChannelInfo], name: &str) -> Option<usize> {
+    channels
+        .iter()
+        .find(|channel| channel.name.as_deref() == Some(name))
+        .map(|channel| channel.number)
 }
 
 impl Worker {
@@ -264,11 +325,104 @@ impl Worker {
         ended
     }
 
+    /// Reads the tasks, and samples which runs when asked: not while
+    /// SystemView tells every switch.
+    fn set_tasks(&mut self, layout: Option<Arc<rtos::Layout>>, every: Duration, sample: bool) {
+        self.tasks = (layout, every, sample);
+        self.apply_tasks();
+    }
+
+    fn apply_tasks(&mut self) {
+        let (layout, every, sample) = self.tasks.clone();
+        let traced = self
+            .sysview
+            .as_ref()
+            .is_some_and(|sysview| sysview.tracer.is_some());
+        self.watcher.set_tasks(layout, every, sample && !traced);
+    }
+
+    /// Reads the terminal's channel into `buf`, and SystemView's beside it
+    /// into `sysview_buf` with the core taken once: how many bytes each gave.
+    fn read_channels(
+        &mut self,
+        link: &mut dyn RttLink,
+        buf: &mut [u8],
+        sysview_buf: &mut [u8],
+    ) -> Result<(usize, usize), LinkProblem> {
+        let terminal = self.config.up_channel;
+        let Some(sysview) = self.sysview.as_mut() else {
+            return Ok((link.read(terminal, buf)?, 0));
+        };
+        // Read wrong, or its start lost: started again, for a new sync.
+        if !sysview.decoder.synced() && sysview.started.elapsed() >= SYSVIEW_SYNC_WAIT {
+            start_sysview(link, sysview.up, sysview.down)?;
+            sysview.decoder.resync();
+            sysview.started = Instant::now();
+        }
+        let (count, traced) = link.read_two((terminal, buf), (sysview.up, &mut *sysview_buf))?;
+        sysview.read_at = Instant::now();
+        self.take_sysview(&sysview_buf[..traced]);
+        Ok((count, traced))
+    }
+
+    /// Takes in what SystemView sent, and tells what it traced every so often.
+    fn take_sysview(&mut self, data: &[u8]) {
+        let Some(sysview) = self.sysview.as_mut() else {
+            return;
+        };
+        let mut started = false;
+        let mut packets = Vec::new();
+        for (event, delta) in sysview.decoder.feed(data) {
+            match event {
+                sysview::Event::Init { clock_hz } => {
+                    let mut tracer = Tracer::new(clock_hz);
+                    tracer.trace_switches(true);
+                    sysview.tracer = Some(tracer);
+                    started = true;
+                }
+                sysview::Event::Task { address, .. } => {
+                    if let Some(tracer) = sysview.tracer.as_mut() {
+                        tracer.know_task(address);
+                    }
+                }
+                event => {
+                    packets.clear();
+                    sysview.to_trace.packets(&event, delta, &mut packets);
+                    if let Some(tracer) = sysview.tracer.as_mut() {
+                        for packet in &packets {
+                            tracer.feed(packet);
+                        }
+                    }
+                }
+            }
+        }
+        let traced = sysview.tracer.as_mut().and_then(Tracer::take_if_due);
+        // Every switch from now on: sampling would only take the probe's time.
+        if started {
+            self.apply_tasks();
+        }
+        if let Some(traced) = traced {
+            if let Some(running) = traced.running {
+                self.emit(Event::Running(running));
+            }
+            if !traced.interrupts.is_empty() {
+                self.emit(Event::Interrupts(traced.base, traced.interrupts));
+            }
+        }
+    }
+
     /// Halts the chip or has it run again, and tells it.
     fn halt(&mut self, link: &mut dyn RttLink, halt: bool) -> Result<(), LinkProblem> {
         if halt != self.halted {
             link.halt(halt)?;
             self.watcher.halt(halt);
+            if let Some(tracer) = self
+                .sysview
+                .as_mut()
+                .and_then(|sysview| sysview.tracer.as_mut())
+            {
+                tracer.halt(halt);
+            }
             self.halted = halt;
             self.emit(Event::Halted(halt));
         }
@@ -280,6 +434,13 @@ impl Worker {
         if self.halted {
             self.halted = false;
             self.watcher.halt(false);
+            if let Some(tracer) = self
+                .sysview
+                .as_mut()
+                .and_then(|sysview| sysview.tracer.as_mut())
+            {
+                tracer.halt(false);
+            }
             self.emit(Event::Halted(false));
         }
     }
@@ -320,6 +481,8 @@ impl Worker {
             };
             // When it goes, as after a reset, it is looked for soon again.
             again = self.timing.search;
+            let sysview = channel_named(&attached.up, sysview::CHANNEL)
+                .zip(channel_named(&attached.down, sysview::CHANNEL));
 
             self.emit(Event::Channels {
                 up: attached.up,
@@ -330,7 +493,7 @@ impl Worker {
                 address: attached.address,
             });
 
-            match self.pump(link) {
+            match self.pump(link, sysview) {
                 Pumped::Closed => return Ended::Closed,
                 Pumped::Reopen => return Ended::Reopen,
                 Pumped::Lost(problem) => {
@@ -380,20 +543,36 @@ impl Worker {
         }
     }
 
-    /// Passes data both ways until something stops it.
-    fn pump(&mut self, link: &mut dyn RttLink) -> Pumped {
+    /// Passes data both ways until something stops it. With SystemView's
+    /// channels, it is started, and read too.
+    fn pump(&mut self, link: &mut dyn RttLink, sysview: Option<(usize, usize)>) -> Pumped {
         let mut buf = vec![0; 16 * 1024];
+        let mut sysview_buf = vec![0; 16 * 1024];
         let mut pending = Vec::new();
         let mut batch_started: Option<Instant> = None;
         let mut checked = Instant::now();
+        // Started: a sync, what the firmware is, and its tasks.
+        if let Some((up, down)) = sysview
+            && start_sysview(link, up, down).is_ok()
+        {
+            self.sysview = Some(SysView {
+                up,
+                down,
+                started: Instant::now(),
+                decoder: sysview::Decoder::new(),
+                to_trace: sysview::ToTrace::default(),
+                tracer: None,
+                read_at: Instant::now(),
+            });
+        }
 
         let pumped = loop {
             if let Some(pumped) = self.do_commands(link) {
                 break pumped;
             }
 
-            let count = match link.read(self.config.up_channel, &mut buf) {
-                Ok(count) => count,
+            let (count, traced) = match self.read_channels(link, &mut buf, &mut sysview_buf) {
+                Ok(counts) => counts,
                 Err(LinkProblem::Lost(problem)) => break Pumped::Lost(problem),
                 Err(LinkProblem::NoControlBlock(_)) => break Pumped::Search,
             };
@@ -401,6 +580,7 @@ impl Worker {
                 pending.extend_from_slice(&buf[..count]);
                 batch_started.get_or_insert_with(Instant::now);
             }
+
             if batch_started.is_some_and(|start| start.elapsed() >= self.timing.batch) {
                 self.emit(Event::Data(std::mem::take(&mut pending)));
                 batch_started = None;
@@ -419,13 +599,19 @@ impl Worker {
 
             // Read again at once while data flows or the running task is
             // sampled; rest a little otherwise.
-            if count == 0 && !self.watcher.sampling() {
+            if count == 0 && traced == 0 && !self.watcher.sampling() {
                 thread::sleep(self.timing.idle);
             }
         };
 
         if !pending.is_empty() {
             self.emit(Event::Data(pending));
+        }
+        // Stopped, so the firmware does not spend its time on it unread;
+        // found again, it is started again.
+        if let Some(sysview) = self.sysview.take() {
+            let _ = link.write(sysview.down, &[sysview::STOP]);
+            self.apply_tasks();
         }
         pumped
     }
@@ -468,30 +654,57 @@ impl Worker {
                     return Some(Pumped::Reopen);
                 }
                 Command::Watch(watch, every) => self.watcher.set(watch, every),
-                Command::Tasks(layout, every, sample) => {
-                    self.watcher.set_tasks(layout, every, sample)
-                }
+                Command::Tasks(layout, every, sample) => self.set_tasks(layout, every, sample),
                 Command::Close => return Some(Pumped::Closed),
             }
         }
     }
 
-    /// Reads the watched variables and the tasks when it is their time, and tells them.
+    /// Reads the watched variables and the tasks when it is their time, and
+    /// tells them: SystemView's channel is read between, so that its buffer
+    /// does not fill meanwhile.
     fn watch_now(&mut self, link: &mut dyn RttLink) {
         if !self.watcher.due() {
             return;
         }
+        let mut drained = Vec::new();
+        let mut drain = self.sysview.as_ref().map(|sysview| Drain {
+            channel: sysview.up,
+            into: &mut drained,
+            read_at: sysview.read_at,
+            every: DRAIN_EVERY,
+        });
         let watcher = &mut self.watcher;
         let (mut values, mut tasks, mut running) = (None, None, None);
-        link.read_many(&mut |read| {
-            values = watcher.read_if_due(&mut *read);
-            tasks = watcher.tasks_if_due(&mut *read);
-            running = watcher.running_if_due(&mut *read);
-        });
+        link.read_many(
+            &mut |read| {
+                values = watcher.read_if_due(&mut *read);
+                tasks = watcher.tasks_if_due(&mut *read);
+                running = watcher.running_if_due(&mut *read);
+            },
+            drain.as_mut(),
+        );
+        if let Some((drain, sysview)) = drain.zip(self.sysview.as_mut()) {
+            sysview.read_at = drain.read_at;
+        }
+        if !drained.is_empty() {
+            self.take_sysview(&drained);
+        }
         if let Some(values) = values {
             self.emit(Event::Watch(values));
         }
         if let Some(tasks) = tasks {
+            // SystemView names no idle task: it is the kernel's of that name.
+            if let Some(sysview) = self.sysview.as_mut() {
+                sysview.to_trace.idle = tasks
+                    .tasks
+                    .iter()
+                    .find(|task| task.name.to_ascii_lowercase().starts_with("idle"))
+                    .map(|task| task.address);
+                if let Some(tracer) = sysview.tracer.as_mut() {
+                    tracer.know(tasks.tasks.iter().map(|task| task.address));
+                }
+            }
             self.emit(Event::Tasks(tasks));
         }
         if let Some(running) = running {
@@ -522,9 +735,7 @@ impl Worker {
                 }
                 Ok(Command::Reset) => return Waited::Reset,
                 Ok(Command::Watch(watch, every)) => self.watcher.set(watch, every),
-                Ok(Command::Tasks(layout, every, sample)) => {
-                    self.watcher.set_tasks(layout, every, sample)
-                }
+                Ok(Command::Tasks(layout, every, sample)) => self.set_tasks(layout, every, sample),
                 // A probe gone is found out by the next read.
                 Ok(Command::Halt(halt)) => {
                     let _ = self.halt(link, halt);
@@ -567,9 +778,7 @@ impl Worker {
                 Ok(Command::Reset) => return Waited::Reset,
                 // Kept for when the chip is attached.
                 Ok(Command::Watch(watch, every)) => self.watcher.set(watch, every),
-                Ok(Command::Tasks(layout, every, sample)) => {
-                    self.watcher.set_tasks(layout, every, sample)
-                }
+                Ok(Command::Tasks(layout, every, sample)) => self.set_tasks(layout, every, sample),
                 // Nothing to send it to, or to halt.
                 Ok(Command::Write(_) | Command::Halt(_)) => {}
             }

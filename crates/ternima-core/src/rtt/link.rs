@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::ops::Range;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use probe_rs::config::MemoryRegion;
 use probe_rs::rtt::{Rtt, find_rtt_control_block_in_raw_file};
@@ -40,6 +40,41 @@ pub enum LinkProblem {
     NoControlBlock(String),
 }
 
+/// An up channel read now and then through a long read of memory, as of
+/// the tasks and their stacks: the firmware's buffer for it fills
+/// meanwhile, and once full, what the firmware sends is dropped.
+pub struct Drain<'a> {
+    pub channel: usize,
+    /// What was read, added to.
+    pub into: &'a mut Vec<u8>,
+    /// When the channel was read last: it is read again `every` after.
+    pub read_at: Instant,
+    pub every: Duration,
+}
+
+/// How much is read of a drained channel at most, where its size is not known.
+const DRAIN_ROOM: usize = 16 * 1024;
+
+impl Drain<'_> {
+    fn due(&self) -> bool {
+        self.read_at.elapsed() >= self.every
+    }
+
+    /// Reads the channel with `read`, given room for `room` bytes, and keeps
+    /// what it gave. What cannot be read now is left for the next read.
+    fn take(
+        &mut self,
+        room: usize,
+        read: impl FnOnce(usize, &mut [u8]) -> Result<usize, LinkProblem>,
+    ) {
+        let start = self.into.len();
+        self.into.resize(start + room, 0);
+        let count = read(self.channel, &mut self.into[start..]).unwrap_or(0);
+        self.into.truncate(start + count);
+        self.read_at = Instant::now();
+    }
+}
+
 /// Opens probes and attaches to chips.
 pub trait RttBackend: Send + Sync + 'static {
     /// Opens the probe and attaches to the chip. Gives `Err(None)` when the
@@ -56,6 +91,15 @@ pub trait RttLink: Send {
     fn find(&mut self, config: &RttConfig, quick: bool) -> Result<Attached, LinkProblem>;
     /// Reads what an up channel holds, without waiting.
     fn read(&mut self, channel: usize, buf: &mut [u8]) -> Result<usize, LinkProblem>;
+    /// Reads what two up channels hold, as `read` does, with the core taken
+    /// once, which is quicker: for SystemView's channel beside the terminal's.
+    fn read_two(
+        &mut self,
+        first: (usize, &mut [u8]),
+        second: (usize, &mut [u8]),
+    ) -> Result<(usize, usize), LinkProblem> {
+        Ok((self.read(first.0, first.1)?, self.read(second.0, second.1)?))
+    }
     /// Writes into a down channel as much as fits, and says how much that was.
     fn write(&mut self, channel: usize, data: &[u8]) -> Result<usize, LinkProblem>;
     /// Whether the control block is still where it was found. A reset or new
@@ -66,9 +110,21 @@ pub trait RttLink: Send {
     fn read_memory(&mut self, address: u64, buf: &mut [u8]) -> Result<(), LinkProblem>;
     /// Reads the chip's memory many times over with the core taken once,
     /// which is quicker: `work` gets a reader that fills a block from an
-    /// address and says whether it could.
-    fn read_many(&mut self, work: &mut dyn FnMut(&mut MemoryRead<'_>)) {
-        work(&mut |address, block| self.read_memory(address, block).is_ok());
+    /// address and says whether it could. Between blocks, `drain`'s channel
+    /// is read whenever it is due.
+    fn read_many(
+        &mut self,
+        work: &mut dyn FnMut(&mut MemoryRead<'_>),
+        mut drain: Option<&mut Drain<'_>>,
+    ) {
+        work(&mut |address, block| {
+            if let Some(drain) = drain.as_deref_mut()
+                && drain.due()
+            {
+                drain.take(DRAIN_ROOM, |channel, buf| self.read(channel, buf));
+            }
+            self.read_memory(address, block).is_ok()
+        });
     }
     /// Whether the chip can still be reached through the probe, for a
     /// session that only reads variables and has no control block to check.
@@ -172,6 +228,22 @@ impl RttLink for ProbeRsLink {
         up.read(&mut core, buf).map_err(from_rtt)
     }
 
+    fn read_two(
+        &mut self,
+        (first, first_buf): (usize, &mut [u8]),
+        (second, second_buf): (usize, &mut [u8]),
+    ) -> Result<(usize, usize), LinkProblem> {
+        let rtt = self.rtt.as_mut().ok_or_else(not_found)?;
+        let mut core = awake_core(&mut self.session, &mut self.awake)?;
+        let mut read = |channel: usize, buf: &mut [u8]| {
+            let up = rtt.up_channel(channel).ok_or_else(|| {
+                LinkProblem::NoControlBlock(format!("The firmware has no up channel {channel}."))
+            })?;
+            up.read(&mut core, buf).map_err(from_rtt)
+        };
+        Ok((read(first, first_buf)?, read(second, second_buf)?))
+    }
+
     fn write(&mut self, channel: usize, data: &[u8]) -> Result<usize, LinkProblem> {
         let rtt = self.rtt.as_mut().ok_or_else(not_found)?;
         let mut core = awake_core(&mut self.session, &mut self.awake)?;
@@ -216,11 +288,25 @@ impl RttLink for ProbeRsLink {
         core.read(address, buf).map_err(lost)
     }
 
-    fn read_many(&mut self, work: &mut dyn FnMut(&mut MemoryRead<'_>)) {
-        match awake_core(&mut self.session, &mut self.awake) {
-            Ok(mut core) => work(&mut |address, block| core.read(address, block).is_ok()),
-            Err(_) => work(&mut |_, _| false),
-        }
+    fn read_many(
+        &mut self,
+        work: &mut dyn FnMut(&mut MemoryRead<'_>),
+        mut drain: Option<&mut Drain<'_>>,
+    ) {
+        let Ok(mut core) = awake_core(&mut self.session, &mut self.awake) else {
+            return work(&mut |_, _| false);
+        };
+        let mut rtt = self.rtt.as_mut();
+        work(&mut |address, block| {
+            if let (Some(drain), Some(rtt)) = (drain.as_deref_mut(), rtt.as_deref_mut())
+                && drain.due()
+                && let Some(up) = rtt.up_channel(drain.channel)
+            {
+                let room = up.buffer_size();
+                drain.take(room, |_, buf| up.read(&mut core, buf).map_err(from_rtt));
+            }
+            core.read(address, block).is_ok()
+        });
     }
 
     fn reachable(&mut self) -> Result<(), LinkProblem> {
@@ -438,5 +524,95 @@ mod tests {
         assert_eq!(found, None);
         // 4, 8, 16 and 32 KiB, then 64 KiB at a time.
         assert_eq!(reads, 4 + (1024 - 60) / 64 + 1);
+    }
+
+    /// A chip whose channel always has more, telling what was read in turn.
+    #[derive(Default)]
+    struct Busy {
+        reads: Vec<&'static str>,
+    }
+
+    impl RttLink for Busy {
+        fn find(&mut self, _config: &RttConfig, _quick: bool) -> Result<Attached, LinkProblem> {
+            unreachable!()
+        }
+
+        fn read(&mut self, channel: usize, buf: &mut [u8]) -> Result<usize, LinkProblem> {
+            assert_eq!(channel, 1);
+            self.reads.push("channel");
+            buf[..3].copy_from_slice(b"abc");
+            Ok(3)
+        }
+
+        fn write(&mut self, _channel: usize, _data: &[u8]) -> Result<usize, LinkProblem> {
+            Ok(0)
+        }
+
+        fn still_there(&mut self) -> Result<bool, LinkProblem> {
+            Ok(true)
+        }
+
+        fn reset(&mut self) -> Result<(), LinkProblem> {
+            Ok(())
+        }
+
+        fn read_memory(&mut self, _address: u64, buf: &mut [u8]) -> Result<(), LinkProblem> {
+            self.reads.push("memory");
+            buf.fill(0);
+            Ok(())
+        }
+
+        fn reachable(&mut self) -> Result<(), LinkProblem> {
+            Ok(())
+        }
+    }
+
+    fn read_blocks(link: &mut Busy, drain: Option<&mut Drain<'_>>) {
+        link.read_many(
+            &mut |read| {
+                for address in 0..3 {
+                    assert!(read(address, &mut [0; 4]));
+                }
+            },
+            drain,
+        );
+    }
+
+    #[test]
+    fn a_long_read_of_memory_reads_the_drained_channel_between_its_blocks() {
+        let mut link = Busy::default();
+        let mut drained = Vec::new();
+        let before = Instant::now();
+        let mut drain = Drain {
+            channel: 1,
+            into: &mut drained,
+            read_at: before,
+            every: Duration::ZERO,
+        };
+        read_blocks(&mut link, Some(&mut drain));
+        assert!(drain.read_at > before);
+        assert_eq!(drained, b"abcabcabc");
+        assert_eq!(
+            link.reads,
+            [
+                "channel", "memory", "channel", "memory", "channel", "memory"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_channel_read_lately_is_not_read_again_yet() {
+        let mut link = Busy::default();
+        let mut drained = Vec::new();
+        let mut drain = Drain {
+            channel: 1,
+            into: &mut drained,
+            read_at: Instant::now(),
+            every: Duration::from_secs(3600),
+        };
+        read_blocks(&mut link, Some(&mut drain));
+        read_blocks(&mut link, None);
+        assert!(drained.is_empty());
+        assert_eq!(link.reads, ["memory"; 6]);
     }
 }

@@ -483,6 +483,9 @@ pub fn open_rtt_session(
             }),
             rtt::Event::Tasks(snapshot) => events.send(SessionEvent::Tasks { snapshot }),
             rtt::Event::Running(running) => events.send(SessionEvent::Running { running }),
+            rtt::Event::Interrupts(base, interrupts) => {
+                events.send(SessionEvent::Interrupts { base, interrupts })
+            }
             rtt::Event::Halted(halted) => events.send(SessionEvent::Halted { halted }),
         };
     });

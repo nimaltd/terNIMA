@@ -620,6 +620,9 @@ Done when you can find one module's errors in a busy Zephyr log in seconds.
   switching every 6 µs come through apart. ARMv7-M's encoding is from the manual, not yet
   checked on a chip. Times count from a whole ms, to keep their nanoseconds; the timeline
   zooms to a microsecond across, scrolls, and names the interrupts from CMSIS's `IRQn_Type`
+- [x] The same over RTT, from SEGGER SystemView in the firmware, with no SWO pin: its packets
+  turned into what the SWO tracer takes. Checked on the NUCLEO-H503RB with Zephyr, tracing
+  threads and ISRs only, which leaves RTT room for every switch
 - [x] A sleeping STM32 stays readable: its first DMA controller's clock turned on, as
   Zephyr does for RTT, with the RCC register of each line taken from ST's headers
 - [ ] SVD register viewer

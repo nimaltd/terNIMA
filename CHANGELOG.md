@@ -52,6 +52,24 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   read is the longest. It needs a Cortex-M3, M4, M7 or M33 with its SWO
   pin; checked on a Cortex-M33. Example `trace` does it from the command
   line.
+- In an RTT tab, firmware built with SEGGER SystemView gives the timeline
+  every task switch and interrupt too, timed by its clock, with no SWO pin:
+  terNIMA finds its SysView channel, stops it, reads away what it held,
+  and starts it, then reads its packets, with the terminal's channel in
+  the same go, and between the blocks of each read of the tasks and their
+  stacks too, so the firmware's buffer does not fill meanwhile.
+  Zephyr sends it with `CONFIG_TRACING=y`, `CONFIG_SEGGER_SYSTEMVIEW=y` and
+  `CONFIG_SEGGER_SYSVIEW_RTT_CHANNEL=1`; tracing only threads and ISRs,
+  as with `CONFIG_TRACING_SEMAPHORE=n` and the like, leaves RTT room for
+  every switch. Each event costs the firmware some time. Switches
+  microseconds apart can take more than half of what a probe reads, about
+  600 KB a second for an ST-Link V3 at 24 MHz: set the tab's SWD speed that
+  high. The probe also stalls for 10 to 20 ms now and then, so give
+  SystemView a buffer of 16 KB where the RAM allows, as with
+  `CONFIG_SEGGER_SYSVIEW_RTT_BUFFER_SIZE=16384`: with 8 KB, at 360 KB a
+  second, some was lost every 20 to 60 seconds; with 16 KB, none in 150
+  seconds. Where it dropped packets, its buffer full, the timeline says
+  Lost. Checked on a NUCLEO-H503RB with Zephyr 4.3.
 - The timeline has a lane for each interrupt, under the tasks, named as
   the firmware names it, TIM7 rather than IRQ 50, from the enumeration of
   them in the ELF file's debug information: CMSIS's `IRQn_Type`, or a Rust

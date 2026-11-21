@@ -270,6 +270,11 @@ impl Tracer {
         }
     }
 
+    /// Learns one more task, as SystemView names them.
+    pub fn know_task(&mut self, task: u64) {
+        self.known.insert(task);
+    }
+
     /// Takes in a packet: a switch or an exception waits for the timestamp
     /// after it.
     pub fn feed(&mut self, packet: &ItmPacket) {

@@ -188,7 +188,9 @@
       return tab.connected ? "Paused, still recording" : "Paused";
     }
     if (!tab.connected) return "Recording once connected";
-    if (tab.timeline.exact) return "Recording every switch, traced over SWO";
+    if (tab.timeline.exact) {
+      return tab.kind === "swo" ? "Recording every switch, traced over SWO" : "Recording every switch, as SystemView sends it";
+    }
     const rate = Math.round(tab.timeline.rate);
     return rate > 0 ? `Recording: ${rate.toLocaleString()} samples a second` : "Recording";
   });
@@ -205,12 +207,17 @@
     void tab.timelineVersion;
     return !opened && tab.timelineRecording && tab.kind === "swo" && Date.now() - tab.swoDroppedAt < 3000;
   });
-  const statusTitle = $derived(
-    tab.kind === "swo"
-      ? "The chip sends each task switch and each interrupt over SWO, timed to the clock cycle"
-      : "Sampled through the probe: a task that runs for less than the time between two samples can go unseen. " +
-          "An SWO tab traces every switch, and the interrupts.",
-  );
+  const statusTitle = $derived.by(() => {
+    void tab.timelineVersion;
+    if (tab.kind === "swo") return "The chip sends each task switch and each interrupt over SWO, timed to the clock cycle";
+    if (tab.timeline.exact) {
+      return "The firmware's SEGGER SystemView sends each task switch and each interrupt over RTT, timed by its clock";
+    }
+    return (
+      "Sampled through the probe: a task that runs for less than the time between two samples can go unseen. " +
+      "An SWO tab traces every switch, and the interrupts, as does firmware built with SEGGER SystemView in an RTT tab."
+    );
+  });
 
   // Draws again when there is more, or the view of it changed.
   let frame = 0;

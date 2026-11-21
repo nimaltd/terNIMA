@@ -4,6 +4,7 @@
 mod config;
 mod link;
 mod session;
+pub mod sysview;
 
 pub use config::RttConfig;
 pub use link::{Attached, ChannelInfo, LinkProblem, ProbeRs, RttBackend, RttLink};
