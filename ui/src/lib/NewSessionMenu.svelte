@@ -7,12 +7,12 @@
   // The kinds of session a new tab can be, the same as File > New session: the
   // menu of the + button, and of the welcome tab's New session button. Where it
   // shows, and when it closes, is up to them.
-  let { onpick }: { onpick: (kind: SessionKind, protocol?: Protocol, live?: boolean) => void } = $props();
+  let { onpick }: { onpick: (kind: SessionKind, protocol?: Protocol) => void } = $props();
 </script>
 
 <div class="menu" role="menu">
-  {#each NEW_TABS as { kind, protocol, live, label, detail } (label)}
-    <button role="menuitem" onclick={() => onpick(kind, protocol, live)}>
+  {#each NEW_TABS as { kind, protocol, label, detail } (label)}
+    <button role="menuitem" onclick={() => onpick(kind, protocol)}>
       <strong>{label}</strong>
       <span>{detail}</span>
     </button>

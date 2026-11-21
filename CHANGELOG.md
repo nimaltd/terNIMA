@@ -31,8 +31,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   tells how long it lasted. Where what ran is not known, as where SWO lost
   some of the trace, it is tinted and says Lost. Save and Open keep it in
   a file to look at later.
-- Live through a debug probe, under + and File > New session: a probe tab
-  without RTT, on the Live view.
 - Detect beside an SWO tab's core clock: it reads the firmware's own
   `SystemCoreClock`, when the ELF file has one, checked against the core's
   cycle counter, or else counts the cycles alone; and takes the fastest SWO

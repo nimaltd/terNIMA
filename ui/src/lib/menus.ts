@@ -52,11 +52,8 @@ export type Menu = { title: string; items: (Item | string | null)[] };
 export type AppActions = {
   about(): void;
   exit(): void;
-  /**
-   * Opens the dialog for a new tab of a kind, a TCP one with a protocol, a
-   * probe one without RTT when live; a recording's is picking the file.
-   */
-  newTab(kind: SessionKind, protocol?: Protocol, live?: boolean): void;
+  /** Opens the dialog for a new tab of a kind, a TCP one with a protocol; a recording's is picking the file. */
+  newTab(kind: SessionKind, protocol?: Protocol): void;
   /** Opens the settings dialog of the tab in front. */
   sessionSettings(): void;
   /** Opens the app's settings. */
@@ -127,10 +124,10 @@ export function buildMenus(app: AppActions): Menu[] {
         return [
           // The same as the + button's menu.
           "New session",
-          ...NEW_TABS.map(({ kind, protocol, live, label, shortcut }) => ({
+          ...NEW_TABS.map(({ kind, protocol, label, shortcut }) => ({
             label: `${label}...`,
             shortcut,
-            run: () => app.newTab(kind, protocol, live),
+            run: () => app.newTab(kind, protocol),
           })),
           null,
           {

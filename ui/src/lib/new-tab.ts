@@ -9,8 +9,6 @@ export type NewTab = {
   kind: SessionKind;
   /** The protocol a TCP tab starts with. */
   protocol?: Protocol;
-  /** A probe tab without RTT, on the Live view. */
-  live?: boolean;
   label: string;
   /** What it is for, under the label in the + menu. */
   detail: string;
@@ -39,13 +37,7 @@ export const NEW_TABS: NewTab[] = [
   {
     kind: "swo",
     label: "SWO through a debug probe",
-    detail: "ITM output on the chip's trace pin, such as printf",
-  },
-  {
-    kind: "rtt",
-    live: true,
-    label: "Live through a debug probe",
-    detail: "Variables and RTOS tasks as the chip runs, without RTT",
+    detail: "printf on the chip's trace pin, and Live: variables, RTOS tasks, every switch and interrupt",
   },
   {
     kind: "tcp",

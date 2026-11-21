@@ -54,7 +54,7 @@
    * The open session dialog, if any: for a new session, or for a tab's
    * settings. A new TCP session can start with a protocol picked.
    */
-  let dialog: { kind: SessionKind; tab: Tab | null; protocol?: Protocol; live?: boolean } | null = $state(null);
+  let dialog: { kind: SessionKind; tab: Tab | null; protocol?: Protocol } | null = $state(null);
   /** Whether one of the app's own dialogs is open, which has the keyboard. */
   const dialogOpen = $derived(
     aboutOpen || settingsOpen || macrosOpen || highlightsOpen || palette !== null || dialog !== null || updateCheck !== null,
@@ -86,11 +86,11 @@
   });
 
   /** Opens the dialog for a new tab of a kind, or picks a recording to play in one. */
-  function newTab(kind: SessionKind, protocol?: Protocol, live?: boolean) {
+  function newTab(kind: SessionKind, protocol?: Protocol) {
     if (kind === "replay") {
       void playRecording(null);
     } else {
-      dialog = { kind, tab: null, protocol, live };
+      dialog = { kind, tab: null, protocol };
     }
   }
 
@@ -479,7 +479,6 @@
   <ProbeDialog
     kind={dialog.kind}
     tab={dialog.tab}
-    live={dialog.live}
     onclose={closeDialog}
     onserver={dialog.tab ? undefined : () => newTab("tcp", "jlink")}
   />

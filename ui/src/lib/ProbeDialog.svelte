@@ -28,7 +28,6 @@
   let {
     kind,
     tab = null,
-    live = false,
     onclose,
     onserver,
   }: {
@@ -36,8 +35,6 @@
     kind: "rtt" | "swo";
     /** The tab whose settings to change, or null for a new session. */
     tab?: Tab | null;
-    /** A new session starts without RTT, on the Live view. */
-    live?: boolean;
     onclose: () => void;
     /** Opens the dialog for RTT from a debugger's own server instead, for a new session. */
     onserver?: () => void;
@@ -47,7 +44,7 @@
 
   // A copy of the tab's settings, taken once: nothing changes until Save.
   const start = untrack(() => tab?.setup() ?? null);
-  let rtt: RttConfig = $state({ ...DEFAULT_RTT, watch_only: untrack(() => live), ...start?.rtt });
+  let rtt: RttConfig = $state({ ...DEFAULT_RTT, ...start?.rtt });
   const LABEL = $derived(KIND === "swo" ? "SWO" : rtt.watch_only ? "Live" : "RTT");
   let swo: SwoConfig = $state({ ...DEFAULT_SWO, ...start?.swo });
   /** The settings both kinds have: which probe, which chip, and how to attach. */

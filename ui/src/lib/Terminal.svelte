@@ -35,7 +35,7 @@
     /** Says which keys belong to the app, so they are not sent to the device. */
     isAppKey: (event: KeyboardEvent) => boolean;
     /** Opens a new session of a kind: given to the welcome tab, which then has a New session button under its text. */
-    onnew?: (kind: SessionKind, protocol?: Protocol, live?: boolean) => void;
+    onnew?: (kind: SessionKind, protocol?: Protocol) => void;
   } = $props();
 
   let wrap: HTMLDivElement;
@@ -510,9 +510,9 @@
           bind:offsetHeight={menuHeight}
         >
           <NewSessionMenu
-            onpick={(kind, protocol, live) => {
+            onpick={(kind, protocol) => {
               welcomeMenu = false;
-              onnew?.(kind, protocol, live);
+              onnew?.(kind, protocol);
             }}
           />
         </div>
