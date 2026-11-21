@@ -236,3 +236,12 @@ test("a halt is no task's run, and is drawn apart", () => {
   assert.equal(timeline.taskAt(1005), null);
   assert.equal(timeline.taskAt(1011), BUSY);
 });
+
+test("what is not known is told apart from what ran", () => {
+  const timeline = new Timeline(0);
+  timeline.add({ switches: [[1000, BUSY], [1002, 0], [1005, IDLE]], until: 1006, samples: 3 });
+  const unknown: [number, number][] = [];
+  timeline.unknowns(0, 2000, (start, end) => unknown.push([start, end]));
+  assert.deepEqual(unknown, [[1002, 1005]]);
+  assert.equal(timeline.taskAt(1003), null);
+});

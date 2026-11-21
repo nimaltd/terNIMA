@@ -440,6 +440,25 @@
       g.stroke();
     });
 
+    // Where what ran is not known, as when the trace was lost: tinted across
+    // the tasks' lanes, rather than left empty as if nothing ran.
+    if (tops.tasks !== undefined && order.length > 0) {
+      const top = tops.tasks;
+      let tintedTo = -Infinity;
+      timeline.unknowns(left, right, (start, stop) => {
+        let from = Math.max(NAMES, x(start));
+        const to = Math.max(from + 1, Math.min(width, x(stop)));
+        if (to <= tintedTo) return;
+        from = Math.max(from, tintedTo);
+        tintedTo = to;
+        g.fillStyle = color("--warn");
+        g.globalAlpha = 0.13;
+        g.fillRect(from, top, to - from, order.length * LANE);
+        g.globalAlpha = 1;
+        if (to - from > 48) g.fillText("Lost", from + 6, top + 9);
+      });
+    }
+
     // Where the chip was halted, by Pause: across every lane, nothing ran.
     timeline.halts(left, right, (start, stop) => {
       const from = Math.max(NAMES, x(start));
@@ -511,10 +530,14 @@
   /** The run in the lane at `y`, at a time: a task's or an interrupt's, named, from when to when; or the halt. */
   function runUnder(timeline: Timeline, tops: Record<string, number>, y: number, at: number): Run | null {
     const index = timeline.indexAt(at);
-    if (index >= 0 && at <= timeline.until && timeline.tasks[index] === HALTED) {
-      const stop = index + 1 < timeline.times.length ? timeline.times[index + 1] : timeline.until;
-      return { name: "Halted", start: timeline.times[index], end: stop };
-    }
+    const span = (name: string): Run => ({
+      name,
+      start: timeline.times[index],
+      end: index + 1 < timeline.times.length ? timeline.times[index + 1] : timeline.until,
+    });
+    if (index >= 0 && at <= timeline.until && timeline.tasks[index] === HALTED) return span("Halted");
+    const inTasks = tops.tasks !== undefined && y >= tops.tasks && y < tops.tasks + timeline.order.length * LANE;
+    if (inTasks && index >= 0 && at <= timeline.until && timeline.tasks[index] === 0) return span("Lost");
     const lane = (top: number | undefined, count: number) =>
       top !== undefined && y >= top && y < top + count * LANE ? Math.floor((y - top) / LANE) : -1;
     const order = timeline.order;

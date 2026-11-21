@@ -28,8 +28,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   still while the recording goes on. The wheel zooms, down to a
   microsecond across; Shift with the wheel, a drag and the scrollbar under
   it move along the time; pointing at a run of a task or an interrupt
-  tells how long it lasted. Save and Open keep it in a file to look at
-  later.
+  tells how long it lasted. Where what ran is not known, as where SWO lost
+  some of the trace, it is tinted and says Lost. Save and Open keep it in
+  a file to look at later.
 - Live through a debug probe, under + and File > New session: a probe tab
   without RTT, on the Live view.
 - In an SWO tab, the timeline has every task switch and every interrupt,

@@ -248,6 +248,13 @@ export class Timeline {
     });
   }
 
+  /** Each time what ran is not known that overlaps from..to, as when the trace was lost: when from, and until when. */
+  unknowns(from: number, to: number, each: (start: number, end: number) => void): void {
+    this.spans(from, to, (task, start, end) => {
+      if (task === 0) each(start, end);
+    });
+  }
+
   /** Each time the chip was halted that overlaps from..to: when from, and until when. */
   halts(from: number, to: number, each: (start: number, end: number) => void): void {
     this.spans(from, to, (task, start, end) => {
