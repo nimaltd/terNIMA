@@ -233,7 +233,7 @@ test("an interrupt entered before the trace was lost is not drawn on", () => {
   assert.equal(timeline.interrupts.has(66), false);
 });
 
-test("a halt is no task's run, and is drawn apart", () => {
+test("a pause takes no time: what ran after it goes on from where it began", () => {
   const timeline = new Timeline(0);
   timeline.add({ switches: [[1000, BUSY], [1004, HALTED], [1010, BUSY]], until: 1012, samples: 3 });
   assert.deepEqual(timeline.order, [BUSY]);
@@ -241,13 +241,57 @@ test("a halt is no task's run, and is drawn apart", () => {
   timeline.runs(0, 2000, (task, start, end) => runs.push([task, start, end]));
   assert.deepEqual(runs, [
     [BUSY, 1000, 1004],
-    [BUSY, 1010, 1012],
+    [BUSY, 1004, 1006],
   ]);
-  const halts: [number, number][] = [];
-  timeline.halts(0, 2000, (start, end) => halts.push([start, end]));
-  assert.deepEqual(halts, [[1004, 1010]]);
-  assert.equal(timeline.taskAt(1005), null);
-  assert.equal(timeline.taskAt(1011), BUSY);
+  assert.deepEqual(timeline.pauses, [{ at: 1004, length: 6 }]);
+  assert.equal(timeline.taskAt(1005), BUSY);
+  // The clock's time after it counts the pause.
+  assert.equal(timeline.clock(1003), 1003);
+  assert.equal(timeline.clock(1005), 1011);
+  assert.equal(timeline.fold(1011), 1005);
+});
+
+test("while the chip is halted the timeline holds still, and goes on from there after", () => {
+  const timeline = new Timeline(0);
+  timeline.add({ switches: [[1000, BUSY], [1004, HALTED]], until: 5000, samples: 2 });
+  assert.equal(timeline.until, 1004);
+  assert.deepEqual(timeline.pauses, [{ at: 1004, length: null }]);
+  assert.equal(timeline.fold(4000), 1004);
+  timeline.add({ switches: [[61_004, IDLE]], until: 61_006, samples: 1 });
+  assert.deepEqual(timeline.pauses, [{ at: 1004, length: 60_000 }]);
+  assert.equal(timeline.until, 1006);
+  assert.equal(timeline.taskAt(1005), IDLE);
+  // No gap: nothing is unknown about the pause.
+  let unknown = 0;
+  timeline.unknowns(0, 2000, () => unknown++);
+  assert.equal(unknown, 0);
+  // Interrupts after it go on from there too.
+  timeline.addInterrupts([
+    { at: 61_005, number: 66, event: "entered" },
+    { at: 61_005.5, number: 66, event: "exited" },
+  ]);
+  const runs: [number, number][] = [];
+  timeline.interruptRuns(66, 0, 2000, (start, end) => runs.push([start, end]));
+  assert.deepEqual(runs, [[1005, 1005.5]]);
+});
+
+test("pauses come back from the file, and stay through a clear, the one going on too", () => {
+  const timeline = new Timeline(0);
+  timeline.add({ switches: [[1000, BUSY], [1004, HALTED], [9004, BUSY]], until: 9006, samples: 3 });
+  const read = readTimeline(timelineText("H503", timeline, [], []));
+  assert.deepEqual(read.timeline.pauses, [{ at: 1004, length: 8000 }]);
+  assert.equal(read.timeline.clock(1005), 9005);
+  timeline.add({ switches: [[9010, HALTED]], until: 9500, samples: 1 });
+  timeline.clear();
+  // The variables, kept, stay where they were drawn, and what comes goes on from the pause.
+  assert.deepEqual(timeline.pauses, [
+    { at: 1004, length: 8000 },
+    { at: 1010, length: null },
+  ]);
+  timeline.add({ switches: [[9010, HALTED], [12_010, IDLE]], until: 12_012, samples: 2 });
+  assert.deepEqual(timeline.pauses.at(-1), { at: 1010, length: 3000 });
+  assert.deepEqual(timeline.times, [1010, 1010]);
+  assert.equal(timeline.until, 1012);
 });
 
 test("what is not known is told apart from what ran", () => {

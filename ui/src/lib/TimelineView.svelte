@@ -4,7 +4,7 @@
   import { open, save } from "@tauri-apps/plugin-dialog";
   import type { Sample } from "./modbus.svelte";
   import { fileName, type Tab } from "./tabs.svelte";
-  import { HALTED, exceptionName, readTimeline, sampleAt, timelineText, type Timeline } from "./timeline";
+  import { HALTED, exceptionName, readTimeline, sampleAt, timelineText, type Pause, type Timeline } from "./timeline";
   import { valueText } from "./watch";
 
   // The timeline at the top of the Live view: a lane for each task, where it
@@ -76,9 +76,9 @@
     return { timeline: tab.timeline, samples: tab.watchSamples, series: tab.watchSeriesNames };
   }
 
-  /** Now, in ms after a timeline's origin. */
+  /** Now, in ms after a timeline's origin, where the timeline has it: the pauses take no time. */
   function nowIn(timeline: Timeline): number {
-    return Date.now() - timeline.origin;
+    return timeline.fold(Date.now() - timeline.origin);
   }
 
   /**
@@ -89,7 +89,7 @@
     const { timeline, samples } = shown();
     if (timeline.times.length > 0) return timeline.until;
     const last = samples.at(-1);
-    return last ? last.at - timeline.origin : nowIn(timeline);
+    return last ? timeline.fold(last.at - timeline.origin) : nowIn(timeline);
   }
 
   /** Whether samples are coming now, for the drawing to move on with the clock: not while paused. */
@@ -118,7 +118,7 @@
     const { timeline, samples } = shown();
     const times: number[] = [];
     if (timeline.since !== null) times.push(timeline.since);
-    if (samples.length > 0) times.push(samples[0].at - timeline.origin);
+    if (samples.length > 0) times.push(timeline.fold(samples[0].at - timeline.origin));
     return times.length > 0 ? Math.min(...times) : newest();
   }
 
@@ -407,9 +407,9 @@
 
     // The variables' lanes: each drawn between its least and most in sight.
     const top = tops.variables ?? 0;
-    const now = valuesAt(samples, series, origin + (at ?? right));
-    const first = Math.max(0, sampleAt(samples, origin + left) - 1);
-    const last = Math.min(samples.length, sampleAt(samples, origin + right) + 1);
+    const now = valuesAt(samples, series, origin + timeline.clock(at ?? right));
+    const first = Math.max(0, sampleAt(samples, origin + timeline.clock(left)) - 1);
+    const last = Math.min(samples.length, sampleAt(samples, origin + timeline.clock(right)) + 1);
     (tops.variables === undefined ? [] : series).forEach((name, index) => {
       const y = top + index * VARIABLE_LANE;
       let least = Infinity;
@@ -439,7 +439,7 @@
         const sample = samples[at];
         const pair = sample.values.find(([series]) => series === name);
         if (!pair) continue;
-        const px = Math.max(NAMES, Math.min(width, x(sample.at - origin)));
+        const px = Math.max(NAMES, Math.min(width, x(timeline.fold(sample.at - origin))));
         if (started) g.lineTo(px, yOf(pair[1]));
         else g.moveTo(px, yOf(pair[1]));
         started = true;
@@ -466,8 +466,11 @@
       });
     }
 
-    // Where the chip was halted, by Pause: across every lane, nothing ran.
+    // Where the chip was halted, by Pause: a mark across every lane, with
+    // how long it was. No time passed for the chip, so what ran after goes on
+    // from there. A file from before keeps its halts as long as they were.
     timeline.halts(left, right, (start, stop) => {
+      if (stop <= start) return;
       const from = Math.max(NAMES, x(start));
       const to = Math.max(from + 1, Math.min(width, x(stop)));
       g.fillStyle = muted;
@@ -476,6 +479,22 @@
       g.globalAlpha = 1;
       if (to - from > 64) g.fillText("Halted", from + 8, 9);
     });
+    for (const pause of timeline.pauses) {
+      if (pause.at < left || pause.at > right) continue;
+      const px = Math.round(x(pause.at));
+      g.fillStyle = muted;
+      g.globalAlpha = 0.6;
+      g.fillRect(px - 1, 0, 3, height - AXIS);
+      g.globalAlpha = 1;
+      const label = `Halted ${lengthText(pauseLength(timeline, pause), 2)}`;
+      const size = g.measureText(label).width;
+      const lx = px + 6 + size + 4 <= width ? px + 6 : px - 6 - size;
+      if (lx < NAMES) continue;
+      g.fillStyle = color("--panel");
+      g.fillRect(lx - 3, 1, size + 6, 16);
+      g.fillStyle = muted;
+      g.fillText(label, lx, 9);
+    }
 
     // The axis, in the clock's time. Under a millisecond a step, the labels
     // after the first tell how long after it, as +2 µs: the clock's own
@@ -484,27 +503,40 @@
     g.fillStyle = border;
     g.fillRect(NAMES, axis, plot, 1);
     const step = stepFor((span * LABEL_APART) / plot);
-    // On the clock's whole steps: the origin is a whole ms, so steps under one count from it.
-    const firstTick = step >= 1 ? Math.ceil((origin + left) / step) * step - origin : Math.ceil(left / step) * step;
     g.textBaseline = "top";
     let told: number | null = null;
     let toldTo = -Infinity;
-    for (let index = 0; ; index++) {
-      const tick = firstTick + index * step;
-      if (tick > right) break;
-      const px = x(tick);
-      g.fillStyle = border;
-      g.fillRect(px, 0, 1, axis);
-      const label = step >= 1 || told === null ? clockText(origin, tick, step) : `+${lengthText(tick - told)}`;
-      const half = g.measureText(label).width / 2;
-      if (px - half < NAMES || px + half > width || px - half < toldTo + 12) continue;
-      told ??= tick;
-      toldTo = px + half;
-      // The pointer's own time stands where it is, over the axis's.
-      const underPointer = pointer !== null && at !== null && Math.abs(px - pointer.x) < half * 2 + 16;
-      if (!underPointer) {
-        g.fillStyle = muted;
-        g.fillText(label, px - half, axis + 4);
+    // Each stretch between two pauses has the clock's time a length after the timeline's.
+    const stretches: [number, number][] = [];
+    let stretch = left;
+    for (const pause of timeline.pauses) {
+      if (pause.at <= left || pause.at >= right) continue;
+      stretches.push([stretch, pause.at]);
+      stretch = pause.at;
+    }
+    stretches.push([stretch, right]);
+    for (const [from, to] of stretches) {
+      const ahead = timeline.clock((from + to) / 2) - (from + to) / 2;
+      // On the clock's whole steps: the origin is a whole ms, so steps under one count from it.
+      const firstTick =
+        step >= 1 ? Math.ceil((origin + from + ahead) / step) * step - origin - ahead : Math.ceil((from + ahead) / step) * step - ahead;
+      for (let index = 0; ; index++) {
+        const tick = firstTick + index * step;
+        if (tick > to) break;
+        const px = x(tick);
+        g.fillStyle = border;
+        g.fillRect(px, 0, 1, axis);
+        const label = step >= 1 || told === null ? clockText(origin, tick + ahead, step) : `+${lengthText(tick - told)}`;
+        const half = g.measureText(label).width / 2;
+        if (px - half < NAMES || px + half > width || px - half < toldTo + 12) continue;
+        told ??= tick;
+        toldTo = px + half;
+        // The pointer's own time stands where it is, over the axis's.
+        const underPointer = pointer !== null && at !== null && Math.abs(px - pointer.x) < half * 2 + 16;
+        if (!underPointer) {
+          g.fillStyle = muted;
+          g.fillText(label, px - half, axis + 4);
+        }
       }
     }
 
@@ -512,8 +544,8 @@
     if (at !== null && pointer) {
       g.fillStyle = text;
       g.fillRect(pointer.x, 0, 1, axis);
-      let label = clockText(origin, at, stepFor(span / plot) / 10);
-      const run = runUnder(timeline, tops, pointer.y, at);
+      let label = clockText(origin, timeline.clock(at), stepFor(span / plot) / 10);
+      const run = runUnder(timeline, tops, pointer.y, at, (4 / plot) * span);
       if (run) label += `  ${run.name} ${lengthText(run.end - run.start, 4)}`;
       const size = g.measureText(label).width;
       const lx = Math.min(pointer.x + 6, width - size - 4);
@@ -534,8 +566,18 @@
 
   type Run = { name: string; start: number; end: number };
 
-  /** The run in the lane at `y`, at a time: a task's or an interrupt's, named, from when to when; or the halt. */
-  function runUnder(timeline: Timeline, tops: Record<string, number>, y: number, at: number): Run | null {
+  /** How long a pause was, or has been so far. */
+  function pauseLength(timeline: Timeline, pause: Pause): number {
+    return pause.length ?? Math.max(0, Date.now() - timeline.origin - timeline.clock(pause.at));
+  }
+
+  /**
+   * The run in the lane at `y`, at a time: a task's or an interrupt's, named,
+   * from when to when; or a halt, a pause within `near` of it.
+   */
+  function runUnder(timeline: Timeline, tops: Record<string, number>, y: number, at: number, near: number): Run | null {
+    const pause = timeline.pauses.find((pause) => Math.abs(pause.at - at) <= near);
+    if (pause) return { name: "Halted", start: pause.at, end: pause.at + pauseLength(timeline, pause) };
     const index = timeline.indexAt(at);
     const span = (name: string): Run => ({
       name,

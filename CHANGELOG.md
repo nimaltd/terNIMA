@@ -7,6 +7,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- A pause takes no time in the timeline, as none passes for the halted
+  chip: while it is halted, the timeline holds still, and after Resume it
+  goes on from the very time it stopped. A mark stands where it was, with
+  how long the chip was halted; the clock's times after it count the pause.
+  Resume shows the newest again, however far out the timeline is zoomed.
 - The last places that still said Watch say Live: View > Live beside the
   terminal, and OpenOCD's Tcl port in the TCP dialog.
 

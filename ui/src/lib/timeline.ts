@@ -52,8 +52,15 @@ export function exceptionName(number: number): string {
 /** When an exception ran: entered to left, oldest first. */
 type Runs = { starts: number[]; ends: number[] };
 
-/** In the switches, where the chip was halted from, by Pause: no task ran until the next. */
+/**
+ * In the switches, where the chip was halted, by Pause. The pause takes no
+ * time in the timeline, as none passed for the chip: what ran after it goes
+ * on from where it began, and `pauses` keeps how long it was.
+ */
 export const HALTED = 1;
+
+/** A pause: where it is in the timeline, and how long the chip was halted, in ms; null while it still is. */
+export type Pause = { at: number; length: number | null };
 
 /** The most switches kept: the oldest go first. Hours of a busy RTOS. */
 export const SWITCHES_MAX = 2_000_000;
@@ -92,11 +99,48 @@ export class Timeline {
   private entered = new Map<number, number>();
   /** How many exceptions there were lately, a second. */
   interruptRate = 0;
+  /** Each pause, oldest first. */
+  pauses: Pause[] = [];
   /** Whether what comes next is from a new connection, with a gap before it. */
   private broken = false;
 
   constructor(origin = Math.floor(Date.now())) {
     this.origin = origin;
+  }
+
+  /**
+   * Where a time the session tells, in ms after the origin, is in the
+   * timeline: less each pause before it, and within a pause, where it began.
+   */
+  fold(at: number): number {
+    let skipped = 0;
+    for (const pause of this.pauses) {
+      const from = pause.at + skipped;
+      if (at < from) break;
+      if (pause.length === null || at < from + pause.length) return pause.at;
+      skipped += pause.length;
+    }
+    return at - skipped;
+  }
+
+  /** A time in the timeline as the clock had it, in ms after the origin: with each pause before it. */
+  clock(at: number): number {
+    let skipped = 0;
+    for (const pause of this.pauses) {
+      if (at <= pause.at || pause.length === null) break;
+      skipped += pause.length;
+    }
+    return at + skipped;
+  }
+
+  /** Begins a pause where the chip was halted, and ends it where a task runs again. */
+  private pausing(at: number, task: number): void {
+    const open = this.pauses.at(-1);
+    if (task === HALTED) {
+      if (open?.length !== null) this.pauses.push({ at: this.fold(at), length: null });
+    } else if (open && open.length === null) {
+      open.length = Math.max(0, at - this.clock(open.at));
+    }
   }
 
   /**
@@ -109,7 +153,7 @@ export class Timeline {
 
   /**
    * Adds what sampling saw. Within a session, the session marks where it
-   * does not know what ran; a new connection leaves a gap.
+   * does not know what ran; a new connection leaves a gap. A pause takes no time.
    */
   add(running: RtosRunning): void {
     // The base and the origin are whole ms: told apart exactly, before the part of a ms is added.
@@ -120,9 +164,10 @@ export class Timeline {
       this.broken = false;
     }
     for (const [at, task] of running.switches) {
-      this.push(shift + at, task);
+      this.pausing(shift + at, task);
+      this.push(this.fold(shift + at), task);
     }
-    const until = shift + running.until;
+    const until = this.fold(shift + running.until);
     if (before !== null && until > before && running.samples > 0) {
       this.rate = (running.samples * 1000) / (until - before);
     }
@@ -157,7 +202,7 @@ export class Timeline {
         continue;
       }
       if (number === 0) continue;
-      const at = shift + when;
+      const at = this.fold(shift + when);
       if (event === "entered") {
         this.entered.set(number, at);
       } else if (event === "exited") {
@@ -287,6 +332,10 @@ export class Timeline {
     return this.times.length > 0 ? this.times[0] : null;
   }
 
+  /**
+   * Forgets what ran. The pauses stay: the variables, which are kept, are
+   * drawn by them, and one going on goes on.
+   */
   clear(): void {
     this.times = [];
     this.tasks = [];
@@ -338,6 +387,8 @@ export type TimelineFile = {
   interruptNames?: [number, string][];
   /** The watched variables, each with its own times and values. */
   variables: { name: string; times: number[]; values: number[] }[];
+  /** Each pause, where it is in the timeline and how long the chip was halted: the clock's time after it. */
+  pauses?: [number, number][];
 };
 
 const FORMAT = "terNIMA timeline";
@@ -371,6 +422,7 @@ export function timelineText(name: string, timeline: Timeline, samples: Sample[]
     interrupts: [...timeline.interrupts].map(([number, runs]) => [number, runs.starts, runs.ends]),
     interruptNames: [...timeline.interruptNames],
     variables,
+    pauses: timeline.pauses.map(({ at, length }) => [at, length ?? 0]),
   };
   return JSON.stringify(file);
 }
@@ -410,6 +462,7 @@ export function readTimeline(text: string): { name: string; timeline: Timeline; 
     }
   }
   timeline.interruptNames = new Map(file.interruptNames ?? []);
+  timeline.pauses = (file.pauses ?? []).map(([at, length]) => ({ at, length }));
   // The samples keep ms since 1970, as a tab's own.
   const samples: Sample[] = [];
   for (const variable of variables) {
