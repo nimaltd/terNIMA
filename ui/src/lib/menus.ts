@@ -308,7 +308,7 @@ export function buildMenus(app: AppActions): Menu[] {
           },
         },
         {
-          label: "Watch beside the terminal",
+          label: "Live beside the terminal",
           enabled: () => activeTab()?.canWatch === true && activeTab()?.watchOnly !== true,
           checked: () => activeTab()?.watchBeside ?? false,
           run: () => {

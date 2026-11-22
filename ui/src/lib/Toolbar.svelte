@@ -144,7 +144,7 @@
         {/each}
       </div>
     {:else if tab.kind === "rtt"}
-      <button class="btn target" title={tab.watchOnly ? "Watch settings" : "RTT settings"} onclick={onsettings}>
+      <button class="btn target" title={tab.watchOnly ? "Live settings" : "RTT settings"} onclick={onsettings}>
         <span class="mono">{tab.rtt.chip || "No chip"}</span>
         <span class="muted">{tab.watchOnly ? "Live" : "RTT"}</span>
         <span class="muted">▾</span>

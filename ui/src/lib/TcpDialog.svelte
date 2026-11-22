@@ -137,7 +137,7 @@
         class="dlg-label"
         title="OpenOCD's Tcl server, through which the Live view reads the variables as the chip runs: 6666 unless OpenOCD is told otherwise"
       >
-        Tcl port, for Watch
+        Tcl port, for Live
         <input class="field mono" inputmode="numeric" bind:value={tclText} oninput={() => (error = "")} />
       </label>
     {/if}

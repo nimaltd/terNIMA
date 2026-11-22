@@ -5,6 +5,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- The last places that still said Watch say Live: View > Live beside the
+  terminal, and OpenOCD's Tcl port in the TCP dialog.
+
 ## [1.7.0] - 2026-11-21
 
 ### Added

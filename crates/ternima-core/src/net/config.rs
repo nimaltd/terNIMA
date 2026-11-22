@@ -56,7 +56,7 @@ pub struct TcpConfig {
     /// own choice, so nothing is asked for then. The other protocols leave it alone.
     #[serde(skip_serializing_if = "is_zero")]
     pub channel: usize,
-    /// Where OpenOCD's Tcl server listens on `host`, through which the Watch
+    /// Where OpenOCD's Tcl server listens on `host`, through which the Live
     /// view reads the variables. The other protocols leave it alone.
     #[serde(skip_serializing_if = "is_tcl_port")]
     pub tcl_port: u16,
