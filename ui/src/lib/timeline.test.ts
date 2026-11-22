@@ -42,9 +42,22 @@ test("switches are kept, each run lasting until the next", () => {
   assert.equal(timeline.rate, 2500);
 });
 
-test("a pause leaves a gap where nothing is known", () => {
+test("a task sampled on with no switch for a while runs on, with no gap", () => {
+  const timeline = new Timeline(0);
+  // The idle thread ran on: the next batch's first switch comes 80 ms after the last.
+  timeline.add({ switches: [[1000, IDLE]], until: 1100, samples: 300 });
+  timeline.add({ switches: [[1180, BUSY]], until: 1200, samples: 300 });
+  assert.deepEqual(timeline.tasks, [IDLE, BUSY]);
+  assert.equal(timeline.taskAt(1150), IDLE);
+  let unknown = 0;
+  timeline.unknowns(0, 2000, () => unknown++);
+  assert.equal(unknown, 0);
+});
+
+test("a new connection leaves a gap where nothing is known", () => {
   const timeline = new Timeline(0);
   timeline.add({ switches: [[1000, BUSY]], until: 1010, samples: 10 });
+  timeline.restart();
   timeline.add({ switches: [[5000, BUSY]], until: 5010, samples: 10 });
   assert.deepEqual(timeline.times, [1000, 1010, 5000]);
   assert.deepEqual(timeline.tasks, [BUSY, 0, BUSY]);

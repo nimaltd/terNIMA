@@ -10,6 +10,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - The last places that still said Watch say Live: View > Live beside the
   terminal, and OpenOCD's Tcl port in the TCP dialog.
 
+### Fixed
+
+- A sampled timeline was tinted Lost every few hundred ms where a task ran
+  on with no switch, as an idle thread does: a batch of samples whose first
+  switch came more than 50 ms in was taken for a gap. Only a new connection
+  leaves one now, besides where the session itself does not know what ran.
+  And while the tasks' stacks were read, for 40 to 60 ms every five
+  seconds, no sample was taken: the running task is now sampled on between
+  the blocks of that read.
+
 ## [1.7.0] - 2026-11-21
 
 ### Added

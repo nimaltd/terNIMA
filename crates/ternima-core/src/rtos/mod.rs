@@ -271,7 +271,7 @@ impl Sampler {
     /// since it last did. `read` fills a block of memory from an address and
     /// says whether it could.
     pub fn sample(&mut self, mut read: impl FnMut(u64, &mut [u8]) -> bool) -> Option<Running> {
-        let (address, size) = self.at?;
+        self.at?;
         // Halted, the chip runs nothing: told now and then, it stays so until now.
         if self.halted {
             if self.told.elapsed() < RUNNING_EVERY {
@@ -284,6 +284,30 @@ impl Sampler {
         if self.rest_until.is_some_and(|until| Instant::now() < until) {
             return None;
         }
+        self.take(&mut read);
+        if self.told.elapsed() < RUNNING_EVERY {
+            return None;
+        }
+        self.told = Instant::now();
+        Some(std::mem::take(&mut self.seen))
+    }
+
+    /// Samples once more, while sampling, without giving what was seen:
+    /// between the blocks of a long read, as of the tasks and their stacks,
+    /// so that the samples go on and leave no gap.
+    pub fn sample_between(&mut self, read: &mut impl FnMut(u64, &mut [u8]) -> bool) {
+        let resting = self.rest_until.is_some_and(|until| Instant::now() < until);
+        if self.at.is_some() && !self.halted && !resting {
+            self.take(read);
+        }
+    }
+
+    /// Reads which task runs, and keeps it: a read that failed is a time not
+    /// known, and a rest before the next.
+    fn take(&mut self, read: &mut impl FnMut(u64, &mut [u8]) -> bool) {
+        let Some((address, size)) = self.at else {
+            return;
+        };
         self.rest_until = None;
         let mut bytes = [0; 8];
         let read_right = read(address, &mut bytes[..size.clamp(1, 8) as usize]);
@@ -294,11 +318,6 @@ impl Sampler {
             0
         };
         self.add(task, now_ms());
-        if self.told.elapsed() < RUNNING_EVERY {
-            return None;
-        }
-        self.told = Instant::now();
-        Some(std::mem::take(&mut self.seen))
     }
 
     /// Keeps a sample: a switch where another task runs, or where sampling
@@ -640,6 +659,44 @@ mod tests {
             .map(|&(_, task)| task)
             .collect();
         assert_eq!(tasks, [0x2000_0208, HALTED, 0x2000_0208]);
+    }
+
+    #[test]
+    fn samples_between_the_blocks_of_a_long_read_are_kept_for_later() {
+        let mut sampler = Sampler {
+            at: Some((0x2000_0460, 4)),
+            ..Sampler::default()
+        };
+        let mut read = |_: u64, block: &mut [u8]| {
+            block.copy_from_slice(&0x2000_0208u32.to_le_bytes());
+            true
+        };
+        sampler.sample_between(&mut read);
+        sampler.sample_between(&mut read);
+        // Kept, and given with the next sample's.
+        assert_eq!(sampler.seen.samples, 2);
+        let tasks: Vec<u64> = sampler
+            .seen
+            .switches
+            .iter()
+            .map(|&(_, task)| task)
+            .collect();
+        assert_eq!(tasks, [0x2000_0208]);
+        // Halted, nothing is read between either.
+        sampler.halt(true);
+        let mut asked = false;
+        sampler.sample_between(&mut |_, _| {
+            asked = true;
+            true
+        });
+        assert!(!asked);
+        // Nor while not sampling.
+        let mut idle = Sampler::default();
+        idle.sample_between(&mut |_, _| {
+            asked = true;
+            true
+        });
+        assert!(!asked);
     }
 
     #[test]

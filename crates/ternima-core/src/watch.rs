@@ -14,6 +14,10 @@ const BLOCK_MAX: u64 = 1024;
 /// How long the running task is sampled in one go, before the session does
 /// its other work: taking the probe's core costs more than a sample.
 const SAMPLING_SLICE: Duration = Duration::from_millis(5);
+/// How often the running task is still sampled through a read of the tasks,
+/// between its blocks: their stacks take tens of ms, and samples 50 ms apart
+/// leave a gap, where what ran is not known.
+const SAMPLE_THROUGH: Duration = Duration::from_millis(10);
 
 /// Fills a block of the chip's memory from an address, and says whether it could.
 pub type MemoryRead<'a> = dyn FnMut(u64, &mut [u8]) -> bool + 'a;
@@ -112,12 +116,22 @@ impl Watcher {
         }
     }
 
-    /// The RTOS's tasks, when it is their time.
+    /// The RTOS's tasks, when it is their time; while the running task is
+    /// sampled, it is sampled on between the blocks, so that their read
+    /// leaves no gap.
     pub fn tasks_if_due(
         &mut self,
-        read: impl FnMut(u64, &mut [u8]) -> bool,
+        mut read: impl FnMut(u64, &mut [u8]) -> bool,
     ) -> Option<rtos::Snapshot> {
-        self.tasks.read_if_due(read)
+        let running = &mut self.running;
+        let mut sampled = Instant::now();
+        self.tasks.read_if_due(|address, block| {
+            if sampled.elapsed() >= SAMPLE_THROUGH {
+                running.sample_between(&mut read);
+                sampled = Instant::now();
+            }
+            read(address, block)
+        })
     }
 
     /// Their values, in their order, when it is their time. `read` fills a

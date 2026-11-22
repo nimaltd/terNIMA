@@ -1707,6 +1707,8 @@ export class Tab {
 
   private onConnected(target: string, description: string): void {
     const now = Date.now();
+    // What ran while it was not connected is not known.
+    this.timeline.restart();
     if (this.resetting) {
       const again = this.kind === "swo" ? "SWO on again" : this.watchOnly ? "watching again" : "found RTT again";
       this.note(`${again} after the reset`);

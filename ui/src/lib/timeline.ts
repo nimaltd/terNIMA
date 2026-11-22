@@ -57,8 +57,6 @@ export const HALTED = 1;
 
 /** The most switches kept: the oldest go first. Hours of a busy RTOS. */
 export const SWITCHES_MAX = 2_000_000;
-/** Data further apart than this has a gap between, where nothing is known. */
-const APART_MS = 50;
 
 /**
  * Which task ran when: switches, oldest first, each lasting until the next.
@@ -94,19 +92,32 @@ export class Timeline {
   private entered = new Map<number, number>();
   /** How many exceptions there were lately, a second. */
   interruptRate = 0;
+  /** Whether what comes next is from a new connection, with a gap before it. */
+  private broken = false;
 
   constructor(origin = Math.floor(Date.now())) {
     this.origin = origin;
   }
 
-  /** Adds what sampling saw; a pause or a new connection before it leaves a gap. */
+  /**
+   * The session starts anew, as after the probe was unplugged: what ran
+   * between what there is and what comes next is not known.
+   */
+  restart(): void {
+    this.broken = this.times.length > 0;
+  }
+
+  /**
+   * Adds what sampling saw. Within a session, the session marks where it
+   * does not know what ran; a new connection leaves a gap.
+   */
   add(running: RtosRunning): void {
     // The base and the origin are whole ms: told apart exactly, before the part of a ms is added.
     const shift = (running.base ?? 0) - this.origin;
     const before = this.times.length > 0 ? this.until : null;
-    const first = running.switches[0];
-    if (first && before !== null && shift + first[0] - before > APART_MS && this.tasks.at(-1) !== 0) {
-      this.push(before, 0);
+    if (this.broken && running.switches.length > 0) {
+      if (before !== null && this.tasks.at(-1) !== 0) this.push(before, 0);
+      this.broken = false;
     }
     for (const [at, task] of running.switches) {
       this.push(shift + at, task);
