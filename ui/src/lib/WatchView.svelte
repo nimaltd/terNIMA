@@ -6,7 +6,18 @@
   import { fileName, type Tab } from "./tabs.svelte";
   import { clearActiveTerminal, setActiveTerminal, type TerminalActions } from "./terminal-actions";
   import { valueText } from "./watch";
-  import { KERNEL_NAMES, STATES, bytes, stackFill, stackPeak, type RtosTask } from "./rtos";
+  import {
+    KERNEL_NAMES,
+    STATES,
+    bytes,
+    cpuLoad,
+    isIdle,
+    stackFillNote,
+    stackMost,
+    stackNow,
+    stackPeak,
+    type RtosTask,
+  } from "./rtos";
   import TimelineView from "./TimelineView.svelte";
 
   let {
@@ -199,15 +210,18 @@
     return `0x${address.toString(16).padStart(8, "0")}`;
   }
 
-  /** What a task's stack holds: the most it has used of its size, or what is known of it. */
+  /** What a task's stack holds: in use now and the most it has used, of its size, or what is known of it. */
   function stackText(task: RtosTask): string {
     const peak = stackPeak(task);
+    const used = task.stack_used;
     if (task.stack_size !== null) {
-      const used = peak ?? task.stack_used;
-      return used === null ? bytes(task.stack_size) : `${bytes(used)} of ${bytes(task.stack_size)}`;
+      const size = bytes(task.stack_size);
+      if (used !== null && peak !== null) return `${bytes(used)}, max ${bytes(peak)} of ${size}`;
+      if (peak !== null) return `max ${bytes(peak)} of ${size}`;
+      return used === null ? size : `${bytes(used)} of ${size}`;
     }
     if (task.stack_free !== null) return `${bytes(task.stack_free)} never used`;
-    return task.stack_used === null ? "" : `${bytes(task.stack_used)} in use`;
+    return used === null ? "" : `${bytes(used)} in use`;
   }
 
   /** All that is known of a task's stack, in words. */
@@ -215,7 +229,7 @@
     const lines: string[] = [];
     if (task.stack_size !== null) lines.push(`Size: ${task.stack_size.toLocaleString()} bytes`);
     const peak = stackPeak(task);
-    if (peak !== null) lines.push(`The most it has used: ${peak.toLocaleString()} bytes`);
+    if (peak !== null) lines.push(`The most it has used, its high-water mark: ${peak.toLocaleString()} bytes`);
     if (task.stack_used !== null) lines.push(`In use when it last left the CPU: ${task.stack_used.toLocaleString()} bytes`);
     if (task.stack_free !== null) lines.push(`Never used: ${task.stack_free.toLocaleString()} bytes`);
     return lines.join("\n");
@@ -342,7 +356,12 @@
         {/each}
       </select>
     </label>
-    <button class="btn small" disabled={tab.watch.names.length === 0} title="Start the smallest and largest values again" onclick={() => tab.resetWatchRange()}>
+    <button
+      class="btn small"
+      disabled={tab.watch.names.length === 0 && !tab.rtos}
+      title="Start the smallest and largest values again: the variables', and the tasks' shares of the CPU"
+      onclick={() => tab.resetWatchRange()}
+    >
       Reset min/max
     </button>
     <button
@@ -386,6 +405,10 @@
       {@const snapshot = frozen ? frozen.tasks : tab.tasks}
       <!-- A read that finds none leaves the last ones on screen, dimmed, so the variables under them stay put. -->
       {@const list = snapshot && snapshot.tasks.length > 0 ? snapshot : frozen ? frozen.lastTasks : tab.lastTasks}
+      {@const ranges = frozen ? frozen.cpu : tab.cpuRanges}
+      {@const load = list ? cpuLoad(list.tasks) : null}
+      {@const fillNote = list ? stackFillNote(tab.rtos.kernel, list.tasks) : null}
+      {@const notes = fillNote ? [...tab.rtos.missing, fillNote] : tab.rtos.missing}
       <section class="tasks" aria-label="{KERNEL_NAMES[tab.rtos.kernel]} {taskWord}">
         <div class="tasks-bar">
           <b>{KERNEL_NAMES[tab.rtos.kernel]} {taskWord}</b>
@@ -402,6 +425,19 @@
                 ? `, at most ${bytes(heap.size - heap.lowest_free)}`
                 : ""}
             </span>
+          {/if}
+          {#if load !== null}
+            <span class="muted" title="The CPU's load over the last second: all but the idle one's share">
+              Load <span class="mono figure">{load.toFixed(1)}%</span>
+            </span>
+            {#if ranges.load}
+              <span class="muted" title="The least load in a second, since connected or Reset min/max">
+                Min <span class="mono figure">{ranges.load.min.toFixed(1)}%</span>
+              </span>
+              <span class="muted" title="The most load in a second, since connected or Reset min/max">
+                Max <span class="mono figure">{ranges.load.max.toFixed(1)}%</span>
+              </span>
+            {/if}
           {/if}
           {#if snapshot?.problem}
             <span class="warning">{snapshot.problem}{list ? ` Shown: the ${taskWord} as last read.` : ""}</span>
@@ -427,43 +463,68 @@
         {#if list}
           <table class="task-table" class:old={list !== snapshot}>
             <colgroup>
-              <col style:width="28%" />
-              <col style:width="14%" />
-              <col style:width="10%" />
-              <col style:width="34%" />
-              <col style:width="14%" />
+              <col style:width="17%" />
+              <col style:width="12%" />
+              <col style:width="8%" />
+              <col style:width="32%" />
+              <col style:width="15%" />
+              <col style:width="8%" />
+              <col style:width="8%" />
             </colgroup>
             <thead>
               <tr>
                 <th>Name</th>
                 <th>State</th>
                 <th title={tab.rtos.kernel === "zephyr" ? "Lower is more urgent; below 0 is cooperative" : "Higher is more urgent"}>Priority</th>
-                <th title="The most of its stack it has used, of its size">Stack</th>
-                <th class="number" title="Its share of the CPU over the last second">CPU</th>
+                <th title="In use now, as it last left the CPU, and the line at the most it has ever used, its high-water mark, where the kernel fills the stacks">Stack</th>
+                <th title="Its share of the CPU over the last second, and the line at the most it has had">CPU</th>
+                <th class="number" title="The least share of the CPU it has had in a second, since connected or Reset min/max">Min</th>
+                <th class="number" title="The most share of the CPU it has had in a second, since connected or Reset min/max">Max</th>
               </tr>
             </thead>
             <tbody>
               {#each list.tasks as task (task.address)}
-                {@const fill = stackFill(task)}
+                {@const inUse = stackNow(task)}
+                {@const most = stackMost(task)}
+                {@const range = ranges.tasks.get(task.address)}
                 <tr class:running={task.state === "running"}>
                   <td class="name mono" title="{task.name}, its control block at {hex(task.address)}">{task.name}</td>
                   <td><span class="state {task.state}" title={STATES[task.state].title}>{STATES[task.state].text}</span></td>
                   <td class="mono">{task.priority}</td>
                   <td class="stack" title={stackTitle(task)}>
-                    {#if fill !== null}
-                      <span class="meter"><span class="level" class:warn={fill >= 0.75} class:full={fill >= 0.9} style:width="{Math.round(fill * 100)}%"></span></span>
+                    {#if inUse !== null || most !== null}
+                      <span class="meter">
+                        {#if inUse !== null}
+                          <span class="level" class:warn={inUse >= 0.75} class:full={inUse >= 0.9} style:width="{inUse * 100}%"></span>
+                        {/if}
+                        {#if most !== null}
+                          <span class="mark" class:warn={most >= 0.75} class:full={most >= 0.9} style:left="{most * 100}%"></span>
+                        {/if}
+                      </span>
                     {/if}
                     <span class="mono">{stackText(task)}</span>
                   </td>
-                  <td class="mono number">{task.cpu === null ? "" : `${task.cpu.toFixed(1)}%`}</td>
+                  <td class="cpu">
+                    {#if task.cpu !== null}
+                      <span class="meter short">
+                        <span class="level" class:idle={isIdle(task)} class:some={task.cpu >= 0.05} style:width="{task.cpu}%"></span>
+                        {#if range && range.max >= 0.05}
+                          <span class="mark" style:left="{range.max}%"></span>
+                        {/if}
+                      </span>
+                      <span class="mono">{task.cpu.toFixed(1)}%</span>
+                    {/if}
+                  </td>
+                  <td class="mono number">{range ? `${range.min.toFixed(1)}%` : ""}</td>
+                  <td class="mono number">{range ? `${range.max.toFixed(1)}%` : ""}</td>
                 </tr>
               {/each}
             </tbody>
           </table>
         {/if}
-        {#if tab.rtos.missing.length > 0}
+        {#if notes.length > 0}
           <p class="note missing-options">
-            For more, turn on in the firmware: {tab.rtos.missing.join("; ")}.
+            For more, turn on in the firmware: {notes.join("; ")}.
           </p>
         {/if}
       </section>
@@ -859,11 +920,18 @@
     background: var(--bad);
   }
 
-  td.stack {
+  td.stack,
+  td.cpu {
     white-space: nowrap;
   }
 
+  /* A figure in a line of words, as the load's. */
+  .figure {
+    color: var(--text);
+  }
+
   .meter {
+    position: relative;
     display: inline-block;
     width: 72px;
     height: 6px;
@@ -885,6 +953,40 @@
   }
 
   .level.full {
+    background: var(--bad);
+  }
+
+  /* A share of the CPU, on a shorter bar. */
+  .meter.short {
+    width: 60px;
+  }
+
+  /* A share too small to see still shows, once it reads 0.1%: under that, as 0.0%, it is not there. */
+  .level.some {
+    min-width: 2px;
+  }
+
+  /* The idle task's share is the time left free. */
+  .level.idle {
+    background: var(--muted);
+  }
+
+  /* The high-water mark: the most there has been, standing out of the bar. */
+  .mark {
+    position: absolute;
+    top: -3px;
+    width: 2px;
+    height: 12px;
+    margin-left: -1px;
+    background: var(--muted);
+    border-radius: 1px;
+  }
+
+  .mark.warn {
+    background: var(--warn);
+  }
+
+  .mark.full {
     background: var(--bad);
   }
 </style>

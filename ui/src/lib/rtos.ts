@@ -53,11 +53,67 @@ export function stackPeak(task: RtosTask): number | null {
   return null;
 }
 
-/** How full its stack has been at most, from 0 to 1: what it uses now when that is all that is known. */
-export function stackFill(task: RtosTask): number | null {
-  if (task.stack_size === null || task.stack_size <= 0) return null;
-  const used = stackPeak(task) ?? task.stack_used;
-  return used === null ? null : Math.min(1, Math.max(0, used / task.stack_size));
+/** How full its stack is now, from 0 to 1, as it last left the CPU: not known for the running one. */
+export function stackNow(task: RtosTask): number | null {
+  if (task.stack_size === null || task.stack_size <= 0 || task.stack_used === null) return null;
+  return Math.min(1, Math.max(0, task.stack_used / task.stack_size));
+}
+
+/** Its stack's high-water mark: how full it has been at most, from 0 to 1, where the kernel fills the stacks. */
+export function stackMost(task: RtosTask): number | null {
+  const peak = stackPeak(task);
+  if (task.stack_size === null || task.stack_size <= 0 || peak === null) return null;
+  return Math.min(1, Math.max(0, peak / task.stack_size));
+}
+
+/**
+ * What to turn on in the firmware for the most each stack has used: where
+ * the stacks have sizes, but none holds the kernel's fill under what was used.
+ */
+export function stackFillNote(kernel: Kernel, tasks: RtosTask[]): string | null {
+  const sized = tasks.filter((task) => task.stack_size !== null);
+  if (sized.length === 0 || sized.some((task) => task.stack_free !== null)) return null;
+  return kernel === "zephyr"
+    ? "CONFIG_INIT_STACKS=y, for the most each stack has used"
+    : "INCLUDE_uxTaskGetStackHighWaterMark 1, for the most each stack has used";
+}
+
+/** Whether a task is the kernel's idle one: its share of the CPU is the time left free. */
+export function isIdle(task: RtosTask): boolean {
+  return /^idle/i.test(task.name);
+}
+
+/** The CPU's load over the last read: all but the idle tasks' share, in percent; null where that is not known. */
+export function cpuLoad(tasks: RtosTask[]): number | null {
+  const idle = tasks.filter(isIdle);
+  if (idle.length === 0 || idle.some((task) => task.cpu === null)) return null;
+  return Math.max(0, 100 - idle.reduce((sum, task) => sum + (task.cpu ?? 0), 0));
+}
+
+/** The least and the most a value has been. */
+export type Range = { min: number; max: number };
+
+/** A range taking in a value too. */
+export function widen(range: Range | null | undefined, value: number): Range {
+  return range ? { min: Math.min(range.min, value), max: Math.max(range.max, value) } : { min: value, max: value };
+}
+
+/** The least and the most share of the CPU each task has had in a read, by its control block's address, and the load's. */
+export type CpuRanges = { tasks: Map<number, Range>; load: Range | null };
+
+/** No shares yet. */
+export function noCpuRanges(): CpuRanges {
+  return { tasks: new Map(), load: null };
+}
+
+/** The ranges taking in a read's shares too, as new ones: the old stay as they were. */
+export function widenCpu(ranges: CpuRanges, tasks: RtosTask[]): CpuRanges {
+  const each = new Map(ranges.tasks);
+  for (const task of tasks) {
+    if (task.cpu !== null) each.set(task.address, widen(each.get(task.address), task.cpu));
+  }
+  const load = cpuLoad(tasks);
+  return { tasks: each, load: load === null ? ranges.load : widen(ranges.load, load) };
 }
 
 /** A number of bytes, short: 512 B, 1.5 KB. */

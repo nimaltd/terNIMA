@@ -5,6 +5,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- The Live view's tasks show their high-water marks. Each stack's bar fills
+  to what is in use now, and a line marks the most the task has ever used,
+  yellow and then red as it nears the size. The kernel's fill of the stacks
+  tells it: `CONFIG_INIT_STACKS=y` in Zephyr,
+  `INCLUDE_uxTaskGetStackHighWaterMark 1` in FreeRTOS, which the table asks
+  for where no stack holds it. The CPU column has a bar too, its line at the
+  most share the task has had in a second, and Min and Max beside it: the
+  least and the most since connected, or since Reset min/max. Over the
+  table, Load is the CPU's own: all but the idle task's share, with its
+  least and most.
+
 ### Changed
 
 - A pause takes no time in the timeline, as none passes for the halted

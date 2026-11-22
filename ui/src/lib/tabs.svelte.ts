@@ -5,7 +5,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import type { Terminal } from "@xterm/xterm";
 import { echoed } from "./echo";
 import { shortNames } from "./watch";
-import { TASKS_EVERY_MS, type RtosFound, type RtosSnapshot } from "./rtos";
+import { TASKS_EVERY_MS, noCpuRanges, widenCpu, type CpuRanges, type RtosFound, type RtosSnapshot } from "./rtos";
 import { Timeline } from "./timeline";
 import { HexDump } from "./hexdump";
 import { DEFAULT_MODBUS, ModbusSession, type ModbusSetup, type Sample } from "./modbus.svelte";
@@ -109,6 +109,8 @@ export type LiveFrozen = {
   at: number;
   tasks: RtosSnapshot | null;
   lastTasks: RtosSnapshot | null;
+  /** Each task's least and most share of the CPU then, and the load's. */
+  cpu: CpuRanges;
   /** The watched variables then, with their values, smallest and largest. */
   names: string[];
   values: (number | null)[];
@@ -221,6 +223,8 @@ export class Tab {
   tasksProblem: string | null = $state(null);
   /** The last read that found tasks, kept on screen while a read finds none. */
   lastTasks: RtosSnapshot | null = $state(null);
+  /** Each task's least and most share of the CPU in a read, and the load's, since connected or Reset min/max. */
+  cpuRanges: CpuRanges = $state.raw(noCpuRanges());
   /**
    * Which task ran when, sampled, for the timeline at the top of the Live
    * view. Plain, as it can be big: `timelineVersion` changes with it.
@@ -564,9 +568,10 @@ export class Tab {
     changed();
   }
 
-  /** Starts the smallest and largest values again, from the next ones read. */
+  /** Starts the smallest and largest values again, from the next ones read: the variables', and the tasks' shares of the CPU. */
   resetWatchRange(): void {
     this.watchRange = [];
+    this.cpuRanges = noCpuRanges();
   }
 
   /**
@@ -670,6 +675,7 @@ export class Tab {
           at: Date.now(),
           tasks: this.tasks,
           lastTasks: this.lastTasks,
+          cpu: this.cpuRanges,
           names: [...this.watchSent],
           values: [...this.watchValues],
           range: [...this.watchRange],
@@ -1629,6 +1635,9 @@ export class Tab {
       case "tasks":
         this.tasks = event.snapshot;
         if (event.snapshot.tasks.length > 0) this.lastTasks = event.snapshot;
+        if (event.snapshot.tasks.some((task) => task.cpu !== null)) {
+          this.cpuRanges = widenCpu(this.cpuRanges, event.snapshot.tasks);
+        }
         this.timeline.learn(event.snapshot);
         return;
       case "running":
@@ -1709,6 +1718,8 @@ export class Tab {
     const now = Date.now();
     // What ran while it was not connected is not known.
     this.timeline.restart();
+    // The chip may have been reset or flashed anew: its tasks' shares of the CPU start again.
+    this.cpuRanges = noCpuRanges();
     if (this.resetting) {
       const again = this.kind === "swo" ? "SWO on again" : this.watchOnly ? "watching again" : "found RTT again";
       this.note(`${again} after the reset`);

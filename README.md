@@ -46,7 +46,7 @@ How to use every part of terNIMA, step by step and with pictures, is in the **[h
 - SEGGER RTT through CMSIS-DAP, J-Link and ST-Link probes, with no vendor software needed
 - SWO through the same probes: ITM output such as printf, from one stimulus port or all of them
 - Live variables: watch and plot the firmware's globals, struct members and array elements by name from its ELF file, read as the chip runs: through the probe of an RTT or SWO tab, with or without RTT in the firmware, or through OpenOCD while you debug. Beside the terminal, or in a view of their own
-- RTOS tasks: Zephyr's threads and FreeRTOS's tasks in the Live view, each with what it is doing, its priority, its stack and its share of the CPU, read as the chip runs, with no RTT needed
+- RTOS tasks: Zephyr's threads and FreeRTOS's tasks in the Live view, each with what it is doing, its priority, its stack in use and its high-water mark, its share of the CPU with the least and most it has had, and the CPU's load, read as the chip runs, with no RTT needed
 - A timeline of which task ran when, with the watched variables over the same time: sampled through the probe thousands of times a second, or every switch and every interrupt, named as the firmware names it and timed by the chip: in an SWO tab, with nothing in the firmware, or in an RTT tab, from SEGGER SystemView. Zoom in to a microsecond, scroll back, pause the chip, save it and open it later
 - Crash decoding: under a code address in the output, as in a Zephyr fatal error, a HardFault or an ESP32 backtrace, the function, file and line from the ELF file, on plain serial too
 - RTT over TCP while your IDE is debugging, from J-Link or OpenOCD
