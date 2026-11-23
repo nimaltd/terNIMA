@@ -23,6 +23,35 @@ function snapshot(): RtosSnapshot {
   return { kernel: "zephyr", tasks: [task("idle", IDLE), task("busy", BUSY)], heap: null, problem: null };
 }
 
+test("a task moved by new firmware keeps its lane, with what it ran before", () => {
+  const timeline = new Timeline(0);
+  timeline.learn(snapshot());
+  timeline.add({ switches: [[1000, BUSY], [1004, IDLE]], until: 1010, samples: 10 });
+  // Built anew with more in RAM, and flashed: the same threads, further on.
+  const moved = snapshot();
+  for (const task of moved.tasks) task.address += 0x400;
+  timeline.restart();
+  timeline.learn(moved);
+  timeline.add({ switches: [[5000, BUSY + 0x400]], until: 5010, samples: 10 });
+  assert.deepEqual(timeline.order, [IDLE + 0x400, BUSY + 0x400]);
+  assert.equal(timeline.taskAt(1002), BUSY + 0x400);
+  assert.equal(timeline.taskAt(1005), IDLE + 0x400);
+  assert.equal(timeline.name(BUSY + 0x400), "busy");
+  assert.equal(timeline.names.has(BUSY), false);
+});
+
+test("two tasks of one name stay apart, though a read misses one", () => {
+  const timeline = new Timeline(0);
+  const both = snapshot();
+  both.tasks[0].name = "worker";
+  both.tasks[1].name = "worker";
+  timeline.learn(both);
+  timeline.add({ switches: [[1000, BUSY], [1004, IDLE]], until: 1010, samples: 10 });
+  timeline.learn({ ...both, tasks: [both.tasks[0]] });
+  assert.deepEqual(timeline.order, [IDLE, BUSY]);
+  assert.equal(timeline.taskAt(1002), BUSY);
+});
+
 test("switches are kept, each run lasting until the next", () => {
   const timeline = new Timeline(0);
   timeline.add({ switches: [[1000, IDLE], [1004, BUSY]], until: 1010, samples: 25 });

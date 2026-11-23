@@ -251,15 +251,36 @@ export class Timeline {
     }
   }
 
-  /** Learns the tasks' names, and their order, from a read of them. */
+  /**
+   * Learns the tasks' names, and their order, from a read of them. A task
+   * gone from the kernel's list where one of its name came, at an address
+   * new to the timeline, is that one moved, as by firmware built anew with
+   * more in RAM: what it ran goes in that one's lane.
+   */
   learn(snapshot: RtosSnapshot): void {
     this.kernel = snapshot.kernel;
     if (snapshot.tasks.length === 0) return;
-    const listed = snapshot.tasks.map((task) => task.address);
+    const listed = new Set(snapshot.tasks.map((task) => task.address));
+    const came = new Map<string, number>();
+    for (const task of snapshot.tasks) {
+      if (!this.names.has(task.address) && !came.has(task.name)) came.set(task.name, task.address);
+    }
+    const moved = new Map<number, number>();
+    for (const [address, name] of this.names) {
+      const now = came.get(name);
+      if (now !== undefined && !listed.has(address)) moved.set(address, now);
+    }
+    if (moved.size > 0) {
+      this.tasks = this.tasks.map((task) => moved.get(task) ?? task);
+      for (const address of moved.keys()) this.names.delete(address);
+    }
     for (const task of snapshot.tasks) {
       this.names.set(task.address, task.name);
     }
-    this.order = [...listed, ...this.order.filter((task) => !listed.includes(task))];
+    this.order = [
+      ...snapshot.tasks.map((task) => task.address),
+      ...this.order.filter((task) => !listed.has(task) && !moved.has(task)),
+    ];
   }
 
   /** A task's name, or its address when it was never read. */

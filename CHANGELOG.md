@@ -5,6 +5,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Fixed
+
+- Firmware built anew and flashed with its tab open gave the timeline every
+  task twice: more in RAM, as SystemView's buffer, had moved them all, and
+  the old ones kept their lanes beside the new. A task gone from the
+  kernel's list where one of its name came, new to the timeline, is now
+  that one moved: one lane, with what it ran before.
+
 ## [1.7.1] - 2026-11-22
 
 ### Added
