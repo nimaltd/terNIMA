@@ -179,11 +179,12 @@ pub(super) fn read(layout: &Layout, memory: &mut Memory) -> (Snapshot, Vec<Optio
         let size = thread.stack_size.and_then(|field| unsigned(&bytes, field));
         let (stack_used, stack_free) = match (start, size) {
             (Some(start), Some(size)) if size > 0 => {
-                // The stack grows down from its top; the running thread's saved one is old.
+                // The stack grows down from its top. Each thread's is as it last
+                // left the CPU, the running one's too: its own is in the core.
                 let used = thread
                     .sp
                     .and_then(|field| unsigned(&bytes, field))
-                    .filter(|&sp| state != State::Running && sp >= start && sp <= start + size)
+                    .filter(|&sp| sp >= start && sp <= start + size)
                     .map(|sp| start + size - sp);
                 (used, never_used(memory, start, size, FILL))
             }
@@ -321,7 +322,7 @@ mod tests {
             0,
             0x2000_0200,
             "main",
-            (0x2000_1000, 0x400, 0),
+            (0x2000_1000, 0x400, 0x2000_1380),
         );
         thread(
             &mut ram,
@@ -369,8 +370,8 @@ mod tests {
         assert_eq!(blink.stack_used, Some(0x80));
         assert_eq!(blink.stack_free, Some(0x100));
         assert_eq!(snapshot.tasks[0].state, State::Running);
-        // The running thread's saved stack pointer is old: not told.
-        assert_eq!(snapshot.tasks[0].stack_used, None);
+        // The running thread's stack as it last left the CPU, as the others' are.
+        assert_eq!(snapshot.tasks[0].stack_used, Some(0x80));
         assert_eq!(snapshot.tasks[2].state, State::Ready);
         assert_eq!(counters.len(), 3);
     }

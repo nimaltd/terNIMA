@@ -12,6 +12,7 @@
     bytes,
     cpuLoad,
     isIdle,
+    sparkPoints,
     stackFillNote,
     stackMost,
     stackNow,
@@ -210,18 +211,26 @@
     return `0x${address.toString(16).padStart(8, "0")}`;
   }
 
-  /** What a task's stack holds: in use now and the most it has used, of its size, or what is known of it. */
+  /** A part of a whole, as 48%. */
+  function percent(part: number): string {
+    return `${Math.round(part * 100)}%`;
+  }
+
+  /**
+   * How full a task's stack is, of its size: now and at the most, or what is
+   * known of it, in fields that line up from row to row, the percents three
+   * digits wide and the size six characters. The bytes are in its title.
+   */
   function stackText(task: RtosTask): string {
-    const peak = stackPeak(task);
-    const used = task.stack_used;
+    const inUse = stackNow(task);
+    const most = stackMost(task);
     if (task.stack_size !== null) {
-      const size = bytes(task.stack_size);
-      if (used !== null && peak !== null) return `${bytes(used)}, max ${bytes(peak)} of ${size}`;
-      if (peak !== null) return `max ${bytes(peak)} of ${size}`;
-      return used === null ? size : `${bytes(used)} of ${size}`;
+      const now = inUse === null ? "" : percent(inUse);
+      const max = most === null ? "" : `max ${percent(most).padStart(4)}`;
+      return `${now.padStart(4)}  ${max.padEnd(8)}  of ${bytes(task.stack_size).padStart(6)}`;
     }
     if (task.stack_free !== null) return `${bytes(task.stack_free)} never used`;
-    return used === null ? "" : `${bytes(used)} in use`;
+    return task.stack_used === null ? "" : `${bytes(task.stack_used)} in use`;
   }
 
   /** All that is known of a task's stack, in words. */
@@ -406,6 +415,7 @@
       <!-- A read that finds none leaves the last ones on screen, dimmed, so the variables under them stay put. -->
       {@const list = snapshot && snapshot.tasks.length > 0 ? snapshot : frozen ? frozen.lastTasks : tab.lastTasks}
       {@const ranges = frozen ? frozen.cpu : tab.cpuRanges}
+      {@const history = frozen ? frozen.cpuHistory : tab.cpuHistory}
       {@const load = list ? cpuLoad(list.tasks) : null}
       {@const fillNote = list ? stackFillNote(tab.rtos.kernel, list.tasks) : null}
       {@const notes = fillNote ? [...tab.rtos.missing, fillNote] : tab.rtos.missing}
@@ -463,23 +473,19 @@
         {#if list}
           <table class="task-table" class:old={list !== snapshot}>
             <colgroup>
-              <col style:width="17%" />
-              <col style:width="12%" />
+              <col style:width="16%" />
+              <col style:width="11%" />
               <col style:width="8%" />
               <col style:width="32%" />
-              <col style:width="15%" />
-              <col style:width="8%" />
-              <col style:width="8%" />
+              <col style:width="33%" />
             </colgroup>
             <thead>
               <tr>
                 <th>Name</th>
                 <th>State</th>
                 <th title={tab.rtos.kernel === "zephyr" ? "Lower is more urgent; below 0 is cooperative" : "Higher is more urgent"}>Priority</th>
-                <th title="In use now, as it last left the CPU, and the line at the most it has ever used, its high-water mark, where the kernel fills the stacks">Stack</th>
-                <th title="Its share of the CPU over the last second, and the line at the most it has had">CPU</th>
-                <th class="number" title="The least share of the CPU it has had in a second, since connected or Reset min/max">Min</th>
-                <th class="number" title="The most share of the CPU it has had in a second, since connected or Reset min/max">Max</th>
+                <th title="How full it is now, as it last left the CPU, and the line at the most it has ever been, its high-water mark, where the kernel fills the stacks">Stack</th>
+                <th title="Its share of the CPU each second over the last minute, the share now, and the most it has had since connected or Reset min/max">CPU, the last minute</th>
               </tr>
             </thead>
             <tbody>
@@ -502,21 +508,23 @@
                         {/if}
                       </span>
                     {/if}
-                    <span class="mono">{stackText(task)}</span>
+                    <span class="mono aligned">{stackText(task)}</span>
                   </td>
                   <td class="cpu">
                     {#if task.cpu !== null}
-                      <span class="meter short">
-                        <span class="level" class:idle={isIdle(task)} class:some={task.cpu >= 0.05} style:width="{task.cpu}%"></span>
-                        {#if range && range.max >= 0.05}
-                          <span class="mark" style:left="{range.max}%"></span>
+                      {@const shares = history.get(task.address) ?? []}
+                      <svg class="spark" width="150" height="18" viewBox="0 0 150 18" aria-hidden="true">
+                        <line x1="0" y1="17.5" x2="150" y2="17.5" />
+                        {#if shares.length > 1}
+                          <polyline class:idle={isIdle(task)} points={sparkPoints(shares, 150, 18)} />
                         {/if}
-                      </span>
-                      <span class="mono">{task.cpu.toFixed(1)}%</span>
+                      </svg>
+                      <span class="mono aligned">{`${task.cpu.toFixed(1)}%`.padStart(6)}</span>
+                      {#if range && range.max >= 0.05}
+                        <span class="muted mono aligned">{`  max ${`${range.max.toFixed(1)}%`.padStart(6)}`}</span>
+                      {/if}
                     {/if}
                   </td>
-                  <td class="mono number">{range ? `${range.min.toFixed(1)}%` : ""}</td>
-                  <td class="mono number">{range ? `${range.max.toFixed(1)}%` : ""}</td>
                 </tr>
               {/each}
             </tbody>
@@ -784,12 +792,6 @@
     border-bottom: 1px solid var(--border);
   }
 
-  /* Shares of the CPU, their points under each other. */
-  th.number,
-  td.number {
-    text-align: right;
-  }
-
   td.type,
   td.address {
     color: var(--muted);
@@ -925,6 +927,11 @@
     white-space: nowrap;
   }
 
+  /* Figures padded to line up from row to row: the spaces stay. */
+  .aligned {
+    white-space: pre;
+  }
+
   /* A figure in a line of words, as the load's. */
   .figure {
     color: var(--text);
@@ -933,19 +940,19 @@
   .meter {
     position: relative;
     display: inline-block;
-    width: 72px;
-    height: 6px;
+    width: 110px;
+    height: 8px;
     margin-right: 8px;
     vertical-align: middle;
     background: var(--border);
-    border-radius: 3px;
+    border-radius: 4px;
   }
 
   .level {
     display: block;
     height: 100%;
     background: var(--accent);
-    border-radius: 3px;
+    border-radius: 4px;
   }
 
   .level.warn {
@@ -956,19 +963,27 @@
     background: var(--bad);
   }
 
-  /* A share of the CPU, on a shorter bar. */
-  .meter.short {
-    width: 60px;
+  /* A task's share of the CPU each second over the last minute, the newest at the right. */
+  .spark {
+    margin-right: 8px;
+    vertical-align: middle;
   }
 
-  /* A share too small to see still shows, once it reads 0.1%: under that, as 0.0%, it is not there. */
-  .level.some {
-    min-width: 2px;
+  .spark line {
+    stroke: var(--border);
+    stroke-width: 1;
+  }
+
+  .spark polyline {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 1.5;
+    stroke-linejoin: round;
   }
 
   /* The idle task's share is the time left free. */
-  .level.idle {
-    background: var(--muted);
+  .spark polyline.idle {
+    stroke: var(--muted);
   }
 
   /* The high-water mark: the most there has been, standing out of the bar. */
@@ -976,7 +991,7 @@
     position: absolute;
     top: -3px;
     width: 2px;
-    height: 12px;
+    height: 14px;
     margin-left: -1px;
     background: var(--muted);
     border-radius: 1px;

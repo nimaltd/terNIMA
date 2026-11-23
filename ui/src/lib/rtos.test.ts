@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  addCpuHistory,
   bytes,
   cpuLoad,
   isIdle,
@@ -12,6 +13,7 @@ import {
   stackFillNote,
   stackMost,
   stackNow,
+  sparkPoints,
   stackPeak,
   widenCpu,
 } from "./rtos.ts";
@@ -40,7 +42,7 @@ test("a stack is as full as it is now, and its high-water mark as its peak", () 
   assert.equal(stackMost(task(1000, 300, 600)), 0.4);
   // The kernel does not fill the stacks: no mark.
   assert.equal(stackMost(task(1000, 300, null)), null);
-  // The running task's saved stack pointer is old: only the mark.
+  // Where its stack pointer is not known: only the mark.
   assert.equal(stackNow(task(1000, null, 600)), null);
   assert.equal(stackMost(task(1000, null, 600)), 0.4);
   assert.equal(stackNow(task(null, 300, 600)), null);
@@ -64,6 +66,25 @@ test("the load is all but the idle task's share, where that is known", () => {
   assert.equal(cpuLoad([shared("main", 1, 3), shared("idle", 2, 97)]), 3);
   assert.equal(cpuLoad([shared("main", 1, 3), shared("idle", 2, null)]), null);
   assert.equal(cpuLoad([shared("main", 1, 3)]), null);
+});
+
+test("a minute of each task's shares of the CPU is kept, the newest last", () => {
+  let history = new Map<number, number[]>();
+  for (let second = 0; second < 70; second++) {
+    history = addCpuHistory(history, [shared("main", 1, second), shared("idle", 2, null)]);
+  }
+  assert.equal(history.get(1)?.length, 60);
+  assert.equal(history.get(1)?.[0], 10);
+  assert.equal(history.get(1)?.at(-1), 69);
+  // A share not known is not drawn as 0.
+  assert.equal(history.has(2), false);
+});
+
+test("the line through the shares ends at the right edge, scaled to the most of them", () => {
+  // Two shares of a minute's 60 slots, in a box 590 wide: 10 a slot.
+  assert.equal(sparkPoints([0, 8], 590, 18), "580.0,17.0 590.0,4.2");
+  // A task that never ran lies along the bottom.
+  assert.equal(sparkPoints([0, 0], 590, 18), "580.0,17.0 590.0,17.0");
 });
 
 test("each task's least and most share of the CPU take in each read", () => {

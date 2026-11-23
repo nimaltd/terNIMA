@@ -5,6 +5,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- The tasks' CPU column draws each one's share over the last minute, read
+  every second, with the share now and the most since connected or Reset
+  min/max beside it, where the Min and Max columns were; Load over the
+  table keeps its own. A stack's bar is wider, and its text tells how full
+  it is now and at its high-water mark, as ` 36%  max  48%  of   1 KB`, in
+  fields that line up from row to row; pointed at, it tells the bytes. The
+  running task's stack shows as the others' do, as it last left the CPU,
+  where it was left out.
+
 ### Fixed
 
 - Firmware built anew and flashed with its tab open gave the timeline every

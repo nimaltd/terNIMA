@@ -53,7 +53,7 @@ export function stackPeak(task: RtosTask): number | null {
   return null;
 }
 
-/** How full its stack is now, from 0 to 1, as it last left the CPU: not known for the running one. */
+/** How full its stack is now, from 0 to 1, as it last left the CPU, the running one's too. */
 export function stackNow(task: RtosTask): number | null {
   if (task.stack_size === null || task.stack_size <= 0 || task.stack_used === null) return null;
   return Math.min(1, Math.max(0, task.stack_used / task.stack_size));
@@ -104,6 +104,37 @@ export type CpuRanges = { tasks: Map<number, Range>; load: Range | null };
 /** No shares yet. */
 export function noCpuRanges(): CpuRanges {
   return { tasks: new Map(), load: null };
+}
+
+/** How many of each task's shares of the CPU are kept to draw: a minute's, as they are read every second. */
+export const CPU_HISTORY = 60;
+
+/** Each task's shares of the CPU lately, oldest first, by its control block's address. */
+export type CpuHistory = Map<number, number[]>;
+
+/** The history taking in a read's shares too, as a new one: the old stays as it was. */
+export function addCpuHistory(history: CpuHistory, tasks: RtosTask[], keep = CPU_HISTORY): CpuHistory {
+  const next = new Map(history);
+  for (const task of tasks) {
+    if (task.cpu === null) continue;
+    next.set(task.address, [...(next.get(task.address) ?? []), task.cpu].slice(-keep));
+  }
+  return next;
+}
+
+/**
+ * A line through shares of the CPU, as an SVG polyline's points in a box
+ * `width` by `height`: the newest at the right edge and a minute back at
+ * the left, scaled to the most among them, at least `floor` percent, so a
+ * share that changes little stays flat.
+ */
+export function sparkPoints(shares: number[], width: number, height: number, slots = CPU_HISTORY, floor = 5): string {
+  const top = Math.max(floor, ...shares) * 1.25;
+  const step = width / (slots - 1);
+  const start = (slots - shares.length) * step;
+  return shares
+    .map((share, index) => `${(start + index * step).toFixed(1)},${(height - 1 - (share / top) * (height - 2)).toFixed(1)}`)
+    .join(" ");
 }
 
 /** The ranges taking in a read's shares too, as new ones: the old stay as they were. */

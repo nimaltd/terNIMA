@@ -5,7 +5,16 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import type { Terminal } from "@xterm/xterm";
 import { echoed } from "./echo";
 import { shortNames } from "./watch";
-import { TASKS_EVERY_MS, noCpuRanges, widenCpu, type CpuRanges, type RtosFound, type RtosSnapshot } from "./rtos";
+import {
+  TASKS_EVERY_MS,
+  addCpuHistory,
+  noCpuRanges,
+  widenCpu,
+  type CpuHistory,
+  type CpuRanges,
+  type RtosFound,
+  type RtosSnapshot,
+} from "./rtos";
 import { Timeline } from "./timeline";
 import { HexDump } from "./hexdump";
 import { DEFAULT_MODBUS, ModbusSession, type ModbusSetup, type Sample } from "./modbus.svelte";
@@ -111,6 +120,8 @@ export type LiveFrozen = {
   lastTasks: RtosSnapshot | null;
   /** Each task's least and most share of the CPU then, and the load's. */
   cpu: CpuRanges;
+  /** Each task's shares of the CPU over the minute before. */
+  cpuHistory: CpuHistory;
   /** The watched variables then, with their values, smallest and largest. */
   names: string[];
   values: (number | null)[];
@@ -225,6 +236,8 @@ export class Tab {
   lastTasks: RtosSnapshot | null = $state(null);
   /** Each task's least and most share of the CPU in a read, and the load's, since connected or Reset min/max. */
   cpuRanges: CpuRanges = $state.raw(noCpuRanges());
+  /** Each task's shares of the CPU over the last minute, a read a second, since connected. */
+  cpuHistory: CpuHistory = $state.raw(new Map());
   /**
    * Which task ran when, sampled, for the timeline at the top of the Live
    * view. Plain, as it can be big: `timelineVersion` changes with it.
@@ -676,6 +689,7 @@ export class Tab {
           tasks: this.tasks,
           lastTasks: this.lastTasks,
           cpu: this.cpuRanges,
+          cpuHistory: this.cpuHistory,
           names: [...this.watchSent],
           values: [...this.watchValues],
           range: [...this.watchRange],
@@ -1637,6 +1651,7 @@ export class Tab {
         if (event.snapshot.tasks.length > 0) this.lastTasks = event.snapshot;
         if (event.snapshot.tasks.some((task) => task.cpu !== null)) {
           this.cpuRanges = widenCpu(this.cpuRanges, event.snapshot.tasks);
+          this.cpuHistory = addCpuHistory(this.cpuHistory, event.snapshot.tasks);
         }
         this.timeline.learn(event.snapshot);
         return;
@@ -1720,6 +1735,7 @@ export class Tab {
     this.timeline.restart();
     // The chip may have been reset or flashed anew: its tasks' shares of the CPU start again.
     this.cpuRanges = noCpuRanges();
+    this.cpuHistory = new Map();
     if (this.resetting) {
       const again = this.kind === "swo" ? "SWO on again" : this.watchOnly ? "watching again" : "found RTT again";
       this.note(`${again} after the reset`);

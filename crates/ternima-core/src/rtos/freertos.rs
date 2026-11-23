@@ -254,8 +254,8 @@ pub(super) fn read(layout: &Layout, memory: &mut Memory) -> (Snapshot, Vec<Optio
             .filter(|&end| end >= stack && stack != 0)
             .map(|end| end + 4 - stack)
             .or_else(|| layout.static_stacks.get(&stack).copied());
+        // As it last left the CPU, the running one's too: its own is in the core.
         let stack_used = size
-            .filter(|_| state != State::Running)
             .filter(|&size| top >= stack && top <= stack + size)
             .map(|size| stack + size - top);
         // What was never used lies under the lowest the stack pointer went.
