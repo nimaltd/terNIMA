@@ -156,7 +156,7 @@
         <label class="option" title="The up channel shown in the terminal">
           Channel
           <select
-            class="field"
+            class="field channel"
             value={tab.rtt.up_channel}
             onchange={(event) =>
               act(() => tab.reconfigureRtt({ ...tab.rtt, up_channel: Number(event.currentTarget.value) }))}
@@ -477,6 +477,12 @@
   .option select {
     height: 24px;
     padding: 0 4px;
+  }
+
+  /* A channel's name is the firmware's: a long one is cut, not the toolbar stretched. */
+  .option select.channel {
+    max-width: 220px;
+    text-overflow: ellipsis;
   }
 
   .play {

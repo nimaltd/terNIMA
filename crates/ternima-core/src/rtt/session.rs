@@ -201,6 +201,8 @@ enum Pumped {
     Lost(String),
     /// The control block is gone, as after a reset: look for it again.
     Search,
+    /// The firmware set the control block up again: read it again, still connected.
+    Changed,
 }
 
 /// How a wait ended.
@@ -505,6 +507,8 @@ impl Worker {
                 Pumped::Search => self.set_state(RttState::Waiting {
                     problem: Some("Looking for the RTT control block again.".into()),
                 }),
+                // Found again at once, its channels told again; the tab stays connected.
+                Pumped::Changed => {}
             }
         }
     }
@@ -580,6 +584,12 @@ impl Worker {
                 pending.extend_from_slice(&buf[..count]);
                 batch_started.get_or_insert_with(Instant::now);
             }
+            // A read found a channel's buffer moved: the firmware has set the
+            // control block up again. Found again at once, nothing it writes
+            // into its new buffers is lost.
+            if link.moved() {
+                break Pumped::Changed;
+            }
 
             if batch_started.is_some_and(|start| start.elapsed() >= self.timing.batch) {
                 self.emit(Event::Data(std::mem::take(&mut pending)));
@@ -593,6 +603,12 @@ impl Worker {
                 match link.still_there() {
                     Ok(true) => {}
                     Ok(false) | Err(LinkProblem::NoControlBlock(_)) => break Pumped::Search,
+                    Err(LinkProblem::Lost(problem)) => break Pumped::Lost(problem),
+                }
+                match link.changed() {
+                    Ok(false) => {}
+                    Ok(true) => break Pumped::Changed,
+                    Err(LinkProblem::NoControlBlock(_)) => break Pumped::Search,
                     Err(LinkProblem::Lost(problem)) => break Pumped::Lost(problem),
                 }
             }
@@ -830,6 +846,10 @@ mod tests {
         memory_reads: usize,
         /// Whether each look for the control block was a quick one.
         finds: Vec<bool>,
+        /// What the firmware names its channels, Terminal when `None`.
+        name: Option<String>,
+        /// Which buffers the channels have: other ones once the firmware sets them up anew.
+        buffers: u32,
     }
 
     #[derive(Default)]
@@ -848,6 +868,9 @@ mod tests {
             Ok(Box::new(FakeLink {
                 chip: self.0.clone(),
                 found: None,
+                name: None,
+                buffers: 0,
+                moved: false,
             }))
         }
     }
@@ -855,6 +878,12 @@ mod tests {
     struct FakeLink {
         chip: Arc<Mutex<Chip>>,
         found: Option<u64>,
+        /// The channels' name when the control block was found.
+        name: Option<String>,
+        /// The channels' buffers when it was found.
+        buffers: u32,
+        /// A read found other buffers since.
+        moved: bool,
     }
 
     impl FakeLink {
@@ -875,11 +904,16 @@ mod tests {
             let address = chip
                 .control_block
                 .ok_or_else(|| LinkProblem::NoControlBlock("no control block".into()))?;
+            let name = chip.name.clone().unwrap_or_else(|| "Terminal".into());
+            let buffers = chip.buffers;
             drop(chip);
+            self.buffers = buffers;
             self.found = Some(address);
+            self.name = Some(name.clone());
+            self.moved = false;
             let terminal = ChannelInfo {
                 number: 0,
-                name: Some("Terminal".into()),
+                name: Some(name),
                 size: 1024,
             };
             Ok(Attached {
@@ -891,6 +925,12 @@ mod tests {
 
         fn read(&mut self, _channel: usize, buf: &mut [u8]) -> Result<usize, LinkProblem> {
             let mut chip = self.chip()?;
+            // Read from the buffers found, what the firmware wrote into its new ones would be lost.
+            if chip.buffers != self.buffers {
+                drop(chip);
+                self.moved = true;
+                return Ok(0);
+            }
             let count = chip.up.len().min(buf.len());
             buf[..count].copy_from_slice(&chip.up[..count]);
             chip.up.drain(..count);
@@ -907,6 +947,19 @@ mod tests {
         fn still_there(&mut self) -> Result<bool, LinkProblem> {
             let found = self.found;
             Ok(self.chip()?.control_block.is_some() && self.chip()?.control_block == found)
+        }
+
+        fn changed(&mut self) -> Result<bool, LinkProblem> {
+            let now = self
+                .chip()?
+                .name
+                .clone()
+                .unwrap_or_else(|| "Terminal".into());
+            Ok(self.name.as_ref() != Some(&now))
+        }
+
+        fn moved(&self) -> bool {
+            self.moved
         }
 
         fn reset(&mut self) -> Result<(), LinkProblem> {
@@ -1029,6 +1082,81 @@ mod tests {
         session.write(b"kernel threads\r".to_vec());
         thread::sleep(Duration::from_millis(100));
         assert_eq!(chip.lock().unwrap().down, b"kernel threads\r");
+    }
+
+    #[test]
+    fn reads_the_channels_again_when_the_firmware_sets_them_up_anew() {
+        // Found moments after a reset, the control block still had the last run's names.
+        let chip = plugged_chip(Some(0x2000_0400));
+        chip.lock().unwrap().name = Some("last run's".into());
+        let (_session, events) = start(&chip, config());
+        expect(
+            &events,
+            "the last run's channels",
+            |event| matches!(event, Event::Channels { up, .. } if up[0].name.as_deref() == Some("last run's")),
+        );
+        connected(&events);
+
+        chip.lock().unwrap().name = None;
+        let until = Instant::now() + Duration::from_secs(5);
+        loop {
+            let left = until.saturating_duration_since(Instant::now());
+            let event = events
+                .recv_timeout(left)
+                .expect("the channels again within 5 s");
+            assert!(
+                !matches!(event, Event::State(RttState::Waiting { .. })),
+                "the tab stays connected"
+            );
+            if let Event::Channels { up, .. } = event {
+                assert_eq!(up[0].name.as_deref(), Some("Terminal"));
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn what_the_firmware_writes_as_it_sets_the_channels_up_anew_is_not_lost() {
+        // Found moments after a reset, the control block still had the last run's buffers.
+        let chip = plugged_chip(Some(0x2000_0400));
+        chip.lock().unwrap().name = Some("last run's".into());
+        // Checked seldom, so only a read can find the new buffers in time.
+        let timing = Timing {
+            check: Duration::from_secs(60),
+            ..FAST
+        };
+        let (_session, events) = start_timed(&chip, config(), timing);
+        connected(&events);
+
+        {
+            // The firmware sets RTT up, and says it booted at once.
+            let mut chip = chip.lock().unwrap();
+            chip.name = None;
+            chip.buffers += 1;
+            chip.up.extend_from_slice(b"*** Booting ***\r\n");
+        }
+        let until = Instant::now() + Duration::from_secs(5);
+        let mut channels = false;
+        let mut data = Vec::new();
+        while data.len() < 17 {
+            let left = until.saturating_duration_since(Instant::now());
+            let event = events
+                .recv_timeout(left)
+                .expect("the channels and the data again within 5 s");
+            match event {
+                Event::State(RttState::Waiting { .. }) => panic!("the tab stays connected"),
+                Event::Channels { up, .. } => {
+                    assert_eq!(up[0].name.as_deref(), Some("Terminal"));
+                    channels = true;
+                }
+                Event::Data(bytes) => {
+                    assert!(channels, "read from the new buffers");
+                    data.extend(bytes);
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(data, b"*** Booting ***\r\n");
     }
 
     #[test]

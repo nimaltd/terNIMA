@@ -105,6 +105,18 @@ pub trait RttLink: Send {
     /// Whether the control block is still where it was found. A reset or new
     /// firmware can clear it or move it.
     fn still_there(&mut self) -> Result<bool, LinkProblem>;
+    /// Whether the firmware has set the control block up again since it was
+    /// found, with other channels. Moments after a reset, it can be found
+    /// before the firmware sets it up, with the last run's names and buffers.
+    fn changed(&mut self) -> Result<bool, LinkProblem> {
+        Ok(false)
+    }
+    /// Whether a read since the control block was found saw a channel's
+    /// buffer moved, and read nothing from it: the firmware has set the block
+    /// up again, and it is to be found again at once. Asks nothing of the chip.
+    fn moved(&self) -> bool {
+        false
+    }
     fn reset(&mut self) -> Result<(), LinkProblem>;
     /// Reads the chip's memory while it runs, as the watched variables are read.
     fn read_memory(&mut self, address: u64, buf: &mut [u8]) -> Result<(), LinkProblem>;
@@ -160,6 +172,8 @@ impl RttBackend for ProbeRs {
             session,
             rtt: None,
             found: None,
+            layout: Layout::default(),
+            moved: false,
             awake: Awake::new(&config.chip),
         }))
     }
@@ -171,6 +185,10 @@ struct ProbeRsLink {
     /// Where the control block was found last, looked at first when it is
     /// looked for again: after a reset, the firmware puts it there again.
     found: Option<u64>,
+    /// Its channels as they were when it was found.
+    layout: Layout,
+    /// A read found a channel's buffer moved since.
+    moved: bool,
     /// Keeps a sleeping STM32's RAM readable.
     awake: Awake,
 }
@@ -200,7 +218,7 @@ impl RttLink for ProbeRsLink {
             .iter()
             .map(|channel| ChannelInfo {
                 number: channel.number(),
-                name: channel.name().map(String::from),
+                name: plausible(channel.name()),
                 size: channel.buffer_size(),
             })
             .collect();
@@ -209,23 +227,28 @@ impl RttLink for ProbeRsLink {
             .iter()
             .map(|channel| ChannelInfo {
                 number: channel.number(),
-                name: channel.name().map(String::from),
+                name: plausible(channel.name()),
                 size: channel.buffer_size(),
             })
             .collect();
         let address = rtt.ptr();
+        let pointer = pointer_width(&core);
+        self.layout = layout(&mut core, address, pointer)?;
+        self.moved = false;
         self.rtt = Some(rtt);
         self.found = Some(address);
         Ok(Attached { address, up, down })
     }
 
     fn read(&mut self, channel: usize, buf: &mut [u8]) -> Result<usize, LinkProblem> {
-        let rtt = self.rtt.as_mut().ok_or_else(not_found)?;
-        let mut core = awake_core(&mut self.session, &mut self.awake)?;
-        let up = rtt.up_channel(channel).ok_or_else(|| {
-            LinkProblem::NoControlBlock(format!("The firmware has no up channel {channel}."))
-        })?;
-        up.read(&mut core, buf).map_err(from_rtt)
+        self.rtt.as_ref().ok_or_else(not_found)?;
+        let up = self.layout.up(channel)?;
+        let read = {
+            let mut core = awake_core(&mut self.session, &mut self.awake)?;
+            read_up(&mut core, &up, buf)?
+        };
+        self.moved |= read.is_none();
+        Ok(read.unwrap_or(0))
     }
 
     fn read_two(
@@ -233,15 +256,15 @@ impl RttLink for ProbeRsLink {
         (first, first_buf): (usize, &mut [u8]),
         (second, second_buf): (usize, &mut [u8]),
     ) -> Result<(usize, usize), LinkProblem> {
-        let rtt = self.rtt.as_mut().ok_or_else(not_found)?;
-        let mut core = awake_core(&mut self.session, &mut self.awake)?;
-        let mut read = |channel: usize, buf: &mut [u8]| {
-            let up = rtt.up_channel(channel).ok_or_else(|| {
-                LinkProblem::NoControlBlock(format!("The firmware has no up channel {channel}."))
-            })?;
-            up.read(&mut core, buf).map_err(from_rtt)
+        self.rtt.as_ref().ok_or_else(not_found)?;
+        let (first_up, second_up) = (self.layout.up(first)?, self.layout.up(second)?);
+        let (first, second) = {
+            let mut core = awake_core(&mut self.session, &mut self.awake)?;
+            let first = read_up(&mut core, &first_up, first_buf)?;
+            (first, read_up(&mut core, &second_up, second_buf)?)
         };
-        Ok((read(first, first_buf)?, read(second, second_buf)?))
+        self.moved |= first.is_none() || second.is_none();
+        Ok((first.unwrap_or(0), second.unwrap_or(0)))
     }
 
     fn write(&mut self, channel: usize, data: &[u8]) -> Result<usize, LinkProblem> {
@@ -262,6 +285,20 @@ impl RttLink for ProbeRsLink {
         let mut id = [0; 16];
         core.read_8(address, &mut id).map_err(lost)?;
         Ok(id == Rtt::RTT_ID)
+    }
+
+    fn changed(&mut self) -> Result<bool, LinkProblem> {
+        let Some(rtt) = &self.rtt else {
+            return Ok(false);
+        };
+        let address = rtt.ptr();
+        let mut core = awake_core(&mut self.session, &mut self.awake)?;
+        let pointer = pointer_width(&core);
+        Ok(layout(&mut core, address, pointer)?.fixed != self.layout.fixed)
+    }
+
+    fn moved(&self) -> bool {
+        self.moved
     }
 
     fn reset(&mut self) -> Result<(), LinkProblem> {
@@ -293,20 +330,30 @@ impl RttLink for ProbeRsLink {
         work: &mut dyn FnMut(&mut MemoryRead<'_>),
         mut drain: Option<&mut Drain<'_>>,
     ) {
-        let Ok(mut core) = awake_core(&mut self.session, &mut self.awake) else {
-            return work(&mut |_, _| false);
+        let up = drain
+            .as_deref()
+            .filter(|_| self.rtt.is_some())
+            .and_then(|drain| self.layout.up(drain.channel).ok());
+        let moved = {
+            let Ok(mut core) = awake_core(&mut self.session, &mut self.awake) else {
+                return work(&mut |_, _| false);
+            };
+            let mut moved = false;
+            work(&mut |address, block| {
+                if let (Some(drain), Some(up)) = (drain.as_deref_mut(), up.as_ref())
+                    && drain.due()
+                {
+                    drain.take(up.size as usize, |_, buf| {
+                        let read = read_up(&mut core, up, buf)?;
+                        moved |= read.is_none();
+                        Ok(read.unwrap_or(0))
+                    });
+                }
+                core.read(address, block).is_ok()
+            });
+            moved
         };
-        let mut rtt = self.rtt.as_mut();
-        work(&mut |address, block| {
-            if let (Some(drain), Some(rtt)) = (drain.as_deref_mut(), rtt.as_deref_mut())
-                && drain.due()
-                && let Some(up) = rtt.up_channel(drain.channel)
-            {
-                let room = up.buffer_size();
-                drain.take(room, |_, buf| up.read(&mut core, buf).map_err(from_rtt));
-            }
-            core.read(address, block).is_ok()
-        });
+        self.moved |= moved;
     }
 
     fn reachable(&mut self) -> Result<(), LinkProblem> {
@@ -397,6 +444,164 @@ fn scan(
     None
 }
 
+/// The longest name a channel is taken to have: the firmware's are short,
+/// as Terminal or SysView are.
+const NAME_MAX: usize = 32;
+
+/// A channel's name, or none for what cannot be one. Read from a control
+/// block the firmware has not set up yet, a name's pointer can point
+/// anywhere, as into the text of an assert in the new firmware's flash.
+fn plausible(name: Option<&str>) -> Option<String> {
+    name.filter(|name| {
+        !name.is_empty()
+            && name.len() <= NAME_MAX
+            && name.bytes().all(|byte| (0x20..0x7f).contains(&byte))
+    })
+    .map(String::from)
+}
+
+/// The chip's memory as a control block is read through it: a core, or a
+/// test's RAM.
+trait Memory {
+    fn load(&mut self, address: u64, buf: &mut [u8]) -> Result<(), LinkProblem>;
+    fn store_32(&mut self, address: u64, value: u32) -> Result<(), LinkProblem>;
+}
+
+impl Memory for Core<'_> {
+    fn load(&mut self, address: u64, buf: &mut [u8]) -> Result<(), LinkProblem> {
+        // In words where it can: a byte at a time is many times slower.
+        self.read(address, buf).map_err(lost)
+    }
+
+    fn store_32(&mut self, address: u64, value: u32) -> Result<(), LinkProblem> {
+        self.write_word_32(address, value).map_err(lost)
+    }
+}
+
+/// How many bytes a pointer takes in the chip's control block.
+fn pointer_width(core: &Core) -> usize {
+    if core.is_64_bit() { 8 } else { 4 }
+}
+
+/// What the firmware writes once in a control block, as it sets it up: how
+/// many channels it has, and for each, where its name and its buffer are and
+/// how big that is. The offsets that move as data goes are left out.
+#[derive(Debug, Default)]
+struct Layout {
+    /// The numbers of up and down channels, then each channel's name and
+    /// buffer pointers and size, as they are in the chip.
+    fixed: Vec<u8>,
+    /// Each up channel's buffer, by number.
+    up: Vec<UpBuffer>,
+}
+
+impl Layout {
+    /// Up channel `number`'s buffer, as the control block had it.
+    fn up(&self, number: usize) -> Result<UpBuffer, LinkProblem> {
+        self.up
+            .get(number)
+            .filter(|up| up.buffer != 0)
+            .copied()
+            .ok_or_else(|| {
+                LinkProblem::NoControlBlock(format!("The firmware has no up channel {number}."))
+            })
+    }
+}
+
+/// An up channel's buffer and its size, as the control block had them, and
+/// where they are in it: the write and read offsets follow them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct UpBuffer {
+    at: u64,
+    /// How many bytes a pointer takes.
+    pointer: usize,
+    buffer: u64,
+    size: u32,
+}
+
+/// The little-endian word at `at`.
+fn word(bytes: &[u8], at: usize) -> u32 {
+    u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
+}
+
+/// The little-endian pointer of `width` bytes at `at`.
+fn pointer_at(bytes: &[u8], at: usize, width: usize) -> u64 {
+    let mut wide = [0; 8];
+    wide[..width].copy_from_slice(&bytes[at..at + width]);
+    u64::from_le_bytes(wide)
+}
+
+fn layout(memory: &mut impl Memory, address: u64, pointer: usize) -> Result<Layout, LinkProblem> {
+    // The ID, then the numbers of up and down channels.
+    let mut header = [0; 24];
+    memory.load(address, &mut header)?;
+    let count = |at: usize| (word(&header, at) as i32).clamp(0, 255) as usize;
+    let (up, down) = (count(16), count(20));
+    // A name's and a buffer's pointer, then the size, write and read offsets and flags.
+    let each = 2 * pointer + 16;
+    let mut channels = vec![0; (up + down) * each];
+    memory.load(address + 24, &mut channels)?;
+    let mut fixed = header[16..].to_vec();
+    for channel in channels.chunks(each) {
+        fixed.extend_from_slice(&channel[..2 * pointer + 4]);
+    }
+    let up = channels
+        .chunks(each)
+        .take(up)
+        .enumerate()
+        .map(|(number, channel)| UpBuffer {
+            at: address + 24 + (number * each + pointer) as u64,
+            pointer,
+            buffer: pointer_at(channel, pointer, pointer),
+            size: word(channel, 2 * pointer),
+        })
+        .collect();
+    Ok(Layout { fixed, up })
+}
+
+/// Reads what an up channel holds, without waiting, and moves its read
+/// offset past it, as probe-rs does; `None` when the channel's buffer is not
+/// the one found, and nothing is read. Moments after a reset, the control
+/// block can be found before the firmware sets it up, with the last run's
+/// buffers. Once it is set up, what the firmware writes is in its new buffer:
+/// read from the old one, as probe-rs reads, it would be lost. So the
+/// buffer's pointer and size are read with the offsets, in one read.
+fn read_up(
+    memory: &mut impl Memory,
+    up: &UpBuffer,
+    buf: &mut [u8],
+) -> Result<Option<usize>, LinkProblem> {
+    let width = up.pointer;
+    let mut fields = [0; 20];
+    let fields = &mut fields[..width + 12];
+    memory.load(up.at, fields)?;
+    if (pointer_at(fields, 0, width), word(fields, width)) != (up.buffer, up.size) {
+        return Ok(None);
+    }
+    let (size, write, mut read) = (up.size, word(fields, width + 4), word(fields, width + 8));
+    if write >= size || read >= size {
+        return Err(LinkProblem::NoControlBlock(format!(
+            "An up channel's offsets are past its buffer of {size} bytes: write {write}, read {read}."
+        )));
+    }
+    let mut total = 0;
+    // To the end of the buffer, then on from its start where the data goes round.
+    while read != write && total < buf.len() {
+        let end = if read > write { size } else { write };
+        let count = ((end - read) as usize).min(buf.len() - total);
+        memory.load(up.buffer + u64::from(read), &mut buf[total..total + count])?;
+        total += count;
+        read += count as u32;
+        if read == size {
+            read = 0;
+        }
+    }
+    if total > 0 {
+        memory.store_32(up.at + width as u64 + 8, read)?;
+    }
+    Ok(Some(total))
+}
+
 /// The address of the `_SEGGER_RTT` symbol in an ELF file.
 fn symbol_address(path: &str) -> Result<u64, LinkProblem> {
     let data = fs::read(path)
@@ -439,6 +644,148 @@ mod tests {
     use super::*;
 
     const RAM: u64 = 0x2000_0000;
+
+    #[test]
+    fn a_name_is_kept_only_if_it_can_be_one() {
+        assert_eq!(plausible(Some("Terminal")).as_deref(), Some("Terminal"));
+        assert_eq!(
+            plausible(Some("JScope_T4F4")).as_deref(),
+            Some("JScope_T4F4")
+        );
+        // What an old pointer found in new firmware's flash.
+        assert_eq!(
+            plausible(Some(
+                "0 && ((p_xfer_desc->type == NRFX_TWIM_XFER_TXRX) || (p_xfer_desc->type == NRFX_TWIM_XFER_TXTX)))"
+            )),
+            None
+        );
+        assert_eq!(plausible(Some("Ter\u{1}minal")), None);
+        assert_eq!(plausible(Some("Termin\u{e4}l")), None);
+        assert_eq!(plausible(Some("")), None);
+        assert_eq!(plausible(None), None);
+    }
+
+    /// RAM from `RAM`, as a control block is read through it.
+    struct Ram(Vec<u8>);
+
+    impl Memory for Ram {
+        fn load(&mut self, address: u64, buf: &mut [u8]) -> Result<(), LinkProblem> {
+            let at = (address - RAM) as usize;
+            buf.copy_from_slice(&self.0[at..at + buf.len()]);
+            Ok(())
+        }
+
+        fn store_32(&mut self, address: u64, value: u32) -> Result<(), LinkProblem> {
+            let at = (address - RAM) as usize;
+            self.0[at..at + 4].copy_from_slice(&value.to_le_bytes());
+            Ok(())
+        }
+    }
+
+    impl Ram {
+        fn put(&mut self, address: u64, words: &[u32]) {
+            for (index, &word) in words.iter().enumerate() {
+                self.store_32(address + 4 * index as u64, word).unwrap();
+            }
+        }
+    }
+
+    /// A control block at `RAM` as 32-bit firmware sets it up, with an up
+    /// and a down channel. The up channel's 16 bytes, "a" to "p", are at
+    /// `RAM + 0x100`, written to `write` and read to `read`.
+    fn control_block(write: u32, read: u32) -> Ram {
+        let mut ram = Ram(vec![0; 0x200]);
+        ram.0[..16].copy_from_slice(&Rtt::RTT_ID);
+        ram.put(RAM + 16, &[1, 1]);
+        // Each channel's name, buffer, size, write and read offsets and flags.
+        let buffer = RAM as u32 + 0x100;
+        ram.put(RAM + 24, &[0x0800_1000, buffer, 16, write, read, 0]);
+        ram.put(RAM + 48, &[0x0800_1000, buffer + 0x80, 16, 0, 0, 0]);
+        for (index, byte) in ram.0[0x100..0x110].iter_mut().enumerate() {
+            *byte = b'a' + index as u8;
+        }
+        ram
+    }
+
+    /// The up channel's read offset.
+    const READ_OFFSET: usize = 24 + 16;
+
+    #[test]
+    fn an_up_channel_is_read_to_the_end_of_its_buffer_and_on_from_its_start() {
+        let mut ram = control_block(3, 12);
+        let up = layout(&mut ram, RAM, 4).unwrap().up(0).unwrap();
+        assert_eq!(
+            up,
+            UpBuffer {
+                at: RAM + 28,
+                pointer: 4,
+                buffer: RAM + 0x100,
+                size: 16
+            }
+        );
+        let mut buf = [0; 64];
+        assert_eq!(read_up(&mut ram, &up, &mut buf), Ok(Some(7)));
+        assert_eq!(&buf[..7], b"mnopabc");
+        // Read past it, so nothing is left.
+        assert_eq!(word(&ram.0, READ_OFFSET), 3);
+        assert_eq!(read_up(&mut ram, &up, &mut buf), Ok(Some(0)));
+    }
+
+    #[test]
+    fn an_up_channel_is_read_as_far_as_there_is_room() {
+        let mut ram = control_block(3, 12);
+        let up = layout(&mut ram, RAM, 4).unwrap().up(0).unwrap();
+        let mut buf = [0; 5];
+        assert_eq!(read_up(&mut ram, &up, &mut buf), Ok(Some(5)));
+        assert_eq!(&buf, b"mnopa");
+        assert_eq!(word(&ram.0, READ_OFFSET), 1);
+    }
+
+    #[test]
+    fn a_channel_whose_buffer_moved_is_not_read() {
+        // Found before the firmware set it up: the last run's buffer.
+        let mut ram = control_block(0, 0);
+        let up = layout(&mut ram, RAM, 4).unwrap().up(0).unwrap();
+        // The firmware sets it up with another buffer, and writes 5 bytes there.
+        ram.put(RAM + 28, &[RAM as u32 + 0x140, 16, 5, 0]);
+        let mut buf = [0; 64];
+        assert_eq!(read_up(&mut ram, &up, &mut buf), Ok(None));
+        // Left for the read once it is found again.
+        assert_eq!(word(&ram.0, READ_OFFSET), 0);
+        let again = layout(&mut ram, RAM, 4).unwrap().up(0).unwrap();
+        assert_eq!(read_up(&mut ram, &again, &mut buf), Ok(Some(5)));
+    }
+
+    #[test]
+    fn offsets_past_the_buffer_are_no_control_block() {
+        let mut ram = control_block(16, 0);
+        let up = layout(&mut ram, RAM, 4).unwrap().up(0).unwrap();
+        assert!(matches!(
+            read_up(&mut ram, &up, &mut [0; 8]),
+            Err(LinkProblem::NoControlBlock(_))
+        ));
+    }
+
+    #[test]
+    fn the_layout_changes_with_a_name_or_a_buffer_but_not_as_data_goes() {
+        let mut ram = control_block(3, 12);
+        let found = layout(&mut ram, RAM, 4).unwrap().fixed;
+        // The up channel's write and read offsets.
+        ram.put(RAM + 36, &[9, 2]);
+        assert_eq!(layout(&mut ram, RAM, 4).unwrap().fixed, found);
+        // The down channel's name.
+        ram.put(RAM + 48, &[0x0800_2000]);
+        assert_ne!(layout(&mut ram, RAM, 4).unwrap().fixed, found);
+    }
+
+    #[test]
+    fn a_channel_without_a_buffer_is_not_there() {
+        let mut ram = control_block(0, 0);
+        ram.put(RAM + 28, &[0]);
+        let found = layout(&mut ram, RAM, 4).unwrap();
+        assert!(found.up(0).is_err());
+        assert!(found.up(1).is_err());
+    }
 
     /// 32 KiB of RAM at 0x2000_0000, with control block IDs at these offsets.
     fn ram(ids: &[usize]) -> Vec<u8> {

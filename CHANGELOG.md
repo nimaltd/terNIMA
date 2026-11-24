@@ -5,6 +5,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Fixed
+
+- An RTT tab no longer shows a channel named with a piece of the firmware's
+  flash, such as an assert's text, nor misses what the firmware prints as it
+  starts, such as its boot banner. Found moments after a reset or a new
+  firmware, the control block can still hold the last run's names and
+  buffers. The tab now sees at once when the firmware sets it up again, and
+  reads it again, still connected, before taking anything from the old
+  buffers. A name that cannot be one is not shown, and a long one no longer
+  stretches the toolbar.
+
 ## [1.7.2] - 2026-11-23
 
 ### Changed
