@@ -5,6 +5,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [1.7.3] - 2026-11-24
+
 ### Fixed
 
 - An RTT tab no longer shows a channel named with a piece of the firmware's
@@ -711,7 +713,8 @@ yet; the README says how to open them.
   at all for 2 s, as when flow control holds it, drops the rest and stays
   open.
 
-[Unreleased]: https://github.com/nimaltd/ternima/compare/v1.7.2...HEAD
+[Unreleased]: https://github.com/nimaltd/ternima/compare/v1.7.3...HEAD
+[1.7.3]: https://github.com/nimaltd/ternima/releases/tag/v1.7.3
 [1.7.2]: https://github.com/nimaltd/ternima/releases/tag/v1.7.2
 [1.7.1]: https://github.com/nimaltd/ternima/releases/tag/v1.7.1
 [1.7.0]: https://github.com/nimaltd/ternima/releases/tag/v1.7.0
