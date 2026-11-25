@@ -879,7 +879,13 @@ export class Tab {
    * view and the plot. */
   clearScreen(): void {
     this.term?.clear();
-    this.hexTerm?.clear();
+    // The hex view is drawn again from the bytes kept for it whenever it opens or its layout changes: they go too, and
+    // a full reset takes the line still being written.
+    clearTimeout(this.hexTimer);
+    this.recent = [];
+    this.recentBytes = 0;
+    this.hexDump = new HexDump(this.hexView, this.terminal.pause_ms);
+    this.hexTerm?.write("\x1bc");
     this.clearLines();
     this.clearPlot();
   }
