@@ -5,6 +5,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- The welcome tab has a Donate card at the right, beside its text: PayPal and
+  Ko-fi, each with a QR code for a phone and a link that opens in the
+  browser. It is not shown where the window is too narrow for it to stand
+  clear of the text.
+
 ## [1.7.3] - 2026-11-24
 
 ### Fixed

@@ -9,6 +9,7 @@
   import { Unicode11Addon } from "@xterm/addon-unicode11";
   import { WebLinksAddon } from "@xterm/addon-web-links";
   import { WebglAddon } from "@xterm/addon-webgl";
+  import Donate from "./Donate.svelte";
   import { echoed } from "./echo";
   import NewSessionMenu from "./NewSessionMenu.svelte";
   import type { Protocol } from "./net";
@@ -63,6 +64,29 @@
     if (menuHeight <= top - GAP) return { top: -(menuHeight + GAP), left: 0 };
     return { top: Math.max(-top, wrapHeight - top - menuHeight - GAP), left: buttonWidth + GAP };
   });
+
+  /**
+   * The welcome tab's donate card, as the other apps' welcome pages have it: at the right, from the logo's line
+   * down, and moved with the text when it scrolls. The text's first line and widest line in columns, and where
+   * that first line and the text's right edge are now.
+   */
+  let welcomeTop: IMarker | null = null;
+  let welcomeColumns = 0;
+  let donateAt: { top: number; textRight: number } | null = $state(null);
+  let wrapWidth = $state(0);
+  let donateWidth = $state(0);
+  let donateHeight = $state(0);
+  /** The card's room to the terminal's right edge, and the least room between it and the text. */
+  const DONATE_RIGHT = 28;
+  const DONATE_GAP = 24;
+  /** Shown only where it fits beside the text and in the terminal's height, so it never covers what is written. */
+  const donateFits = $derived.by(
+    () =>
+      donateAt !== null &&
+      donateWidth > 0 &&
+      wrapWidth - DONATE_RIGHT - donateWidth >= donateAt.textRight + DONATE_GAP &&
+      donateHeight <= wrapHeight,
+  );
 
   // The search bar.
   let searchOpen = $state(false);
@@ -411,6 +435,13 @@
       } else {
         // The logo's colors are picked for the theme in use when the tab opens.
         term.write(await invoke<string>("welcome_banner", { background: appScheme() }), () => {
+          // The text starts after one empty line; the card stands beside its widest line.
+          const buffer = term.buffer.active;
+          const last = buffer.baseY + buffer.cursorY;
+          for (let y = 0; y <= last; y++) {
+            welcomeColumns = Math.max(welcomeColumns, buffer.getLine(y)?.translateToString(true).length ?? 0);
+          }
+          welcomeTop = term.registerMarker(1 - last);
           if (onnew) {
             // A line for the New session button and room under it, so what is typed is echoed below it.
             welcomeLine = term.registerMarker(0);
@@ -436,27 +467,43 @@
   });
 
   /** Puts the welcome tab's button on the line left for it, two cells in as the text is, or hides it while that line is out of view. */
-  function placeWelcome() {
-    const screen = container.querySelector<HTMLElement>(".xterm-screen");
+  function placeWelcome(screen: DOMRect, origin: DOMRect) {
     const row = welcomeLine && !welcomeLine.isDisposed ? welcomeLine.line - term.buffer.active.viewportY : -1;
-    if (!screen || row < 0 || row > term.rows - 2) {
+    if (row < 0 || row > term.rows - 2) {
       welcomeAt = null;
       welcomeMenu = false;
       return;
     }
-    const box = screen.getBoundingClientRect();
-    const origin = wrap.getBoundingClientRect();
-    const top = box.top - origin.top + (row * box.height) / term.rows;
-    const left = box.left - origin.left + (2 * box.width) / term.cols;
+    const top = screen.top - origin.top + (row * screen.height) / term.rows;
+    const left = screen.left - origin.left + (2 * screen.width) / term.cols;
     if (welcomeAt?.top !== top || welcomeAt.left !== left) {
       welcomeAt = { top, left };
     }
   }
 
-  // Scrolled, resized or with another text size, the line moves: the button goes with it. The cursor's blink draws
-  // too, so the button is moved only when its place changed.
+  /** Puts the donate card beside the welcome text's first line, wherever that line has scrolled to. */
+  function placeDonate(screen: DOMRect, origin: DOMRect) {
+    if (!welcomeTop || welcomeTop.isDisposed) {
+      donateAt = null;
+      return;
+    }
+    const row = welcomeTop.line - term.buffer.active.viewportY;
+    const top = screen.top - origin.top + (row * screen.height) / term.rows;
+    const textRight = screen.left - origin.left + (welcomeColumns * screen.width) / term.cols;
+    if (donateAt?.top !== top || donateAt.textRight !== textRight) {
+      donateAt = { top, textRight };
+    }
+  }
+
+  // Scrolled, resized or with another text size, the lines move: the button and the card go with them. The cursor's
+  // blink draws too, so they are moved only when their places changed.
   term.onRender(() => {
-    if (welcomeLine) placeWelcome();
+    const screen = container.querySelector<HTMLElement>(".xterm-screen");
+    if (!screen || !(welcomeLine || welcomeTop)) return;
+    const box = screen.getBoundingClientRect();
+    const origin = wrap.getBoundingClientRect();
+    placeWelcome(box, origin);
+    placeDonate(box, origin);
   });
 
   function onWindowMouseDown(event: MouseEvent) {
@@ -486,8 +533,22 @@
   }}
 />
 
-<div class="wrap" bind:this={wrap} bind:clientHeight={wrapHeight}>
+<div class="wrap" bind:this={wrap} bind:clientWidth={wrapWidth} bind:clientHeight={wrapHeight}>
   <div class="terminal" bind:this={container}></div>
+
+  {#if donateAt}
+    <div class="donate-layer">
+      <div
+        class="donate"
+        class:hidden={!donateFits}
+        style:top={`${donateAt.top}px`}
+        bind:offsetWidth={donateWidth}
+        bind:offsetHeight={donateHeight}
+      >
+        <Donate app="terNIMA" />
+      </div>
+    </div>
+  {/if}
 
   {#if onnew && welcomeAt}
     <!-- Under the welcome text: the + button's menu of sessions, on a button as the other apps' welcome pages have. -->
@@ -610,6 +671,26 @@
 
   .welcome-menu {
     position: absolute;
+  }
+
+  /* Over the terminal, and cut off at its edges as the text scrolls away; only the card itself takes clicks. */
+  .donate-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  .donate {
+    position: absolute;
+    right: 28px;
+    pointer-events: auto;
+  }
+
+  /* Measured, but not drawn, while it does not fit. */
+  .donate.hidden {
+    visibility: hidden;
   }
 
   /* The same place as the Zephyr log view's way back to the newest line. */
