@@ -5,6 +5,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [1.7.6] - 2026-11-25
+
+### Fixed
+
+- Clear empties the hex view for good. It was drawn again from the bytes kept
+  for it as soon as it was opened or its layout changed.
+
 ## [1.7.5] - 2026-11-25
 
 ### Changed
@@ -733,7 +740,8 @@ yet; the README says how to open them.
   at all for 2 s, as when flow control holds it, drops the rest and stays
   open.
 
-[Unreleased]: https://github.com/nimaltd/ternima/compare/v1.7.5...HEAD
+[Unreleased]: https://github.com/nimaltd/ternima/compare/v1.7.6...HEAD
+[1.7.6]: https://github.com/nimaltd/ternima/releases/tag/v1.7.6
 [1.7.5]: https://github.com/nimaltd/ternima/releases/tag/v1.7.5
 [1.7.4]: https://github.com/nimaltd/ternima/releases/tag/v1.7.4
 [1.7.3]: https://github.com/nimaltd/ternima/releases/tag/v1.7.3
