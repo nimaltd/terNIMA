@@ -5,6 +5,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [1.7.5] - 2026-11-25
+
 ### Changed
 
 - Clear, in the toolbar, the Log view or the Plot view, and Ctrl+Shift+K,
@@ -731,7 +733,8 @@ yet; the README says how to open them.
   at all for 2 s, as when flow control holds it, drops the rest and stays
   open.
 
-[Unreleased]: https://github.com/nimaltd/ternima/compare/v1.7.4...HEAD
+[Unreleased]: https://github.com/nimaltd/ternima/compare/v1.7.5...HEAD
+[1.7.5]: https://github.com/nimaltd/ternima/releases/tag/v1.7.5
 [1.7.4]: https://github.com/nimaltd/ternima/releases/tag/v1.7.4
 [1.7.3]: https://github.com/nimaltd/ternima/releases/tag/v1.7.3
 [1.7.2]: https://github.com/nimaltd/ternima/releases/tag/v1.7.2
