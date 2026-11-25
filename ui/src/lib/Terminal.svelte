@@ -545,7 +545,8 @@
         bind:offsetWidth={donateWidth}
         bind:offsetHeight={donateHeight}
       >
-        <Donate app="terNIMA" />
+        <!-- 240 pixels on screen, as in the other apps, whatever the menu text size zooms the window to. -->
+        <Donate app="terNIMA" size={unzoomed(240)} />
       </div>
     </div>
   {/if}

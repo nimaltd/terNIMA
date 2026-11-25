@@ -421,7 +421,7 @@
     },
     clear: () => {
       anchor = focus = null;
-      tab.clearLines();
+      tab.clearScreen();
     },
     text: () => {
       const out: string[] = [];

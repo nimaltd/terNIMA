@@ -323,7 +323,7 @@
   /** Whether a tab is on screen: the one in front, or the other half of a split view. */
   function onScreen(index: number): boolean {
     const split = view.split;
-    return index === view.active || (split !== null && (index === split.first || index === split.second));
+    return !view.welcome && (index === view.active || (split !== null && (index === split.first || index === split.second)));
   }
 
   /** Where a tab's pane sits in a split view, as CSS; all the room without one. */
@@ -382,7 +382,7 @@
 
   <main class="pane" class:dragging bind:this={pane}>
     {#if ready}
-      {#if tabs.length === 0}
+      {#if tabs.length === 0 || view.welcome}
         <div class="slot" style="inset: 0">
           <div class="layer">
             <Terminal active={true} {isAppKey} onnew={newTab} />
@@ -409,33 +409,33 @@
           <div class="layer" class:beside>
             <!-- The terminal stays while another view is shown, so nothing it showed is lost. -->
             <div class="view" class:hidden={tab.view !== "terminal"}>
-              <Terminal {tab} active={i === view.active && tab.view === "terminal"} {isAppKey} />
+              <Terminal {tab} active={!view.welcome && i === view.active && tab.view === "terminal"} {isAppKey} />
             </div>
             {#if tab.view === "lines" && onScreen(i)}
               <div class="view">
-                <LinesView {tab} active={i === view.active} onhighlights={() => (highlightsOpen = true)} />
+                <LinesView {tab} active={!view.welcome && i === view.active} onhighlights={() => (highlightsOpen = true)} />
               </div>
             {/if}
             {#if tab.view === "plot" && onScreen(i)}
               <div class="view">
-                <PlotView {tab} active={i === view.active} />
+                <PlotView {tab} active={!view.welcome && i === view.active} />
               </div>
             {/if}
             {#if tab.view === "modbus" && onScreen(i)}
               <div class="view">
-                <ModbusView {tab} active={i === view.active} />
+                <ModbusView {tab} active={!view.welcome && i === view.active} />
               </div>
             {/if}
             {#if tab.view === "watch" && onScreen(i)}
               <div class="view">
-                <WatchView {tab} active={i === view.active} />
+                <WatchView {tab} active={!view.welcome && i === view.active} />
               </div>
             {/if}
             {#if tab.view === "hex" && onScreen(i)}
               <div class="view hexview">
                 <HexBar {tab} />
                 <div class="hexterm">
-                  <Terminal {tab} hex active={i === view.active} {isAppKey} />
+                  <Terminal {tab} hex active={!view.welcome && i === view.active} {isAppKey} />
                 </div>
               </div>
             {/if}

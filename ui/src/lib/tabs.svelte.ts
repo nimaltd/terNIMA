@@ -875,13 +875,13 @@ export class Tab {
     this.scrollLock = on;
   }
 
-  /** Clears the terminal, the hex view or the Log view, whichever is shown. */
+  /** Clears all the tab shows of what it read, whichever view Clear is pressed in: the terminal, the hex view, the Log
+   * view and the plot. */
   clearScreen(): void {
-    if (this.view === "lines") {
-      this.clearLines();
-    } else {
-      (this.view === "hex" ? this.hexTerm : this.term)?.clear();
-    }
+    this.term?.clear();
+    this.hexTerm?.clear();
+    this.clearLines();
+    this.clearPlot();
   }
 
   /** Connects, or starts waiting for the device. */
@@ -1865,14 +1865,25 @@ export const closedTabs: SessionSetup[] = $state([]);
  * view, two tabs are on screen, `first` (left or top) and `second`, and
  * `active` is one of them.
  */
-export const view: { active: number; split: Split | null } = $state({ active: 0, split: null });
+export const view: { active: number; split: Split | null; welcome: boolean } = $state({
+  active: 0,
+  split: null,
+  welcome: false,
+});
 
 let loaded = false;
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
+/** The tab in front, or none while the Welcome tab is. */
 export function activeTab(): Tab | undefined {
-  return tabs[view.active];
+  return view.welcome ? undefined : tabs[view.active];
 }
+
+/** Shows the Welcome tab, which stays first in the bar however many tabs there are. */
+export function showWelcome(): void {
+  view.welcome = true;
+}
+
 
 /**
  * Opens the tabs saved last time, and connects the ones that were connected,
@@ -1983,6 +1994,7 @@ export function showTab(index: number): void {
   if (tabs.length === 0) {
     return;
   }
+  view.welcome = false;
   const wanted = (index + tabs.length) % tabs.length;
   const split = view.split;
   if (split && wanted !== split.first && wanted !== split.second) {

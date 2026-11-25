@@ -276,9 +276,7 @@
         {#if tab.view === "terminal" || tab.view === "hex" || tab.view === "lines"}
           <button
             class="btn small"
-            title={tab.view === "lines"
-              ? "Forget the lines kept, which the plot reads too (Ctrl+Shift+K)"
-              : "Clear the screen (Ctrl+Shift+K)"}
+            title="Clear the terminal, the Log view and the plot (Ctrl+Shift+K)"
             onclick={() => act(() => tab.clearScreen())}
           >
             Clear

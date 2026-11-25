@@ -5,6 +5,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- Clear, in the toolbar, the Log view or the Plot view, and Ctrl+Shift+K,
+  clears the terminal, the hex view, the Log view and the plot together.
+- The Welcome tab stays first in the tab bar while tabs are open, and a click
+  brings it to the front again. It has no close button.
+- The Donate card's QR codes are 240 pixels on screen, as in the other apps,
+  whatever the menu text size zooms the window to.
+
 ## [1.7.4] - 2026-11-25
 
 ### Added

@@ -1587,7 +1587,7 @@
     copy: async () => {},
     paste: async () => {},
     selectAll: () => {},
-    clear: () => tab.clearPlot(),
+    clear: () => tab.clearScreen(),
     text: () => csv(),
     focus: () => root?.focus(),
     openSearch: () => {},
@@ -1983,7 +1983,7 @@
     <button class="btn small" disabled={points === 0} title="Save the chart as an image" onclick={exportPng}>
       PNG...
     </button>
-    <button class="btn small" title="Start the plot again from the next line (Ctrl+Shift+K)" onclick={() => tab.clearPlot()}>
+    <button class="btn small" title="Clear the plot, the terminal and the Log view (Ctrl+Shift+K)" onclick={() => tab.clearScreen()}>
       Clear
     </button>
   </div>
